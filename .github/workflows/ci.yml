@@ -1,73 +1,55 @@
 name: CI
+
 on:
   push:
-    branches: [main]
-    tags: ["*"]
+    branches: [ "master" ]
   pull_request:
+    branches: [ "master" ]
+
+env:
+  GRPC_TEST_SERVER_HOST: "localhost"
+  GRPC_TEST_SERVER_PORT: 8001 
+
 jobs:
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
       matrix:
         version:
-          - '1.6'
-          - '1' # automatically expands to the latest stable 1.x release of Julia
+          - '1.12'
+          - 'nightly'
         os:
           - ubuntu-latest
         arch:
           - x64
-          - x86
-        experimental: [false]
-        include:
-          # allow failures on nightlies
-          - os: ubuntu-latest
-            arch: x64
-            version: nightly
-            experimental: true
-          - os: ubuntu-latest
-            arch: x86
-            version: nightly
-            experimental: true
-          # test macOS and Windows with latest Julia only
-          - os: macOS-latest
-            arch: x64
-            version: 1
-            experimental: true
-          - os: windows-latest
-            arch: x64
-            version: 1
-            experimental: false
-          - os: windows-latest
-            arch: x86
-            version: 1
-            experimental: false
+    services:
+      grpc-test-server:
+        image: csvance4/grpc-test-server:latest
+        ports: 
+          - 8001:8001
     steps:
-      - uses: actions/checkout@v2
-      - name: setup protoc
-        uses: arduino/setup-protoc@v1
-        with:
-          version: '3.x'
-      - run: protoc --version
-      - uses: julia-actions/setup-julia@v1
-        with:
-          version: ${{ matrix.version }}
-          arch: ${{ matrix.arch }}
-      - uses: actions/cache@v1
-        env:
-          cache-name: cache-artifacts
-        with:
-          path: ~/.julia/artifacts
-          key: ${{ runner.os }}-test-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-test-${{ env.cache-name }}-
-            ${{ runner.os }}-test-
-            ${{ runner.os }}-
-      - uses: julia-actions/julia-buildpkg@v1
-      - uses: julia-actions/julia-runtest@v1
-      - uses: julia-actions/julia-processcoverage@v1
-      - uses: codecov/codecov-action@v1
-        with:
-          file: lcov.info
+    - uses: actions/checkout@v5
+    - uses: julia-actions/setup-julia@v1
+      with:
+        version: ${{ matrix.version }}
+        arch: ${{ matrix.arch }}
+    - uses: actions/cache@v4
+      env:
+        cache-name: cache-artifacts
+      with:
+        path: ~/.julia/artifacts
+        key: ${{ runner.os }}-test-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-test-${{ env.cache-name }}-
+          ${{ runner.os }}-test-
+          ${{ runner.os }}-
+    - uses: julia-actions/julia-buildpkg@v1
+    - uses: julia-actions/julia-runtest@v1
+    - uses: julia-actions/julia-processcoverage@v1
+    - uses: codecov/codecov-action@v5
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+
+
