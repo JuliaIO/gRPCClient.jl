@@ -1,4 +1,4 @@
-using gRPCClient2
+using gRPCClient
 using BenchmarkTools
 
 grpc_init()
