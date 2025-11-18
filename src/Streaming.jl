@@ -121,6 +121,32 @@ function grpc_async_stream_response(
     nothing
 end
 
+else 
+
+function grpc_async_stream_request(
+    req::gRPCRequest,
+    channel::Channel{TRequest},
+) where {TRequest<:Any}
+    ex = AssertionError("Streaming not supported with Julia < 1.12")
+    @error exception=ex
+    req.ex = ex
+    close(channel)
+    notify(req.ready)
+end
+
+function grpc_async_stream_response(
+    req::gRPCRequest,
+    channel::Channel{TResponse},
+) where {TResponse<:Any}
+    ex = AssertionError("Streaming not supported with Julia < 1.12")
+    @error exception=ex
+    req.ex = ex
+    close(channel)
+    notify(req.ready)
+end
+
+end
+
 """
     grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,false}, request::Channel{TRequest}) where {TRequest<:Any,TResponse<:Any}
 
@@ -290,29 +316,3 @@ grpc_async_await(
     client::gRPCServiceClient{TRequest,true,TResponse,false},
     request::gRPCRequest,
 ) where {TRequest<:Any,TResponse<:Any} = grpc_async_await(request, TResponse)
-
-else
-
-grpc_async_request(
-    client::gRPCServiceClient{TRequest,true,TResponse,false},
-    request::Channel{TRequest},
-) where {TRequest<:Any,TResponse<:Any} = @assert false "Streaming not supported with Julia < 1.12"
-
-grpc_async_request(
-    client::gRPCServiceClient{TRequest,false,TResponse,true},
-    request::TRequest,
-    response::Channel{TResponse},
-) where {TRequest<:Any,TResponse<:Any} = @assert false "Streaming not supported with Julia < 1.12"
-
-grpc_async_request(
-    client::gRPCServiceClient{TRequest,true,TResponse,true},
-    request::Channel{TRequest},
-    response::Channel{TResponse},
-) where {TRequest<:Any,TResponse<:Any} = @assert false "Streaming not supported with Julia < 1.12"
-
-grpc_async_await(
-    client::gRPCServiceClient{TRequest,true,TResponse,false},
-    request::gRPCRequest,
-) where {TRequest<:Any,TResponse<:Any} = @assert false "Streaming not supported with Julia < 1.12"
-
-end
