@@ -1,23 +1,23 @@
 name = "gRPCClient"
 uuid = "aaca4a50-36af-4a1d-b878-4c443f2061ad"
-authors = ["Tanmay K.M. <tanmaykm@gmail.com>"]
-version = "0.1.4"
+authors = ["Carroll Vance <cs.vance@icloud.com>"]
+version = "1.0.0"
 
 [deps]
-Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
+FileWatching = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
 LibCURL = "b27032c2-a3e7-50c8-80cd-2d36dbcbfd21"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 ProtoBuf = "3349acd9-ac6a-5e09-bcdb-63829b23a429"
 
 [compat]
-Downloads = "1.4"
-LibCURL = "0.6"
-ProtoBuf = "0.11"
-julia = "1.6"
+julia = "1.10"
+FileWatching = "^1.10"
+LibCURL = "~0.6.4"
+PrecompileTools = "^1.2"
+ProtoBuf = "~1.2"
 
 [extras]
-Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
-Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Random", "Sockets", "Test"]
+test = ["Test"]

@@ -1,243 +1,94 @@
 # gRPCClient.jl
 
-A Julia gRPC Client.
+[![License][license-img]][license-url]
+[![Documentation][doc-stable-img]][doc-stable-url]
+[![Documentation][doc-dev-img]][doc-dev-url]
+[![CI](https://github.com/csvance/gRPCClient2.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/csvance/gRPCClient2.jl/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/github/csvance/gRPCClient2.jl/graph/badge.svg?token=2SUFGIE336)](https://codecov.io/github/csvance/gRPCClient2.jl)
 
-[![Build Status](https://github.com/JuliaComputing/gRPCClient.jl/workflows/CI/badge.svg)](https://github.com/JuliaComputing/gRPCClient.jl/actions?query=workflow%3ACI+branch%3Amain)
-[![codecov.io](http://codecov.io/github/JuliaComputing/gRPCClient.jl/coverage.svg?branch=main)](http://codecov.io/github/JuliaComputing/gRPCClient.jl?branch=main)
 
+gRPCClient.jl aims to be a production grade gRPC client emphasizing performance and reliability.
 
-## Generating gRPC Service Client
+## Documentation
 
-gRPC services are declared in `.proto` files. Use `gRPCClient.generate` to generate client code from specification files.
+The documentation for gRPCClient.jl can be found [here](https://csvance.github.io/gRPCClient2.jl).
 
-gRPC code generation uses `protoc` and the `ProtoBuf.jl` package. To be able to generate gRPC client code, `ProtoBuf` package must be installed along with `gRPCClient`.
+## Benchmarks 
 
-The `protoc` file must have service generation turned on for at least one of C++, python or Java, e.g. one of:
-
-```
-option cc_generic_services = true;
-option py_generic_services = true;
-option java_generic_services = true;
-```
-
-The Julia code generated can be improper if the `package` name declared in the proto specification has `.`. Set a suitable `package` name without `.`.
+To run the benchmarks, start a Julia terminal and include the `workloads.jl` file:
 
 ```julia
-julia> using Pkg
-
-julia> Pkg.add("ProtoBuf")
-...
-  Installed ProtoBuf ──── v0.11.0
-Downloading artifact: protoc
-...
-julia> Pkg.add("gRPCClient")
-...
-julia> # or Pkg.develop(PackageSpec(url="https://github.com/JuliaComputing/gRPCClient.jl"))
-
-julia> using gRPCClient
-
-julia> gRPCClient.generate("route_guide.proto")
-┌ Info: Generating gRPC client
-│   proto = "RouteguideClients/route_guide.proto"
-└   outdir = "RouteguideClients"
-┌ Info: Detected
-│   package = "routeguide"
-└   service = "RouteGuide"
-┌ Info: Generated
-└   outdir = "RouteguideClients"
+include("workloads.jl")
 ```
 
-The generated code can either be published as a package or included and used as a module.
+All of the benchmarks use the asynchronous channels interface to run multiple requests at the same time. All benchmark tests run against the Test gRPC Server in `test/python`. See the relevant [documentation](https://csvance.github.io/gRPCClient2.jl/dev/#Test-gRPC-Server) for information on how to run this.
+
+### "smol"
+
+Smol benchmarks sending and recieving lots of extremely small protobuffs (~16 bytes each)
 
 ```julia
-julia> using gRPCClient
+# Note that there are 1_000 RPC calls per sample, so the mean should be divided by 1_000
+julia> benchmark_workload_smol()
+BenchmarkTools.Trial: 41 samples with 1 evaluation per sample.
+ Range (min … max):  108.345 ms … 135.084 ms  ┊ GC (min … max): 0.00% … 7.75%
+ Time  (median):     123.482 ms               ┊ GC (median):    0.00%
+ Time  (mean ± σ):   122.444 ms ±   6.091 ms  ┊ GC (mean ± σ):  0.33% ± 1.41%
 
-julia> include("RouteguideClients/RouteguideClients.jl");
+                               █   ▃▃▃█ █  █ ▃                   
+  ▇▁▇▁▁▁▁▇▇▁▁▁▇▁▁▁▁▇▇▇▇▇▁▇▁▇▇▁▁█▁▇▁████▁█▇▁█▇█▁▁▁▁▁▇▇▇▁▁▁▁▇▁▁▁▇ ▁
+  108 ms           Histogram: frequency by time          135 ms <
 
-julia> using .RouteguideClients
+ Memory estimate: 4.27 MiB, allocs estimate: 93559.
+ ```
 
-julia> import .RouteguideClients: Point, Feature, GetFeature
+ The mean RPC throughput is 8166 request/sec.
 
-julia> Base.show(io::IO, location::Point) =
-    print(io, string("[", location.latitude, ", ", location.longitude, "]"))
+ ### (32, 224, 224) UInt8 Batch Inference
 
-julia> Base.show(io::IO, feature::Feature) =
-    print(io, string(feature.name, " - ", feature.location))
-
-julia> client = RouteGuideBlockingClient("https://server:10000/");
-
-julia> point = Point(; latitude=409146138, longitude=-746188906); # request param
-
-julia> feature, status_future = GetFeature(client, point);
-
-julia> gRPCCheck(status_future) # check status of request
-true
-
-julia> feature # this is the API return value
-Berkshire Valley Management Area Trail, Jefferson, NJ, USA - [409146138, -746188906]
-```
-
-The generated module is named after the package declared in the proto file.
-And for each service, a pair of clients are generated in the form of
-`<service_name>Client` and `<service_name>BlockingClient`.
-
-The service methods generated for `<service_name>Client` are identical to the
-ones generated for `<service_name>BlockingClient`, except that they spawn off
-the actual call into a task and accept a callback method that is invoked with
-the results. The `<service_name>BlockingClient` may however be more intuitive
-to use.
-
-Each service method returns (or calls back with, in the case of non-blocking
-clients) two values:
-- The result, which can be a Julia struct or a `Channel` for streaming output.
-- And, the gRPC status.
-
-The `gRPCCheck` method checks the status for success or failure. Note that for
-methods with streams as input or output, the gRPC status will not be ready
-until the method completes. So the status check and stream use must be done
-in separate tasks. E.g.:
+ This benchmark simulates sending 224x224 UInt8 images in a batch size of 32 for inference (~1.6 MB each)
 
 ```julia
-@sync begin
-   in_channel = Channel{RouteguideClients.RouteNote}(1)
-   @async begin
-      # send inputs
-      for input in inputs
-         put!(in_channel, input)
-      end
-      close(in_channel)
-   end
-   out_channel, status_future = RouteguideClients.RouteChat(client, in_channel)
-   @async begin
-      # consume outputs
-      for output in out_channel
-         # use output
-      end
-   end
-   @async begin
-      gRPCCheck(status_future)
-   end
-end
+# Note that there are 100 RPC calls per sample, so the mean should be divided by 100
+julia> benchmark_workload_32_224_224_uint8()
+BenchmarkTools.Trial: 27 samples with 1 evaluation per sample.
+ Range (min … max):  151.472 ms … 225.548 ms  ┊ GC (min … max): 1.17% … 10.24%
+ Time  (median):     186.578 ms               ┊ GC (median):    1.32%
+ Time  (mean ± σ):   187.099 ms ±  17.970 ms  ┊ GC (mean ± σ):  3.72% ±  4.59%
+
+              ▃          ▃    █ ▃                                
+  ▇▁▁▁▁▁▇▁▁▁▁▇█▁▇▇▁▁▁▁▁▁▇█▁▁▇▁█▁█▇▁▁▇▁▁▇▇▇▇▁▁▇▇▁▁▇▁▁▁▁▁▁▁▁▇▁▁▁▇ ▁
+  151 ms           Histogram: frequency by time          226 ms <
+
+ Memory estimate: 64.00 MiB, allocs estimate: 12943.
 ```
 
-## APIs and Implementation Details
+The mean RPC throughput is ~534 request/sec.
 
-The generated gRPC client (`RouteGuideBlockingClient` in the example above)
-uses a gRPC controller and channel behind the scenes to communicate with
-the server.
+## Stress Testing
 
-### `gRPCController`
-
-A `gRPCController` contains settings to control the behavior of gRPC requests.
-Each gRPC client holds an instance of the controller created using keyword
-arguments passed to its constructor.
+To run the stress tests, start a Julia terminal and include the `workloads.jl` file:
 
 ```julia
-gRPCController(;
-    [ maxage::Int = 0, ]
-    [ keepalive::Int64 = 60, ]
-    [ negotiation::Symbol = :http2_prior_knowledge, ]
-    [ revocation::Bool = true, ]
-    [ request_timeout::Real = Inf, ]
-    [ connect_timeout::Real = 0, ]
-    [ max_message_length = DEFAULT_MAX_MESSAGE_LENGTH, ]
-    [ max_recv_message_length = 0, ]
-    [ max_send_message_length = 0, ]
-    [ enable_shared_locks = false, ]
-    [ verbose::Bool = false, ]
-)
+include("workloads.jl")
 ```
 
-- `maxage`: maximum age (seconds) of a connection beyond which it will not
-   be reused (default 180 seconds, same as setting this to 0).
-- `keepalive`: interval (seconds) in which to send TCP keepalive messages on
-   the connection (default 60 seconds).
-- `negotiation`: how to negotiate HTTP2, can be one of `:http2_prior_knowledge`
-   (no negotiation, the default), `:http2_tls` (http2 upgrade but only over
-   tls), or `:http2` (http2 upgrade)
-- `revocation`: whether to check for certificate recovation (default is true)
-- `request_timeout`: request timeout (seconds)
-- `connect_timeout`: connect timeout (seconds) (default is 300 seconds, same
-   as setting this to 0)
-- `max_message_length`: maximum message length (default is 4MB)
-- `max_recv_message_length`: maximum message length to receive (default is
-   `max_message_length`, same as setting this to 0)
-- `max_send_message_length`: maximum message length to send (default is
-   `max_message_length`, same as setting this to 0)
-- `enable_shared_locks`: whether to enable locks for using gRPCClient across
-    tasks/threads concurrently (experimental, default is false)
-- `verbose`: whether to print out verbose communication logs (default false)
+Stress tests are available corresponding to each benchmark listed above:
 
-### `gRPCChannel`
+- `stress_workload_smol()`
+- `stress_workload_32_224_224_uint8()`
 
-```julia
-gRPCChannel(baseurl::String)
-```
+These run forever, and are useful to help identify any stability issues or resource leaks.
 
-`gRPCChannel` represents a connection to a specific service endpoint
-(service `baseurl`) of a gRPC server.
+## Acknowledgement
 
-A channel also usually has a single network connection backing it and
-multiple streams of requests can flow through it at any time. The number
-of streams that can be multiplexed is negotiated between the client and
-the server.
+This package is essentially a rewrite of the 0.1 version of gRPCClient.jl together with a gRPC specialized version of [Downloads.jl](https://github.com/JuliaLang/Downloads.jl). Without the above packages to build ontop of this effort would have been a far more signifigant undertaking, so thank you to all of the authors and maintainers who made this possible.
 
-### `gRPCStatus`
+[license-url]: ./LICENSE
+[license-img]: http://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat
 
-`gRPCStatus` represents the status of a request. It has the following fields:
+[doc-dev-img]: https://img.shields.io/badge/docs-dev-blue.svg
+[doc-dev-url]: https://csvance.github.io/gRPCClient2.jl/dev/
 
-- `success`: whether the request was completed successfully.
-- `grpc_status`: the grpc status code returned
-- `message`: any error message if request was not successful
-
-### `gRPCCheck`
-
-```julia
-gRPCCheck(status; throw_error::Bool=true)
-```
-
-Method to check the response of a gRPC request and raise a `gRPCException`
-if it has failed. If `throw_error` is set to false, returns `true` or `false`
-indicating success instead.
-
-### `gRPCException`
-
-Every gRPC request returns the result and a future representing the status
-of the gRPC request. Use the `gRPCCheck` method on the status future to check
-the request status and throw a `gRPCException` if it is not successful.
-
-The abstract `gRPCException` type has the following concrete implementations:
-
-- `gRPCMessageTooLargeException`
-- `gRPCServiceCallException`
-
-### `gRPCMessageTooLargeException`
-
-A `gRPMessageTooLargeException` exception is thrown when a message is
-encountered that has a size greater than the limit configured.
-Specifically, `max_recv_message_length` while receiving  and
-`max_send_message_length` while sending.
-
-A `gRPMessageTooLargeException` has the following members:
-
-- `limit`: the limit value that was exceeded
-- `encountered`: the amount of data that was actually received
-    or sent before this error was triggered. Note that this may
-    not correspond to the full size of the data, as error may be
-    thrown before actually materializing the complete data.
-
-### `gRPCServiceCallException`
-
-A `gRPCServiceCallException` is thrown if a gRPC request is not successful.
-It has the following members:
-
-- `grpc_status`: grpc status code for this request
-- `message`: any error message if request was not successful
-
-## TODO
-
-- Concurrent use of gRPCClient is still somewhat flaky.
-
-## Credits
-
-This package was originally developed at [Julia Computing](https://juliacomputing.com)
+[doc-stable-img]: https://img.shields.io/badge/docs-stable-blue.svg
+[doc-stable-url]: https://csvance.github.io/gRPCClient2.jl/stable/
