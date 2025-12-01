@@ -59,6 +59,7 @@ function grpc_async_request(
         keepalive = client.keepalive,
         max_send_message_length = client.max_send_message_length,
         max_recieve_message_length = client.max_recieve_message_length,
+        token = client.token,
     )
 
     req
@@ -129,6 +130,7 @@ function grpc_async_request(
         keepalive = client.keepalive,
         max_send_message_length = client.max_send_message_length,
         max_recieve_message_length = client.max_recieve_message_length,
+        token = client.token,
     )
 
     Threads.@spawn begin
