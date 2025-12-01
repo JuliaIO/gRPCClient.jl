@@ -3,15 +3,15 @@
 [![License][license-img]][license-url]
 [![Documentation][doc-stable-img]][doc-stable-url]
 [![Documentation][doc-dev-img]][doc-dev-url]
-[![CI](https://github.com/csvance/gRPCClient2.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/csvance/gRPCClient2.jl/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/github/csvance/gRPCClient2.jl/graph/badge.svg?token=2SUFGIE336)](https://codecov.io/github/csvance/gRPCClient2.jl)
+[![CI](https://github.com/JuliaIO/gRPCClient.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/JuliaIO/gRPCClient.jl/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/github/JuliaIO/gRPCClient.jl/graph/badge.svg?token=CJkqtuSbML)](https://codecov.io/github/JuliaIO/gRPCClient.jl)
 
 
 gRPCClient.jl aims to be a production grade gRPC client emphasizing performance and reliability.
 
 ## Documentation
 
-The documentation for gRPCClient.jl can be found [here](https://csvance.github.io/gRPCClient2.jl).
+The documentation for gRPCClient.jl can be found [here](https://juliaio.github.io/gRPCClient.jl).
 
 ## Benchmarks 
 
@@ -21,7 +21,7 @@ To run the benchmarks, start a Julia terminal and include the `workloads.jl` fil
 include("workloads.jl")
 ```
 
-All of the benchmarks use the asynchronous channels interface to run multiple requests at the same time. All benchmark tests run against the Test gRPC Server in `test/python`. See the relevant [documentation](https://csvance.github.io/gRPCClient2.jl/dev/#Test-gRPC-Server) for information on how to run this.
+All benchmark tests run against the Test gRPC Server in `test/python`. See the relevant [documentation](https://juliaio.github.io/gRPCClient2.jl/dev/#Test-gRPC-Server) for information on how to run this. Currently performance is limited by the test server in some cases, so we are actively looking at writing a test server in a different language to better assess performance.
 
 ### "smol"
 
@@ -88,7 +88,7 @@ This package is essentially a rewrite of the 0.1 version of gRPCClient.jl togeth
 [license-img]: http://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat
 
 [doc-dev-img]: https://img.shields.io/badge/docs-dev-blue.svg
-[doc-dev-url]: https://csvance.github.io/gRPCClient2.jl/dev/
+[doc-dev-url]: https://juliaio.github.io/gRPCClient2.jl/dev/
 
 [doc-stable-img]: https://img.shields.io/badge/docs-stable-blue.svg
-[doc-stable-url]: https://csvance.github.io/gRPCClient2.jl/stable/
+[doc-stable-url]: https://juliaio.github.io/gRPCClient2.jl/stable/
