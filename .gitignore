@@ -4,3 +4,4 @@ __pycache__
 *.pyc
 build
 Manifest.toml
+grpc_test_server
