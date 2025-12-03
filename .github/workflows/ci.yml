@@ -30,7 +30,7 @@ jobs:
     - name: Setup Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.24'
+        go-version: '1.22'
     - name: Build Go gRPC Test Server
       run: go build -o grpc_test_server .
       working-directory: test/go
