@@ -150,24 +150,53 @@ end
 """
     grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,false}, request::Channel{TRequest}) where {TRequest<:Any,TResponse<:Any}
 
-Start a requesting streaming gRPC request.
+Start a client streaming gRPC request (multiple requests, single response).
 
-```julia 
+```julia
 using gRPCClient
 
+# ============================================================================
+# Step 1: Initialize gRPC
+# ============================================================================
+# This must be called once before making any gRPC requests.
 grpc_init()
+
+# ============================================================================
+# Step 2: Include Generated Protocol Buffer Bindings
+# ============================================================================
 include("test/gen/test/test_pb.jl")
 
+# ============================================================================
+# Step 3: Create a Client for Your Streaming RPC Method
+# ============================================================================
 client = TestService_TestClientStreamRPC_Client("localhost", 8001)
+
+# ============================================================================
+# Step 4: Create a Request Channel and Send Requests
+# ============================================================================
+# The channel buffers requests that will be streamed to the server.
+# Buffer size of 16 means up to 16 requests can be queued.
 request_c = Channel{TestRequest}(16)
+
+# Send one or more requests through the channel
 put!(request_c, TestRequest(1, zeros(UInt64, 1)))
 
+# ============================================================================
+# Step 5: Initiate the Streaming Request
+# ============================================================================
 req = grpc_async_request(client, request_c)
 
-# Must close the request channel when done sending requests
+# ============================================================================
+# Step 6: Close the Request Channel When Done
+# ============================================================================
+# IMPORTANT: You must close the channel to signal that no more requests
+# will be sent. The server won't send the response until the stream ends.
 close(request_c)
 
-# Get the response
+# ============================================================================
+# Step 7: Wait for the Single Response
+# ============================================================================
+# After all requests are sent and processed, the server returns one response.
 test_response = grpc_async_await(client, req)
 ```
 """
@@ -198,27 +227,58 @@ end
 """
     grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,true},request::TRequest,response::Channel{TResponse}) where {TRequest<:Any,TResponse<:Any}
 
-Start a response streaming gRPC request.
+Start a server streaming gRPC request (single request, multiple responses).
 
 ```julia
 using gRPCClient
 
+# ============================================================================
+# Step 1: Initialize gRPC
+# ============================================================================
+# This must be called once before making any gRPC requests.
 grpc_init()
+
+# ============================================================================
+# Step 2: Include Generated Protocol Buffer Bindings
+# ============================================================================
 include("test/gen/test/test_pb.jl")
 
+# ============================================================================
+# Step 3: Create a Client for Your Streaming RPC Method
+# ============================================================================
 client = TestService_TestServerStreamRPC_Client("localhost", 8001)
 
+# ============================================================================
+# Step 4: Create a Response Channel
+# ============================================================================
+# The channel will receive multiple responses from the server.
+# Buffer size of 16 means up to 16 responses can be queued.
 response_c = Channel{TestResponse}(16)
 
+# ============================================================================
+# Step 5: Initiate the Streaming Request
+# ============================================================================
+# Send a single request. The server will respond with multiple messages.
 req = grpc_async_request(
     client,
     TestRequest(1, zeros(UInt64, 1)),
     response_c,
 )
-test_response = take!(response_c)
 
-# Raise any exceptions encountered during the request
-grpc_async_await(req) 
+# ============================================================================
+# Step 6: Process Streaming Responses
+# ============================================================================
+# Read responses from the channel as they arrive. The channel will be closed
+# when the server finishes sending all responses.
+for test_response in response_c
+    @info test_response
+end
+
+# ============================================================================
+# Step 7: Check for Exceptions
+# ============================================================================
+# Call grpc_async_await to raise any exceptions that occurred during the request.
+grpc_async_await(req)
 ```
 """
 function grpc_async_request(
@@ -255,27 +315,70 @@ end
 """
     grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,true},request::Channel{TRequest},response::Channel{TResponse}) where {TRequest<:Any,TResponse<:Any}
 
-Start a bidirectional gRPC request.
+Start a bidirectional streaming gRPC request (multiple requests, multiple responses).
 
 ```julia
 using gRPCClient
 
+# ============================================================================
+# Step 1: Initialize gRPC
+# ============================================================================
+# This must be called once before making any gRPC requests.
 grpc_init()
+
+# ============================================================================
+# Step 2: Include Generated Protocol Buffer Bindings
+# ============================================================================
 include("test/gen/test/test_pb.jl")
 
+# ============================================================================
+# Step 3: Create a Client for Your Streaming RPC Method
+# ============================================================================
 client = TestService_TestBidirectionalStreamRPC_Client("localhost", 8001)
 
+# ============================================================================
+# Step 4: Create Request and Response Channels
+# ============================================================================
+# Both channels allow streaming in both directions simultaneously.
+# Buffer size of 16 means up to 16 messages can be queued in each direction.
 request_c = Channel{TestRequest}(16)
 response_c = Channel{TestResponse}(16)
 
-put!(request_c, TestRequest(1, zeros(UInt64, 1)))
+# ============================================================================
+# Step 5: Initiate the Bidirectional Streaming Request
+# ============================================================================
 req = grpc_async_request(client, request_c, response_c)
-test_response = take!(response_c)
 
-# Must close the request channel when done sending requests
+# ============================================================================
+# Step 6: Send Requests and Receive Responses Concurrently
+# ============================================================================
+# In bidirectional streaming, you can send and receive at the same time.
+# This example shows a simple pattern, but you can use tasks for more
+# complex concurrent communication patterns.
+
+# Send a request
+put!(request_c, TestRequest(1, zeros(UInt64, 1)))
+
+# Receive responses as they arrive
+for test_response in response_c
+    @info test_response
+    # Optionally send more requests based on responses
+    # put!(request_c, ...)
+    break  # Exit after first response for this example
+end
+
+# ============================================================================
+# Step 7: Close the Request Channel When Done
+# ============================================================================
+# IMPORTANT: You must close the request channel to signal that no more
+# requests will be sent.
 close(request_c)
-# Raise any exceptions encountered during the request
-grpc_async_await(req) 
+
+# ============================================================================
+# Step 8: Check for Exceptions
+# ============================================================================
+# Call grpc_async_await to raise any exceptions that occurred during the request.
+grpc_async_await(req)
 ```
 """
 function grpc_async_request(

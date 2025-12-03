@@ -3,35 +3,56 @@
 """
     grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::TRequest) where {TRequest<:Any,TResponse<:Any}
 
-Initiate an asynchronous gRPC request: send the request to the server and then immediately return a `gRPCRequest` object without waiting for the response. 
+Initiate an asynchronous gRPC request: send the request to the server and then immediately return a `gRPCRequest` object without waiting for the response.
 In order to wait on / retrieve the result once its ready, call `grpc_async_await`.
 This is ideal when you need to send many requests in parallel and waiting on each response before sending the next request would things down.
 
 ```julia
 using gRPCClient
 
+# ============================================================================
+# Step 1: Initialize gRPC
+# ============================================================================
+# This must be called once before making any gRPC requests.
+# It initializes the underlying libcurl multi handle and other resources.
 grpc_init()
 
-# Include the generated bindings
+# ============================================================================
+# Step 2: Include Generated Protocol Buffer Bindings
+# ============================================================================
+# These bindings define the message types (e.g., TestRequest, TestResponse)
+# and client stubs for your gRPC service. They are generated from .proto files.
 include("test/gen/test/test_pb.jl")
 
-# Create a client bound to a specific RPC
+# ============================================================================
+# Step 3: Create a Client for Your RPC Method
+# ============================================================================
+# The client is bound to a specific RPC method on your gRPC service.
+# Arguments: hostname, port
 client = TestService_TestRPC_Client("localhost", 8001)
 
-# Make a syncronous request and get back a TestResponse
-response = grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
-@info response
+# ============================================================================
+# Step 4: Send Multiple Async Requests
+# ============================================================================
+# Use grpc_async_request when you want to send requests without blocking.
+# This is useful for sending many requests in parallel.
 
-# Make some async requests and await their TestResponse
+# Send all requests without waiting for responses
 requests = Vector{gRPCRequest}()
 for i in 1:10
+    # Each request is sent immediately and returns a gRPCRequest handle
     push!(
-        requests, 
+        requests,
         grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
     )
 end
 
+# ============================================================================
+# Step 5: Wait for and Process Responses
+# ============================================================================
+# Use grpc_async_await to retrieve the response when you need it.
 for request in requests
+    # This blocks until the specific request completes
     response = grpc_async_await(client, request)
     @info response
 end
@@ -80,29 +101,53 @@ This has the advantage over the request / await patern in that you can handle re
 ```julia
 using gRPCClient
 
+# ============================================================================
+# Step 1: Initialize gRPC
+# ============================================================================
+# This must be called once before making any gRPC requests.
 grpc_init()
+
+# ============================================================================
+# Step 2: Include Generated Protocol Buffer Bindings
+# ============================================================================
 include("test/gen/test/test_pb.jl")
 
-# Connect to the test server
+# ============================================================================
+# Step 3: Create a Client for Your RPC Method
+# ============================================================================
 client = TestService_TestRPC_Client("localhost", 8001)
 
+# ============================================================================
+# Step 4: Create a Channel to Receive Responses
+# ============================================================================
+# Use the channel-based pattern when you want to process responses as soon
+# as they arrive, regardless of the order they were sent.
 N = 10
-
 channel = Channel{gRPCAsyncChannelResponse{TestResponse}}(N)
 
+# ============================================================================
+# Step 5: Send All Requests
+# ============================================================================
+# The index parameter allows you to track which request each response
+# corresponds to, since responses may arrive out of order.
 for (index, request) in enumerate([TestRequest(i, zeros(UInt64, i)) for i in 1:N])
-     grpc_async_request(client, request, channel, index)
+    grpc_async_request(client, request, channel, index)
 end
 
+# ============================================================================
+# Step 6: Process Responses as They Arrive
+# ============================================================================
+# Responses are pushed to the channel as they complete. You can process
+# them immediately without waiting for all requests to finish first.
 for i in 1:N
     cr = take!(channel)
-    # Check if an exception was thrown, if so throw it here
+
+    # Check if an exception was thrown during the request
     !isnothing(cr.ex) && throw(cr.ex)
 
-    # If this does not hold true, then the requests and responses have gotten mixed up.
+    # Use the index to match responses to requests
     @assert length(cr.response.data) == cr.index
 end
-
 ```
 """
 function grpc_async_request(
@@ -158,8 +203,37 @@ grpc_async_await(
 """
     grpc_sync_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::TRequest) where {TRequest<:Any,TResponse<:Any}
 
-Do a synchronous gRPC request: send the request and wait for the response before returning it. 
-Under the hood this just calls `grpc_async_request` and `grpc_async_await`
+Do a synchronous gRPC request: send the request and wait for the response before returning it.
+Under the hood this just calls `grpc_async_request` and `grpc_async_await`.
+Use this when you want the simplest possible interface for a single request.
+
+```julia
+using gRPCClient
+
+# ============================================================================
+# Step 1: Initialize gRPC
+# ============================================================================
+# This must be called once before making any gRPC requests.
+grpc_init()
+
+# ============================================================================
+# Step 2: Include Generated Protocol Buffer Bindings
+# ============================================================================
+include("test/gen/test/test_pb.jl")
+
+# ============================================================================
+# Step 3: Create a Client for Your RPC Method
+# ============================================================================
+client = TestService_TestRPC_Client("localhost", 8001)
+
+# ============================================================================
+# Step 4: Make a Synchronous Request
+# ============================================================================
+# This blocks until the response is ready. It's the simplest way to make
+# a single gRPC request when you don't need parallelism.
+response = grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
+@info response
+```
 """
 grpc_sync_request(
     client::gRPCServiceClient{TRequest,false,TResponse,false},
