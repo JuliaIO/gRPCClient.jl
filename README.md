@@ -15,6 +15,12 @@ The documentation for gRPCClient.jl can be found [here](https://juliaio.github.i
 
 ## Benchmarks
 
+
+### Naive Baseline: `julia`
+
+By default Julia 1.12 starts with just one thread. The closer to `@async` we get, the better performance is for most cases. 
+However, it is unlikely Julia will be used this way in the real world.
+
 ```
 ╭──────────────────────────────────┬─────────┬────────┬─────────────┬──────────┬────────────┬──────────────┬─────────┬──────┬──────╮
 │                        Benchmark │       N │ Memory │ Allocations │ Duration │ Throughput │ Avg duration │ Std-dev │  Min │  Max │
@@ -25,6 +31,23 @@ The documentation for gRPCClient.jl can be found [here](https://juliaio.github.i
 │       workload_streaming_request │ 2566000 │   0.61 │        6615 │     4.99 │     514001 │            2 │    0.61 │    1 │   16 │
 │      workload_streaming_response │  985000 │   13.0 │       27721 │      5.0 │     197101 │            5 │    0.48 │    4 │    7 │
 │ workload_streaming_bidirectional │ 2568000 │   1.98 │       25503 │     4.99 │     514539 │            2 │     0.5 │    1 │   12 │
+╰──────────────────────────────────┴─────────┴────────┴─────────────┴──────────┴────────────┴──────────────┴─────────┴──────┴──────╯
+```
+
+### Real World: `julia -t auto`
+
+Using more threads isn't great for async IO, but this is likely how most people will be using `gRPCClient.jl`.
+
+```
+╭──────────────────────────────────┬─────────┬────────┬─────────────┬──────────┬────────────┬──────────────┬─────────┬──────┬──────╮
+│                        Benchmark │       N │ Memory │ Allocations │ Duration │ Throughput │ Avg duration │ Std-dev │  Min │  Max │
+│                                  │   calls │    MiB │             │        s │    calls/s │           μs │      μs │   μs │   μs │
+├──────────────────────────────────┼─────────┼────────┼─────────────┼──────────┼────────────┼──────────────┼─────────┼──────┼──────┤
+│                    workload_smol │   91000 │   3.75 │       85123 │     5.03 │      18079 │           55 │    3.96 │   48 │   67 │
+│        workload_32_224_224_uint8 │    2900 │  63.78 │        9188 │     5.01 │        579 │         1728 │   97.86 │ 1614 │ 1899 │
+│       workload_streaming_request │ 1841000 │   0.89 │        6482 │     4.99 │     368669 │            3 │    1.35 │    2 │   21 │
+│      workload_streaming_response │  330000 │   13.0 │       27838 │     5.02 │      65771 │           15 │     5.2 │    6 │   37 │
+│ workload_streaming_bidirectional │  405000 │   1.48 │       25672 │      5.0 │      80948 │           12 │    8.52 │    3 │   62 │
 ╰──────────────────────────────────┴─────────┴────────┴─────────────┴──────────┴────────────┴──────────────┴─────────┴──────┴──────╯
 ```
 
