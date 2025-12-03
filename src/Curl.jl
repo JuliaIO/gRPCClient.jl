@@ -61,8 +61,8 @@ function read_callback(
     try
         req = unsafe_pointer_to_objref(req_p)::gRPCRequest
 
-        # Check for race condition
-        @assert !req.curl_done_reading.set
+        # Sometimes curl calls again even after we tell it to pause
+        req.curl_done_reading.set && return CURL_READFUNC_PAUSE
 
         buf_p = pointer(req.request.data) + req.request_ptr
         n_left = req.request.size - req.request_ptr
