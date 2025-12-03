@@ -1,10 +1,3 @@
-using gRPCClient
-using BenchmarkTools
-
-grpc_init()
-
-include("test/gen/test/test_pb.jl")
-
 function workload_32_224_224_uint8(n)
     client = TestService_TestRPC_Client("localhost", 8001)
 
@@ -99,25 +92,3 @@ function workload_streaming_bidirectional(n)
         nothing
     end    
 end
-
-
-function stress_workload(f::Function, n)
-    while true
-        f(n)
-    end
-end
-
-stress_workload_smol() = stress_workload(workload_smol, 1_000)
-stress_workload_32_224_224_uint8() = stress_workload(workload_32_224_224_uint8, 100)
-stress_workload_streaming_request() = stress_workload(workload_streaming_request, 1_000)
-stress_workload_streaming_response() = stress_workload(workload_streaming_response, 1_000)
-stress_workload_streaming_bidirectional() = stress_workload(workload_streaming_bidirectional, 1_000)
-
-benchmark_workload_smol() = @benchmark workload_smol(1_000)
-benchmark_workload_32_224_224_uint8() = @benchmark workload_32_224_224_uint8(100)
-benchmark_workload_streaming_request() = @benchmark workload_streaming_request(1_000)
-benchmark_workload_streaming_response() = @benchmark workload_streaming_response(1_000)
-benchmark_workload_streaming_bidirectional() = @benchmark workload_streaming_bidirectional(1_000)
-
-
-nothing
