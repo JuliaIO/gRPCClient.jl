@@ -13,72 +13,9 @@ gRPCClient.jl aims to be a production grade gRPC client emphasizing performance 
 
 The documentation for gRPCClient.jl can be found [here](https://juliaio.github.io/gRPCClient.jl).
 
-## Benchmarks 
+## Benchmarks
 
-To run the benchmarks, start a Julia terminal and include the `workloads.jl` file:
-
-```julia
-include("workloads.jl")
-```
-
-All benchmark tests run against the Test gRPC Server in `test/python`. See the relevant [documentation](https://juliaio.github.io/gRPCClient2.jl/dev/#Test-gRPC-Server) for information on how to run this. Currently performance is limited by the test server in some cases, so we are actively looking at writing a test server in a different language to better assess performance.
-
-### "smol"
-
-Smol benchmarks sending and recieving lots of extremely small protobuffs (~16 bytes each)
-
-```julia
-# Note that there are 1_000 RPC calls per sample, so the mean should be divided by 1_000
-julia> benchmark_workload_smol()
-BenchmarkTools.Trial: 41 samples with 1 evaluation per sample.
- Range (min … max):  108.345 ms … 135.084 ms  ┊ GC (min … max): 0.00% … 7.75%
- Time  (median):     123.482 ms               ┊ GC (median):    0.00%
- Time  (mean ± σ):   122.444 ms ±   6.091 ms  ┊ GC (mean ± σ):  0.33% ± 1.41%
-
-                               █   ▃▃▃█ █  █ ▃                   
-  ▇▁▇▁▁▁▁▇▇▁▁▁▇▁▁▁▁▇▇▇▇▇▁▇▁▇▇▁▁█▁▇▁████▁█▇▁█▇█▁▁▁▁▁▇▇▇▁▁▁▁▇▁▁▁▇ ▁
-  108 ms           Histogram: frequency by time          135 ms <
-
- Memory estimate: 4.27 MiB, allocs estimate: 93559.
- ```
-
- The mean RPC throughput is 8166 request/sec.
-
- ### (32, 224, 224) UInt8 Batch Inference
-
- This benchmark simulates sending 224x224 UInt8 images in a batch size of 32 for inference (~1.6 MB each)
-
-```julia
-# Note that there are 100 RPC calls per sample, so the mean should be divided by 100
-julia> benchmark_workload_32_224_224_uint8()
-BenchmarkTools.Trial: 27 samples with 1 evaluation per sample.
- Range (min … max):  151.472 ms … 225.548 ms  ┊ GC (min … max): 1.17% … 10.24%
- Time  (median):     186.578 ms               ┊ GC (median):    1.32%
- Time  (mean ± σ):   187.099 ms ±  17.970 ms  ┊ GC (mean ± σ):  3.72% ±  4.59%
-
-              ▃          ▃    █ ▃                                
-  ▇▁▁▁▁▁▇▁▁▁▁▇█▁▇▇▁▁▁▁▁▁▇█▁▁▇▁█▁█▇▁▁▇▁▁▇▇▇▇▁▁▇▇▁▁▇▁▁▁▁▁▁▁▁▇▁▁▁▇ ▁
-  151 ms           Histogram: frequency by time          226 ms <
-
- Memory estimate: 64.00 MiB, allocs estimate: 12943.
-```
-
-The mean RPC throughput is ~534 request/sec.
-
-## Stress Testing
-
-To run the stress tests, start a Julia terminal and include the `workloads.jl` file:
-
-```julia
-include("workloads.jl")
-```
-
-Stress tests are available corresponding to each benchmark listed above:
-
-- `stress_workload_smol()`
-- `stress_workload_32_224_224_uint8()`
-
-These run forever, and are useful to help identify any stability issues or resource leaks.
+**TODO: PrettyTables.jl Benchmark Results Here**
 
 ## Acknowledgement
 
@@ -88,7 +25,7 @@ This package is essentially a rewrite of the 0.1 version of gRPCClient.jl togeth
 [license-img]: http://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat
 
 [doc-dev-img]: https://img.shields.io/badge/docs-dev-blue.svg
-[doc-dev-url]: https://juliaio.github.io/gRPCClient2.jl/dev/
+[doc-dev-url]: https://juliaio.github.io/gRPCClient.jl/dev/
 
 [doc-stable-img]: https://img.shields.io/badge/docs-stable-blue.svg
-[doc-stable-url]: https://juliaio.github.io/gRPCClient2.jl/stable/
+[doc-stable-url]: https://juliaio.github.io/gRPCClient.jl/stable/

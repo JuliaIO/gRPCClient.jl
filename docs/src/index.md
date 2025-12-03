@@ -19,18 +19,16 @@ The client is missing a few features which will be added over time if there is s
 
 ### Test gRPC Server
 
-All examples in the documentation are run against a test server written in Python. You can run it by doing the following:
+All examples in the documentation are run against a test server written in Go. You can run it by doing the following:
 
 ```bash
-# Install uv package manager - see https://docs.astral.sh/uv/#installation for more details
-curl -LsSf https://astral.sh/uv/install.sh | sh
+cd test/go
 
-# Change directory to the python test server project
-cd test/python
+# Build
+go build -o grpc_test_server
 
-# Run the test server
-uv run grpc_test_server.py
-
+# Run
+./grpc_test_server
 ```
 
 ### Code Generation
@@ -56,7 +54,9 @@ protojl("test/proto/test.proto", ".", "test/gen")
 
 See [here](#RPC) for examples covering all provided interfaces for both unary and streaming gRPC calls. 
 
-## Package Initialization / Shutdown
+## API
+
+### Package Initialization / Shutdown
 
 ```@docs
 grpc_init()
@@ -64,9 +64,9 @@ grpc_shutdown()
 grpc_global_handle()
 ```
 
-## RPC
+### RPC
 
-### Unary
+#### Unary
 
 ```@docs
 grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::TRequest) where {TRequest<:Any,TResponse<:Any}
@@ -75,7 +75,7 @@ grpc_async_await(client::gRPCServiceClient{TRequest,false,TResponse,false}, requ
 grpc_sync_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::TRequest) where {TRequest<:Any,TResponse<:Any}
 ```
 
-### Streaming
+#### Streaming
 
 ```@docs
 grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,false}, request::Channel{TRequest}) where {TRequest<:Any,TResponse<:Any}
@@ -84,8 +84,26 @@ grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,true},reque
 grpc_async_await(client::gRPCServiceClient{TRequest,true,TResponse,false},request::gRPCRequest) where {TRequest<:Any,TResponse<:Any} 
 ```
 
-## Exceptions
+### Exceptions
 
 ```@docs
 gRPCServiceCallException
 ```
+
+## Benchmarking
+
+All benchmark tests run against the Test gRPC Server in `test/go`. See the relevant [documentation](#Test-gRPC-Server) for information on how to run this.
+
+**TODO: information on how to run the benchmarks with PrettyTables.jl support**
+
+### Stress Workloads
+
+In addition to benchmarks, a number of workloads based on these are available in `workloads.jl`:
+
+- `stress_workload_smol()`
+- `stress_workload_32_224_224_uint8()`
+- `stress_workload_streaming_request()`
+- `stress_workload_streaming_response()`
+- `stress_workload_streaming_bidirectional()`
+
+These run forever, and are useful to help identify any stability issues or resource leaks.
