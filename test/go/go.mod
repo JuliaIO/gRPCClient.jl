@@ -1,6 +1,6 @@
 module grpc_test_server
 
-go 1.22
+go 1.24
 
 require (
 	google.golang.org/grpc v1.68.1
