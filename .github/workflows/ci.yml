@@ -59,4 +59,4 @@ jobs:
     - uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
-	slug: JuliaIO/gRPCClient.jl
+        slug: JuliaIO/gRPCClient.jl
