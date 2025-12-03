@@ -64,6 +64,50 @@ grpc_shutdown()
 grpc_global_handle()
 ```
 
+### Generated ServiceClient Constructors
+
+When you generate service stubs using ProtoBuf.jl, a constructor method is automatically created for each RPC endpoint. These constructors create `gRPCServiceClient` instances that are used to make RPC calls.
+
+#### Constructor Signature
+
+For a service method named `TestRPC` in service `TestService`, the generated constructor will have the form:
+
+```julia
+TestService_TestRPC_Client(
+    host, port;
+    secure=false,
+    grpc=grpc_global_handle(),
+    deadline=10,
+    keepalive=60,
+    max_send_message_length = 4*1024*1024,
+    max_recieve_message_length = 4*1024*1024,
+)
+```
+
+#### Parameters
+
+- **`host`**: The hostname or IP address of the gRPC server (e.g., `"localhost"`, `"api.example.com"`)
+- **`port`**: The port number the gRPC server is listening on (e.g., `50051`)
+- **`secure`**: A `Bool` that controls whether HTTPS/gRPCS (when `true`) or HTTP/gRPC (when `false`) is used for the connection. Default: `false`
+- **`grpc`**: The global gRPC handle obtained from `grpc_global_handle()`. This manages the underlying libcurl multi-handle for HTTP/2 multiplexing. Default: `grpc_global_handle()`
+- **`deadline`**: The gRPC deadline in seconds. If a request takes longer than this time limit, it will be cancelled and raise an exception. Default: `10`
+- **`keepalive`**: The TCP keepalive interval in seconds. This sets both `CURLOPT_TCP_KEEPINTVL` (interval between keepalive probes) and `CURLOPT_TCP_KEEPIDLE` (time before first keepalive probe) to help detect broken connections. Default: `60`
+- **`max_send_message_length`**: The maximum size in bytes for messages sent to the server. Attempting to send messages larger than this will raise an exception. Default: `4*1024*1024` (4 MiB)
+- **`max_recieve_message_length`**: The maximum size in bytes for messages received from the server. Receiving messages larger than this will raise an exception. Default: `4*1024*1024` (4 MiB)
+
+#### Example
+
+```julia
+# Create a client for the TestRPC endpoint
+client = TestService_TestRPC_Client(
+    "localhost", 50051;
+    secure=true,  # Use HTTPS/gRPCS
+    deadline=30,  # 30 second timeout
+    max_send_message_length=10*1024*1024,  # 10 MiB max send
+    max_recieve_message_length=10*1024*1024  # 10 MiB max receive
+)
+```
+
 ### RPC
 
 #### Unary
