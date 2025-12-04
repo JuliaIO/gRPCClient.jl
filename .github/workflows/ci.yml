@@ -66,6 +66,7 @@ jobs:
           ${{ runner.os }}-
     - uses: julia-actions/julia-buildpkg@v1
     - uses: julia-actions/julia-runtest@v1
+      timeout-minutes: 5
     - name: Stop Go gRPC Test Server
       run: killall grpc_test_server
     - uses: julia-actions/julia-processcoverage@v1
