@@ -23,7 +23,7 @@ function write_callback(
         buf = unsafe_wrap(Array, convert(Ptr{UInt8}, data), (n,))
 
         handled_n_bytes_total = 0
-        try 
+        try
             while !isnothing(buf) && handled_n_bytes_total < n
                 handled_n_bytes, buf = handle_write(req, buf)
                 handled_n_bytes_total += handled_n_bytes
@@ -339,7 +339,10 @@ Base.wait(req::gRPCRequest) = wait(req.ready)
 Base.reset(req::gRPCRequest) = reset(req.ready)
 
 
-function handle_write(req::gRPCRequest, buf::Vector{UInt8})::Tuple{Int64, Union{Nothing, Vector{UInt8}}}
+function handle_write(
+    req::gRPCRequest,
+    buf::Vector{UInt8},
+)::Tuple{Int64,Union{Nothing,Vector{UInt8}}}
     if !req.response_read_header
         header_bytes_left = GRPC_HEADER_SIZE - req.response.size
 
@@ -379,7 +382,7 @@ function handle_write(req::gRPCRequest, buf::Vector{UInt8})::Tuple{Int64, Union{
             seekstart(req.response)
             truncate(req.response, 0)
 
-            buf_leftover = nothing 
+            buf_leftover = nothing
 
             if (leftover_bytes = length(buf) - header_bytes_left) > 0
                 # Handle the remaining data
@@ -416,7 +419,7 @@ function handle_write(req::gRPCRequest, buf::Vector{UInt8})::Tuple{Int64, Union{
         # Handle the remaining data
         leftover_bytes = length(buf) - n
 
-        buf_leftover = nothing 
+        buf_leftover = nothing
         if leftover_bytes > 0
             buf_leftover = unsafe_wrap(Array, pointer(buf) + n, (leftover_bytes,))
         end
@@ -562,12 +565,7 @@ function socket_callback(
 
                     n_recursive_spin = 0
                     lock(grpc.lock) do
-                        status = curl_multi_socket_action(
-                            grpc.multi,
-                            sock,
-                            flags,
-                            Ref{Cint}(),
-                        )
+                        status = curl_multi_socket_action(grpc.multi, sock, flags, Ref{Cint}())
                         @assert status == CURLM_OK
                         check_multi_info(grpc)
                     end
