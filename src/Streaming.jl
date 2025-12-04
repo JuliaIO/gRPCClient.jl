@@ -100,11 +100,6 @@ function grpc_async_stream_response(
     catch ex
         if isa(ex, InvalidStateException)
 
-        elseif isa(ex, gRPCServiceCallException)
-            if isnothing(req.ex)
-                req.ex = ex
-                notify(req.ready)
-            end
         else
             if isnothing(req.ex)
                 req.ex = ex

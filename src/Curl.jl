@@ -42,6 +42,7 @@ function write_callback(
                 GRPC_INTERNAL,
                 "Recieved $(n) bytes from curl but only handled $(handled_n_bytes_total)",
             )
+            # If we are response streaming unblock the task waiting on response_c
             !isnothing(req.response_c) && close(req.response_c)
             return typemax(Csize_t)
         end
@@ -129,7 +130,25 @@ function header_callback(
     end
 end
 
-
+function grpc_timeout_header_val(timeout::Real)
+    if round(Int, timeout) == timeout
+        timeout_secs = round(Int64, timeout)
+        return "$(timeout_secs)S"
+    end
+    timeout *= 1000
+    if round(Int, timeout) == timeout
+        timeout_millisecs = round(Int64, timeout)
+        return "$(timeout_millisecs)m"
+    end
+    timeout *= 1000
+    if round(Int, timeout) == timeout
+        timeout_microsecs = round(Int64, timeout)
+        return "$(timeout_microsecs)u"
+    end
+    timeout *= 1000
+    timeout_nanosecs = round(Int64, timeout)
+    return "$(timeout_nanosecs)n"
+end
 
 mutable struct gRPCRequest
     # CURL multi lock for exclusive access to the easy handle after its added to the multi
@@ -219,26 +238,6 @@ mutable struct gRPCRequest
             )
         elseif startswith(http_url, "https://")
             curl_easy_setopt(easy_handle, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2TLS)
-        end
-
-        function grpc_timeout_header_val(timeout::Real)
-            if round(Int, timeout) == timeout
-                timeout_secs = round(Int64, timeout)
-                return "$(timeout_secs)S"
-            end
-            timeout *= 1000
-            if round(Int, timeout) == timeout
-                timeout_millisecs = round(Int64, timeout)
-                return "$(timeout_millisecs)m"
-            end
-            timeout *= 1000
-            if round(Int, timeout) == timeout
-                timeout_microsecs = round(Int64, timeout)
-                return "$(timeout_microsecs)u"
-            end
-            timeout *= 1000
-            timeout_nanosecs = round(Int64, timeout)
-            return "$(timeout_nanosecs)n"
         end
 
         headers = C_NULL
@@ -352,6 +351,7 @@ function handle_write(req::gRPCRequest, buf::Vector{UInt8})::Tuple{Int64, Union{
                     GRPC_UNIMPLEMENTED,
                     "Response was compressed but compression is not currently supported.",
                 )
+                # If we are response streaming unblock the task waiting on response_c
                 !isnothing(req.response_c) && close(req.response_c)
                 notify(req.ready)
                 return n, nothing
@@ -360,6 +360,7 @@ function handle_write(req::gRPCRequest, buf::Vector{UInt8})::Tuple{Int64, Union{
                     GRPC_RESOURCE_EXHAUSTED,
                     "length-prefix longer than max_recieve_message_length: $(req.response_length) > $(req.max_recieve_message_length)",
                 )
+                # If we are response streaming unblock the task waiting on response_c
                 !isnothing(req.response_c) && close(req.response_c)
                 notify(req.ready)
                 return n, nothing
