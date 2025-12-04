@@ -334,6 +334,9 @@ include("gen/test/test_pb.jl")
 
         # Should get gRPCServiceCallException when awaiting
         try
+            for response in response_c
+                # Might get some responses before the error
+            end
             grpc_async_await(req)
             @test false  # Should not reach here
         catch ex
