@@ -57,9 +57,6 @@ function grpc_async_stream_request(
             end
         end
     catch ex
-        close(channel)
-        close(req.request_c)
-
         if isa(ex, InvalidStateException)
             # Wait for any request data to be flushed by curl
             wait(req.curl_done_reading)
@@ -82,6 +79,9 @@ function grpc_async_stream_request(
             end
             @error "grpc_async_stream_request: unexpected exception" exception = ex
         end
+    finally
+        close(channel)
+        close(req.request_c)
     end
 
     nothing
@@ -98,9 +98,6 @@ function grpc_async_stream_response(
             put!(channel, response)
         end
     catch ex
-        close(channel)
-        close(req.response_c)
-
         if isa(ex, InvalidStateException)
 
         elseif isa(ex, gRPCServiceCallException)
@@ -115,7 +112,9 @@ function grpc_async_stream_response(
             end
             @error "grpc_async_stream_response: unexpected exception" exception = ex
         end
-
+    finally
+        close(channel)
+        close(req.response_c)
     end
 
     nothing

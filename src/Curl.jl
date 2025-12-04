@@ -42,6 +42,7 @@ function write_callback(
                 GRPC_INTERNAL,
                 "Recieved $(n) bytes from curl but only handled $(handled_n_bytes_total)",
             )
+            !isnothing(req.response_c) && close(req.response_c)
             return typemax(Csize_t)
         end
 
@@ -351,6 +352,7 @@ function handle_write(req::gRPCRequest, buf::Vector{UInt8})::Tuple{Int64, Union{
                     GRPC_UNIMPLEMENTED,
                     "Response was compressed but compression is not currently supported.",
                 )
+                !isnothing(req.response_c) && close(req.response_c)
                 notify(req.ready)
                 return n, nothing
             elseif req.response_length > req.max_recieve_message_length
@@ -358,6 +360,7 @@ function handle_write(req::gRPCRequest, buf::Vector{UInt8})::Tuple{Int64, Union{
                     GRPC_RESOURCE_EXHAUSTED,
                     "length-prefix longer than max_recieve_message_length: $(req.response_length) > $(req.max_recieve_message_length)",
                 )
+                !isnothing(req.response_c) && close(req.response_c)
                 notify(req.ready)
                 return n, nothing
             end
