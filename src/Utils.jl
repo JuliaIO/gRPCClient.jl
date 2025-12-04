@@ -6,4 +6,5 @@ end
 
 # On Windows OS_HANDLE does not like curl_sock_t (Int32)
 # Convert it to a pointer instead
-CROSS_PLATFORM_OS_HANDLE(sock) = OS_HANDLE(Sys.iswindows() ? Ptr{Cvoid}(Int(sock)) : sock)
+CROSS_PLATFORM_OS_HANDLE(sock::curl_socket_t) =
+    OS_HANDLE(Sys.iswindows() ? Ptr{Cvoid}(Int(sock)) : sock)

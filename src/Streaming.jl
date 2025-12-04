@@ -1,16 +1,25 @@
-@static if VERSION >= v"1.12"
 
-    function grpc_async_stream_request(
-        req::gRPCRequest,
-        channel::Channel{TRequest},
-    ) where {TRequest<:Any}
-        try
-            encode_buf = IOBuffer()
-            reqs_ready = 0
+function grpc_async_stream_request(
+    req::gRPCRequest,
+    channel::Channel{TRequest},
+) where {TRequest<:Any}
+    try
+        encode_buf = IOBuffer()
+        reqs_ready = 0
 
-            while isnothing(req.ex)
-                try
-                    # Always do a blocking take! once so we don't spin
+        while isnothing(req.ex)
+            try
+                # Always do a blocking take! once so we don't spin
+                request = take!(channel)
+                grpc_encode_request_iobuffer(
+                    request,
+                    encode_buf;
+                    max_send_message_length = req.max_send_message_length,
+                )
+                reqs_ready += 1
+
+                # Try to get get more requests within reason to reduce request overhead interfacing with libcurl
+                while !isempty(channel) && reqs_ready < 100 && encode_buf.size < 65535
                     request = take!(channel)
                     grpc_encode_request_iobuffer(
                         request,
@@ -18,127 +27,91 @@
                         max_send_message_length = req.max_send_message_length,
                     )
                     reqs_ready += 1
+                end
+            catch ex
+                rethrow(ex)
+            finally
+                if encode_buf.size > 0
+                    seekstart(encode_buf)
 
-                    # Try to get get more requests within reason to reduce request overhead interfacing with libcurl
-                    while !isempty(channel) && reqs_ready < 100 && encode_buf.size < 65535
-                        request = take!(channel)
-                        grpc_encode_request_iobuffer(
-                            request,
-                            encode_buf;
-                            max_send_message_length = req.max_send_message_length,
-                        )
-                        reqs_ready += 1
+                    # Wait for libCURL to not be reading anymore 
+                    wait(req.curl_done_reading)
+
+                    # Write all of the encoded protobufs to the request read buffer
+                    write(req.request, encode_buf)
+
+                    # Block on the next wait until cleared by the curl read_callback
+                    reset(req.curl_done_reading)
+
+                    # Tell curl we have more to send
+                    lock(req.lock) do
+                        curl_easy_pause(req.easy, CURLPAUSE_CONT)
                     end
-                catch ex
-                    rethrow(ex)
-                finally
-                    if encode_buf.size > 0
-                        seekstart(encode_buf)
 
-                        # Wait for libCURL to not be reading anymore 
-                        wait(req.curl_done_reading)
-
-                        # Write all of the encoded protobufs to the request read buffer
-                        write(req.request, encode_buf)
-
-                        # Block on the next wait until cleared by the curl read_callback
-                        reset(req.curl_done_reading)
-
-                        # Tell curl we have more to send
-                        lock(req.lock) do
-                            curl_easy_pause(req.easy, CURLPAUSE_CONT)
-                        end
-
-                        # Reset the encode buffer
-                        reqs_ready = 0
-                        seekstart(encode_buf)
-                        truncate(encode_buf, 0)
-                    end
+                    # Reset the encode buffer
+                    reqs_ready = 0
+                    seekstart(encode_buf)
+                    truncate(encode_buf, 0)
                 end
             end
-        catch ex
-            if isa(ex, InvalidStateException)
-                # Wait for any request data to be flushed by curl
-                wait(req.curl_done_reading)
-
-                # Trigger a "return 0" in read_callback so curl ends the current request
-                reset(req.curl_done_reading)
-                lock(req.lock) do
-                    curl_easy_pause(req.easy, CURLPAUSE_CONT)
-                end
-
-            elseif isa(ex, gRPCServiceCallException)
-                if isnothing(req.ex)
-                    req.ex = ex
-                    notify(req.ready)
-                end
-            else
-                if isnothing(req.ex)
-                    req.ex = ex
-                    notify(req.ready)
-                end
-                @error "grpc_async_stream_request: unexpected exception" exception = ex
-            end
-        finally
-            close(channel)
-            close(req.request_c)
         end
+    catch ex
+        if isa(ex, InvalidStateException)
+            # Wait for any request data to be flushed by curl
+            wait(req.curl_done_reading)
 
-        nothing
-    end
-
-    function grpc_async_stream_response(
-        req::gRPCRequest,
-        channel::Channel{TResponse},
-    ) where {TResponse<:Any}
-        try
-            while isnothing(req.ex)
-                response_buf = take!(req.response_c)
-                response = decode(ProtoDecoder(response_buf), TResponse)
-                put!(channel, response)
+            # Trigger a "return 0" in read_callback so curl ends the current request
+            reset(req.curl_done_reading)
+            lock(req.lock) do
+                curl_easy_pause(req.easy, CURLPAUSE_CONT)
             end
-        catch ex
-            if isa(ex, InvalidStateException)
 
-            else
-                if isnothing(req.ex)
-                    req.ex = ex
-                    notify(req.ready)
-                end
-                @error "grpc_async_stream_response: unexpected exception" exception = ex
+        elseif isa(ex, gRPCServiceCallException)
+            if isnothing(req.ex)
+                req.ex = ex
+                notify(req.ready)
             end
-        finally
-            close(channel)
-            close(req.response_c)
+        else
+            if isnothing(req.ex)
+                req.ex = ex
+                notify(req.ready)
+            end
+            @error "grpc_async_stream_request: unexpected exception" exception = ex
         end
-
-        nothing
-    end
-
-else
-
-    function grpc_async_stream_request(
-        req::gRPCRequest,
-        channel::Channel{TRequest},
-    ) where {TRequest<:Any}
-        ex = AssertionError("Streaming not supported with Julia < 1.12")
-        @error exception=ex
-        req.ex = ex
+    finally
         close(channel)
-        notify(req.ready)
+        close(req.request_c)
     end
 
-    function grpc_async_stream_response(
-        req::gRPCRequest,
-        channel::Channel{TResponse},
-    ) where {TResponse<:Any}
-        ex = AssertionError("Streaming not supported with Julia < 1.12")
-        @error exception=ex
-        req.ex = ex
+    nothing
+end
+
+function grpc_async_stream_response(
+    req::gRPCRequest,
+    channel::Channel{TResponse},
+) where {TResponse<:Any}
+    try
+        while isnothing(req.ex)
+            response_buf = take!(req.response_c)
+            response = decode(ProtoDecoder(response_buf), TResponse)
+            put!(channel, response)
+        end
+    catch ex
+        if isa(ex, InvalidStateException)
+
+        else
+            if isnothing(req.ex)
+                req.ex = ex
+                notify(req.ready)
+            end
+            @error "grpc_async_stream_response: unexpected exception" exception = ex
+        end
+    finally
         close(channel)
-        notify(req.ready)
+        close(req.response_c)
     end
 
+    nothing
 end
 
 """
