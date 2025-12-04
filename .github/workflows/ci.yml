@@ -23,8 +23,21 @@ jobs:
           - 'nightly'
         os:
           - ubuntu-latest
+          - windows-latest
+          - macOS-15
+          - macOS-latest
         arch:
           - x64
+          - aarch64
+        exclude:
+          - os: ubuntu-latest
+            arch: aarch64
+          - os: windows-latest
+            arch: aarch64
+          - os: macos-15
+            arch: x64
+          - os: macos-latest
+            arch: x64
     steps:
     - uses: actions/checkout@v5
     - name: Setup Go
