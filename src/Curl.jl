@@ -17,6 +17,8 @@ function write_callback(
     try
         req = unsafe_pointer_to_objref(req_p)::gRPCRequest
 
+        !isnothing(req.ex) && return typemax(Csize_t)
+
         n = size * count
         buf = unsafe_wrap(Array, convert(Ptr{UInt8}, data), (n,))
 
@@ -24,24 +26,26 @@ function write_callback(
         try 
             while !isnothing(buf) && handled_n_bytes_total < n
                 handled_n_bytes, buf = handle_write(req, buf)
-                handled_n_bytes_total += handled_n_bytes 
+                handled_n_bytes_total += handled_n_bytes
                 handled_n_bytes == 0 && break
             end
-        catch ex 
+        catch ex
             # Eat InvalidStateException raised on put! to closed channel
             !isa(ex, InvalidStateException) && rethrow(ex)
         end
 
-        # If there was an exception handle it 
         !isnothing(req.ex) && return typemax(Csize_t)
 
         # Check that we handled the correct number of bytes
         # If there was no exception in handle_write this should always match 
         if handled_n_bytes_total != n
-            req.ex = gRPCServiceCallException(
-                GRPC_INTERNAL,
-                "Recieved $(n) bytes from curl but only handled $(handled_n_bytes_total)",
-            )
+            if isnothing(req.ex)
+                req.ex = gRPCServiceCallException(
+                    GRPC_INTERNAL,
+                    "Recieved $(n) bytes from curl but only handled $(handled_n_bytes_total)",
+                )
+            end
+
             # If we are response streaming unblock the task waiting on response_c
             !isnothing(req.response_c) && close(req.response_c)
             return typemax(Csize_t)
@@ -337,7 +341,6 @@ function handle_write(req::gRPCRequest, buf::Vector{UInt8})::Tuple{Int64, Union{
             # Not enough data yet to read the entire header
             return write(req.response, buf), nothing
         else
-
             buf_header = buf[1:header_bytes_left]
             n = write(req.response, buf_header)
 
@@ -405,11 +408,11 @@ function handle_write(req::gRPCRequest, buf::Vector{UInt8})::Tuple{Int64, Union{
         req.response_length = 0
 
         # Handle the remaining data
-        leftover_bytes = message_bytes_left - n
+        leftover_bytes = length(buf) - n
 
         buf_leftover = nothing 
         if leftover_bytes > 0
-            buf_leftover = unsafe_wrap(Array, pointer(buf) + n, (length(leftover_bytes),))
+            buf_leftover = unsafe_wrap(Array, pointer(buf) + n, (leftover_bytes,))
         end
 
         return n, buf_leftover

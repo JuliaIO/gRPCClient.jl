@@ -119,16 +119,6 @@ include("gen/test/test_pb.jl")
         end
     # end
 
-    # @testset "Max Message Size" begin 
-        # Create a client with much more restictive max message lengths
-        client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT; max_send_message_length=1024, max_recieve_message_length=1024)
-
-        # Send too much 
-        @test_throws gRPCServiceCallException grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1024)))
-        # Receive too much
-        @test_throws gRPCServiceCallException grpc_sync_request(client, TestRequest(1024, zeros(UInt64, 1)))
-    # end
-
     # @testset "Async Channels" begin 
         client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
 
@@ -144,7 +134,7 @@ include("gen/test/test_pb.jl")
         end
     # end
 
-    @static if VERSION >= v"1.12"
+@static if VERSION >= v"1.12"
     # @testset "Response Streaming" begin
         N = 1000
 
@@ -202,6 +192,7 @@ include("gen/test/test_pb.jl")
             @test length(response.data) == i
             @test last(response.data) == i
         end
+
 
         close(request_c)
         grpc_async_await(req)
@@ -346,7 +337,7 @@ include("gen/test/test_pb.jl")
             @test isa(ex, gRPCServiceCallException)
         end
     # end
-    end
+end
 
     # @testset "Timeout Header Value Formatting" begin
         # Test integer seconds
@@ -377,6 +368,16 @@ include("gen/test/test_pb.jl")
             @test isa(ex, gRPCServiceCallException)
             @test ex.grpc_status == GRPC_DEADLINE_EXCEEDED
         end
+    # end
+
+    # @testset "Max Message Size" begin
+        # Create a client with much more restictive max message lengths
+        client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT; max_send_message_length=1024, max_recieve_message_length=1024)
+
+        # Send too much
+        @test_throws gRPCServiceCallException grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1024)))
+        # Receive too much
+        @test_throws gRPCServiceCallException grpc_sync_request(client, TestRequest(1024, zeros(UInt64, 1)))
     # end
 
     grpc_shutdown()
