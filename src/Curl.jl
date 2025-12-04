@@ -313,9 +313,9 @@ mutable struct gRPCRequest
 
         lock(grpc.lock) do
             if !grpc.running
-                unpreserve_handle(req)
                 curl_slist_free_all(headers)
                 curl_easy_cleanup(easy_handle)
+                unpreserve_handle(req)
                 throw(
                     gRPCServiceCallException(
                         GRPC_FAILED_PRECONDITION,
@@ -510,35 +510,37 @@ function socket_callback(
 
         grpc = unsafe_pointer_to_objref(grpc_p)::gRPCCURL
 
-        # Handle is being shutdown, give exclusive access of watchers to close()
-        !grpc.running && return 0
-
         if action in (CURL_POLL_IN, CURL_POLL_OUT, CURL_POLL_INOUT)
             readable = action in (CURL_POLL_IN, CURL_POLL_INOUT)
             writable = action in (CURL_POLL_OUT, CURL_POLL_INOUT)
 
-            watcher = nothing
-            if sock in keys(grpc.watchers)
+            watcher = lock(grpc.watchers_lock) do
+                if sock in keys(grpc.watchers)
 
-                # We already have a watcher for this sock
-                watcher = grpc.watchers[sock]
+                    # We already have a watcher for this sock
+                    watcher = grpc.watchers[sock]
 
-                # Reset the ready event and trigger an EOFError
-                reset(watcher.ready)
-                close(watcher.fdw)
+                    # Reset the ready event and trigger an EOFError
+                    reset(watcher.ready)
+                    close(watcher.fdw)
 
-                # Update the FDWatcher with the new flags
-                watcher.fdw = FDWatcher(OS_HANDLE(sock), readable, writable)
+                    # Update the FDWatcher with the new flags
+                    watcher.fdw = FDWatcher(OS_HANDLE(sock), readable, writable)
 
-                # Start waiting on the socket with the new flags
-                notify(watcher.ready)
+                    # Start waiting on the socket with the new flags
+                    notify(watcher.ready)
 
-                return 0
+                    nothing
+                else
+                    # Don't have a watcher, create one and start a task
+                    watcher = CURLWatcher(sock, FDWatcher(OS_HANDLE(sock), readable, writable))
+                    grpc.watchers[sock] = watcher
+
+                    watcher
+                end
             end
 
-            # Don't have a watcher, create one and start a task 
-            watcher = CURLWatcher(sock, FDWatcher(OS_HANDLE(sock), readable, writable))
-            grpc.watchers[sock] = watcher
+            isnothing(watcher) && return 0
 
             task = @async begin
                 while watcher.running && grpc.running
@@ -560,21 +562,15 @@ function socket_callback(
 
                     n_recursive_spin = 0
                     lock(grpc.lock) do
-                        while (
-                            status = curl_multi_socket_action(
-                                grpc.multi,
-                                sock,
-                                flags,
-                                Ref{Cint}(),
-                            )
-                        ) == CURLM_RECURSIVE_API_CALL
-                            n_recursive_spin += 1
-                        end
+                        status = curl_multi_socket_action(
+                            grpc.multi,
+                            sock,
+                            flags,
+                            Ref{Cint}(),
+                        )
                         @assert status == CURLM_OK
                         check_multi_info(grpc)
                     end
-                    n_recursive_spin > 0 &&
-                        @warn "curl_multi_socket_action CURLM_RECURSIVE_API_CALL spun $n_recursive_spin times."
                 end
 
                 # If the multi handle was shutdown, return without doing any operations on it
@@ -587,10 +583,12 @@ function socket_callback(
             end
             @isdefined(errormonitor) && errormonitor(task)
         else
-            # Shut down and cleanup the watcher for this socket
-            watcher = grpc.watchers[sock]
-            close(watcher)
-            delete!(grpc.watchers, sock)
+            lock(grpc.watchers_lock) do
+                # Shut down and cleanup the watcher for this socket
+                watcher = grpc.watchers[sock]
+                close(watcher)
+                delete!(grpc.watchers, sock)
+            end
         end
 
         return 0
@@ -625,6 +623,7 @@ mutable struct gRPCCURL
     lock::ReentrantLock
     timer::Union{Nothing,Timer}
     watchers::Dict{curl_socket_t,CURLWatcher}
+    watchers_lock::ReentrantLock
     running::Bool
     requests::Vector{gRPCRequest}
     sem::Semaphore
@@ -635,10 +634,13 @@ mutable struct gRPCCURL
             ReentrantLock(),
             nothing,
             Dict{curl_socket_t,CURLWatcher}(),
+            ReentrantLock(),
             true,
             Vector{gRPCRequest}(),
             Semaphore(max_streams),
         )
+
+        preserve_handle(grpc)
 
         grpc_multi_init(grpc)
 
@@ -649,55 +651,70 @@ mutable struct gRPCCURL
 end
 
 function Base.close(grpc::gRPCCURL)
-    # Lock free way to get exclusive access to grpc.watchers
     grpc.running = false
-    sleep(0.25)
 
-    lock(grpc.lock) do
+    ret = lock(grpc.lock) do
         # Already closed
         if grpc.multi == Ptr{Cvoid}(0)
-            return
-        end
+            true
+        else
+            # Cleanup easy handles
+            while length(grpc.requests) > 0
+                request = pop!(grpc.requests)
+                curl_multi_remove_handle(grpc.multi, request.easy)
+                curl_slist_free_all(request.headers)
+                curl_easy_cleanup(request.easy)
+                unpreserve_handle(request)
+                # Unblock anything waiting on the request
+                notify(request.ready)
+            end
 
-        # Cleanup easy handles
-        while length(grpc.requests) > 0
-            request = pop!(grpc.requests)
-            unpreserve_handle(request)
-            curl_multi_remove_handle(grpc.multi, request.easy)
-            curl_slist_free_all(request.headers)
-            curl_easy_cleanup(request.easy)
-            # Unblock anything waiting on the request
-            notify(request.ready)
-        end
+            curl_multi_cleanup(grpc.multi)
+            grpc.multi = Ptr{Cvoid}(0)
 
+            false
+        end
+    end
+
+    ret && return
+
+    lock(grpc.watchers_lock) do
         # Cleanup watchers
         while length(grpc.watchers) > 0
             _, watcher = pop!(grpc.watchers)
             close(watcher)
         end
-
-        curl_multi_cleanup(grpc.multi)
-        grpc.multi = Ptr{Cvoid}(0)
     end
+
+    unpreserve_handle(grpc)
 
     nothing
 end
 
 function Base.open(grpc::gRPCCURL)
-    lock(grpc.lock) do
+    ret = lock(grpc.lock) do
         if grpc.multi != Ptr{Cvoid}(0)
-            return
+            true
+        else
+            lock(grpc.watchers_lock) do
+                # Guarantee that we start with a clean slate
+                grpc.watchers = Dict{curl_socket_t,CURLWatcher}()
+            end
+
+            grpc.requests = Vector{gRPCRequest}()
+            grpc.timer = nothing
+            grpc.sem = Semaphore(grpc.sem.sem_size)
+
+            grpc.running = true
+            grpc_multi_init(grpc)
+
+            false
         end
-
-        # Guarantee that we start with a clean slate
-        grpc.watchers = Dict{curl_socket_t,CURLWatcher}()
-        grpc.requests = Vector{gRPCRequest}()
-        grpc.timer = nothing
-        grpc.sem = Semaphore(grpc.sem.sem_size)
-
-        grpc.running = true
-        grpc_multi_init(grpc)
     end
+
+    ret && return
+
+    preserve_handle(grpc)
 
     nothing
 end
@@ -722,13 +739,13 @@ function check_multi_info(grpc::gRPCCURL)
             @assert easy_handle == req.easy
             req.code = message.code
 
-            # Now that curl is done with the handle we don't need to worry about it being collected before/during a C callback
-            unpreserve_handle(req)
-
             # Doing the cleanup here helps with lock contention
             curl_multi_remove_handle(req.multi, req.easy)
             curl_slist_free_all(req.headers)
             curl_easy_cleanup(req.easy)
+
+            # Now that curl is done with the handle we don't need to worry about it being collected before/during a C callback
+            unpreserve_handle(req)
 
             grpc.requests = filter(x -> x !== req, grpc.requests)
 
