@@ -1,7 +1,10 @@
-using Test 
-using ProtoBuf 
+using Test
+using ProtoBuf
 using gRPCClient
 using Base.Threads
+
+# Import the timeout header formatting function for testing
+import gRPCClient: grpc_timeout_header_val, GRPC_DEADLINE_EXCEEDED
 
 
 function _get_test_host()
@@ -344,6 +347,37 @@ include("gen/test/test_pb.jl")
         end
     # end
     end
+
+    # @testset "Timeout Header Value Formatting" begin
+        # Test integer seconds
+        @test grpc_timeout_header_val(1) == "1S"
+
+        # Test milliseconds
+        @test grpc_timeout_header_val(0.001) == "1m"
+
+        # Test microseconds
+        @test grpc_timeout_header_val(0.000001) == "1u"
+
+        # Test nanoseconds
+        @test grpc_timeout_header_val(0.0000001) == "100n"
+
+    # end
+
+    # @testset "Deadline - Very short timeout" begin
+        # Test with an extremely short deadline that might timeout
+        # Note: This test is timing-sensitive and might be flaky
+        client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT; deadline=0.000000001)
+
+        # Try to make a request - it might timeout depending on server response time
+        try
+            response = grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
+            @test false
+        catch ex
+            # If it times out, verify it's an exception (CURL timeout or gRPC error)
+            @test isa(ex, gRPCServiceCallException)
+            @test ex.grpc_status == GRPC_DEADLINE_EXCEEDED
+        end
+    # end
 
     grpc_shutdown()
 end
