@@ -158,10 +158,12 @@ mutable struct gRPCRequest
     # CURL multi lock for exclusive access to the easy handle after its added to the multi
     lock::ReentrantLock
 
-    # CURL easy handle 
+    # CURL easy handle
     easy::Ptr{Cvoid}
     # CURL multi handle
     multi::Ptr{Cvoid}
+    # CURL headers list
+    headers::Ptr{Cvoid}
 
     # The full request URL 
     url::String
@@ -261,6 +263,7 @@ mutable struct gRPCRequest
             grpc.lock,
             easy_handle,
             grpc.multi,
+            headers,
             http_url,
             request,
             0,
@@ -280,6 +283,7 @@ mutable struct gRPCRequest
             GRPC_OK,
             "",
         )
+        preserve_handle(req)
 
         req_p = pointer_from_objref(req)
         curl_easy_setopt(easy_handle, CURLOPT_PRIVATE, req_p)
@@ -309,6 +313,8 @@ mutable struct gRPCRequest
 
         lock(grpc.lock) do
             if !grpc.running
+                unpreserve_handle(req)
+                curl_slist_free_all(headers)
                 curl_easy_cleanup(easy_handle)
                 throw(
                     gRPCServiceCallException(
@@ -656,7 +662,9 @@ function Base.close(grpc::gRPCCURL)
         # Cleanup easy handles
         while length(grpc.requests) > 0
             request = pop!(grpc.requests)
+            unpreserve_handle(request)
             curl_multi_remove_handle(grpc.multi, request.easy)
+            curl_slist_free_all(request.headers)
             curl_easy_cleanup(request.easy)
             # Unblock anything waiting on the request
             notify(request.ready)
@@ -709,12 +717,17 @@ function check_multi_info(grpc::gRPCCURL)
             easy_handle = message.easy
             req_p_ref = Ref{Ptr{Cvoid}}()
             curl_easy_getinfo(easy_handle, CURLINFO_PRIVATE, req_p_ref)
+
             req = unsafe_pointer_to_objref(req_p_ref[])::gRPCRequest
             @assert easy_handle == req.easy
             req.code = message.code
 
+            # Now that curl is done with the handle we don't need to worry about it being collected before/during a C callback
+            unpreserve_handle(req)
+
             # Doing the cleanup here helps with lock contention
             curl_multi_remove_handle(req.multi, req.easy)
+            curl_slist_free_all(req.headers)
             curl_easy_cleanup(req.easy)
 
             grpc.requests = filter(x -> x !== req, grpc.requests)

@@ -6,9 +6,10 @@ using LibCURL
 using Base.Threads
 using ProtoBuf
 using FileWatching
-using Base: OS_HANDLE
 using Base: Semaphore, acquire, release
 using Base.Threads
+using Base: OS_HANDLE, preserve_handle, unpreserve_handle
+
 
 import Base.wait,
     Base.reset, Base.notify, Base.isreadable, Base.iswritable, Base.close, Base.open
