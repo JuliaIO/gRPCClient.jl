@@ -239,17 +239,106 @@ include("gen/test/test_pb.jl")
         @test length(response.data) == N
     # end
 
-    # @testset "Don't Stick User Tasks" 
+    # @testset "Don't Stick User Tasks"
         # This fails on Julia 1.10 but works on Julia 1.12
         client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
 
-        task = @sync begin 
-            @spawn begin 
+        task = @sync begin
+            @spawn begin
                 grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
             end
-        end 
+        end
 
         @test !task.sticky
+    # end
+
+    # @testset "grpc_async_stream_request - gRPCServiceCallException" begin
+        # Test that gRPCServiceCallException is properly stored in req.ex
+        client = TestService_TestClientStreamRPC_Client(_TEST_HOST, _TEST_PORT; max_send_message_length=100)
+        request_c = Channel{TestRequest}(1)
+
+        req = grpc_async_request(client, request_c)
+
+        # Send a request that exceeds max_send_message_length to trigger gRPCServiceCallException
+        put!(request_c, TestRequest(1, zeros(UInt64, 1000)))
+        close(request_c)
+
+        # Wait and check that the exception is a gRPCServiceCallException
+        try
+            grpc_async_await(client, req)
+            @test false  # Should not reach here
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+        end
+    # end
+
+    # @testset "grpc_async_stream_request - general exception" begin
+        # Test the else branch with a non-gRPC exception
+        client = TestService_TestClientStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+        request_c = Channel{TestRequest}(1)
+
+        req = grpc_async_request(client, request_c)
+
+        # Close the channel and then try to take from it (triggers InvalidStateException)
+        close(request_c)
+
+        # Give the async task time to encounter the exception
+        sleep(0.2)
+
+        # The InvalidStateException should be handled gracefully
+        # and the request should complete (possibly with no error or a different error)
+        try
+            grpc_async_await(client, req)
+        catch ex
+            # If there's an exception, it shouldn't be InvalidStateException
+            # (that should be handled internally)
+            @test !isa(ex, InvalidStateException)
+        end
+    # end
+
+    # @testset "grpc_async_stream_response - InvalidStateException" begin
+        # Test that InvalidStateException is handled when response channel closes early
+        client = TestService_TestServerStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+        response_c = Channel{TestResponse}(1)
+
+        req = grpc_async_request(client, TestRequest(10, zeros(UInt64, 1)), response_c)
+
+        # Take one response then close the channel to trigger InvalidStateException in put!
+        response = take!(response_c)
+        @test length(response.data) >= 1
+        close(response_c)
+
+        # Give time for the async task to encounter InvalidStateException
+        sleep(0.2)
+
+        # InvalidStateException should be handled internally without propagating
+        try
+            grpc_async_await(req)
+        catch ex
+            # If there's an exception, it shouldn't be InvalidStateException
+            @test !isa(ex, InvalidStateException)
+        end
+    # end
+
+    # @testset "grpc_async_stream_response - gRPCServiceCallException" begin
+        # Test that gRPCServiceCallException is properly handled in response stream
+        # Use a client with restrictive max_recieve_message_length
+        client = TestService_TestServerStreamRPC_Client(_TEST_HOST, _TEST_PORT; max_recieve_message_length=1)
+        response_c = Channel{TestResponse}(100)
+
+        # Request a response that will exceed the max size
+        req = grpc_async_request(client, TestRequest(10, zeros(UInt64, 100)), response_c)
+
+        # Wait for the error to occur
+        sleep(0.2)
+
+        # Should get gRPCServiceCallException when awaiting
+        try
+            grpc_async_await(req)
+            @test false  # Should not reach here
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+        end
     # end
     end
 
