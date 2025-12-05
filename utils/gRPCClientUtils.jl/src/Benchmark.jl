@@ -15,10 +15,8 @@ function perform_benchmark(f, N)
 
     return [
         f,
-        N_sample,
-        mem,
-        b.allocs,
-        round(timing, digits = 2),
+        1000*mem / N, # Avg Memory
+        round(b.allocs / N, digits = 1), # Avg Allocs
         round(Int, N_sample/timing), # Throughput
         round(Int, mean(timings_us) / N), # Avg duration
         round(std(timings_us) / N, digits = 2),
@@ -33,17 +31,15 @@ function benchmark_table()
     column_labels = [
         [
             "Benchmark",
-            "N",
-            "Memory",
-            "Allocations",
-            "Duration",
+            "Avg Memory",
+            "Avg Allocs",
             "Throughput",
             "Avg duration",
             "Std-dev",
             "Min",
             "Max",
         ],
-        ["", "calls", "MiB", "", "s", "calls/s", "μs", "μs", "μs", "μs"],
+        ["", "KiB/message", "allocs/message", "calls/s", "μs", "μs", "μs", "μs"],
     ]
     all_benchmarks = [
         (workload_smol, 1_000),
