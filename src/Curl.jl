@@ -39,12 +39,13 @@ function write_callback(
         # Check that we handled the correct number of bytes
         # If there was no exception in handle_write this should always match 
         if handled_n_bytes_total != n
-            if isnothing(req.ex)
-                req.ex = gRPCServiceCallException(
+            handle_exception(
+                req,
+                gRPCServiceCallException(
                     GRPC_INTERNAL,
                     "Recieved $(n) bytes from curl but only handled $(handled_n_bytes_total)",
-                )
-            end
+                ),
+            )
 
             # If we are response streaming unblock the task waiting on response_c
             !isnothing(req.response_c) && close(req.response_c)
@@ -219,6 +220,7 @@ mutable struct gRPCRequest
         max_send_message_length = 4 * 1024 * 1024,
         max_recieve_message_length = 4 * 1024 * 1024,
     )
+        # If the grpc handle is shutdown avoid acquiring the request semaphore and immediately throw an exception
         if !grpc.running
             throw(
                 gRPCServiceCallException(
@@ -230,16 +232,6 @@ mutable struct gRPCRequest
 
         # Reduce number of available requests by one or block if its currently zero
         acquire(grpc.sem)
-
-        if !grpc.running
-            release(grpc.sem)
-            throw(
-                gRPCServiceCallException(
-                    GRPC_FAILED_PRECONDITION,
-                    "Tried to make a request when the provided grpc handle is shutdown",
-                ),
-            )
-        end
 
         easy_handle = curl_easy_init()
 
@@ -324,17 +316,18 @@ mutable struct gRPCRequest
         header_cb =
             @cfunction(header_callback, Csize_t, (Ptr{Cchar}, Csize_t, Csize_t, Ptr{Cvoid}))
 
-
         curl_easy_setopt(easy_handle, CURLOPT_HEADERFUNCTION, header_cb)
         curl_easy_setopt(easy_handle, CURLOPT_HEADERDATA, req_p)
         curl_easy_setopt(easy_handle, CURLOPT_UPLOAD, true)
 
-
         lock(grpc.lock) do
             if !grpc.running
-                curl_slist_free_all(headers)
+                # We did all that work for nothing, and now we have to cleanup
                 curl_easy_cleanup(easy_handle)
+                curl_slist_free_all(headers)
                 unpreserve_handle(req)
+                # *MUST* increment the sem or we could deadlock
+                release(grpc.sem)
                 throw(
                     gRPCServiceCallException(
                         GRPC_FAILED_PRECONDITION,
@@ -351,12 +344,19 @@ mutable struct gRPCRequest
     end
 end
 
+function handle_exception(req::gRPCRequest, ex; notify_ready = false)
+    # We want to record the *first* exception a request encounters
+    # This helps identify the root cause of why something failed
+    if isnothing(req.ex)
+        req.ex = ex
+        notify_ready && notify(req.ready)
+    end
+end
+
 isstreaming_request(req::gRPCRequest) = !isnothing(req.request_c)
 isstreaming_response(req::gRPCRequest) = !isnothing(req.response_c)
 
 Base.wait(req::gRPCRequest) = wait(req.ready)
-Base.reset(req::gRPCRequest) = reset(req.ready)
-
 
 function handle_write(
     req::gRPCRequest,
@@ -378,18 +378,25 @@ function handle_write(
             req.response_length = ntoh(read(req.response, UInt32))
 
             if req.response_compressed
-                req.ex = gRPCServiceCallException(
-                    GRPC_UNIMPLEMENTED,
-                    "Response was compressed but compression is not currently supported.",
+                handle_exception(
+                    req,
+                    gRPCServiceCallException(
+                        GRPC_UNIMPLEMENTED,
+                        "Response was compressed but compression is not currently supported.",
+                    ),
                 )
+
                 # If we are response streaming unblock the task waiting on response_c
                 !isnothing(req.response_c) && close(req.response_c)
                 notify(req.ready)
                 return n, nothing
             elseif req.response_length > req.max_recieve_message_length
-                req.ex = gRPCServiceCallException(
-                    GRPC_RESOURCE_EXHAUSTED,
-                    "length-prefix longer than max_recieve_message_length: $(req.response_length) > $(req.max_recieve_message_length)",
+                handle_exception(
+                    req,
+                    gRPCServiceCallException(
+                        GRPC_RESOURCE_EXHAUSTED,
+                        "length-prefix longer than max_recieve_message_length: $(req.response_length) > $(req.max_recieve_message_length)",
+                    ),
                 )
                 # If we are response streaming unblock the task waiting on response_c
                 !isnothing(req.response_c) && close(req.response_c)
@@ -447,9 +454,12 @@ function handle_write(
     else
         # We only expect a single response for non-streaming RPC
         if length(buf) > message_bytes_left
-            req.ex = gRPCServiceCallException(
-                GRPC_RESOURCE_EXHAUSTED,
-                "Response was longer than declared in length-prefix.",
+            handle_exception(
+                req,
+                gRPCServiceCallException(
+                    GRPC_RESOURCE_EXHAUSTED,
+                    "Response was longer than declared in length-prefix.",
+                ),
             )
             notify(req.ready)
             return 0, nothing
@@ -474,14 +484,15 @@ function timer_callback(multi_h::Ptr{Cvoid}, timeout_ms::Clong, grpc_p::Ptr{Cvoi
         if timeout_ms >= 0
             grpc.timer = Timer(timeout_ms / 1000) do timer
                 lock(grpc.lock) do
-                    !grpc.running && return
-                    curl_multi_socket_action(
-                        grpc.multi,
-                        CURL_SOCKET_TIMEOUT,
-                        0,
-                        Ref{Cint}(),
-                    )
-                    check_multi_info(grpc)
+                    if grpc.running
+                        curl_multi_socket_action(
+                            grpc.multi,
+                            CURL_SOCKET_TIMEOUT,
+                            0,
+                            Ref{Cint}(),
+                        )
+                        check_multi_info(grpc)
+                    end
                 end
             end
         end
@@ -531,6 +542,8 @@ function socket_callback(
         end
 
         grpc = unsafe_pointer_to_objref(grpc_p)::gRPCCURL
+
+        # If we shut down the multi, tell curl
         !grpc.running && return -1
 
         if action in (CURL_POLL_IN, CURL_POLL_OUT, CURL_POLL_INOUT)
@@ -593,6 +606,7 @@ function socket_callback(
                         CURL_CSELECT_ERR * (events.disconnect || events.timedout)
 
                     lock(grpc.lock) do
+                        # Be careful to not do anything with the grpc handle if its already been shutdown
                         if grpc.running
                             status = curl_multi_socket_action(
                                 grpc.multi,
@@ -600,10 +614,7 @@ function socket_callback(
                                 flags,
                                 Ref{Cint}(),
                             )
-                            if status != CURLM_OK
-                                @error "curl_multi_socket_action: $status" maxlog=1000
-                                return 0
-                            end
+                            @assert status == CURLM_OK "curl_multi_socket_action returned a status other than CURLM_OK(0): $status"
                             check_multi_info(grpc)
                         end
                     end
@@ -614,6 +625,7 @@ function socket_callback(
 
                 # When we shut down the watcher do the check_multi_info in this task to avoid creating a new one
                 lock(grpc.lock) do
+                    # Be careful to not do anything with the grpc handle if its already been shutdown
                     grpc.running && check_multi_info(grpc)
                 end
             end
@@ -658,13 +670,17 @@ end
 
 
 mutable struct gRPCCURL
+    # libcurl multi handle
     multi::Ptr{Cvoid}
+    # *ALL* operations on the multi handle, any easy handles added to the multi, or this struct must acquire this lock.
     lock::ReentrantLock
     timer::Union{Nothing,Timer}
     watchers::Dict{curl_socket_t,CURLWatcher}
+    # Reduce lock contention by giving watchers their own lock
     watchers_lock::ReentrantLock
     running::Bool
     requests::Vector{gRPCRequest}
+    # Allows for controlling the maximum number of concurrent gRPC requests/streams
     sem::Semaphore
 
     function gRPCCURL(max_streams = GRPC_MAX_STREAMS)
@@ -697,16 +713,9 @@ function Base.close(grpc::gRPCCURL)
         if grpc.multi == Ptr{Cvoid}(0)
             true
         else
-            # Cleanup easy handles
             while length(grpc.requests) > 0
                 request = pop!(grpc.requests)
-                curl_multi_remove_handle(grpc.multi, request.easy)
-                curl_slist_free_all(request.headers)
-                curl_easy_cleanup(request.easy)
-                unpreserve_handle(request)
-                release(grpc.sem)
-                # Unblock anything waiting on the request
-                notify(request.ready)
+                cleanup_request(grpc, request)
             end
 
             curl_multi_cleanup(grpc.multi)
@@ -732,10 +741,8 @@ function Base.close(grpc::gRPCCURL)
 end
 
 function Base.open(grpc::gRPCCURL)
-    ret = lock(grpc.lock) do
-        if grpc.multi != Ptr{Cvoid}(0)
-            true
-        else
+    lock(grpc.lock) do
+        if grpc.multi == Ptr{Cvoid}(0)
             lock(grpc.watchers_lock) do
                 # Guarantee that we start with a clean slate
                 grpc.watchers = Dict{curl_socket_t,CURLWatcher}()
@@ -747,16 +754,24 @@ function Base.open(grpc::gRPCCURL)
 
             grpc.running = true
             grpc_multi_init(grpc)
-
-            false
+            preserve_handle(grpc)
         end
     end
+end
 
-    ret && return
-
-    preserve_handle(grpc)
-
-    nothing
+function cleanup_request(grpc::gRPCCURL, req::gRPCRequest)
+    # First remove from the multi
+    curl_multi_remove_handle(grpc.multi, req.easy)
+    # Cleanup the easy handle
+    curl_easy_cleanup(req.easy)
+    # Free the request headers
+    curl_slist_free_all(req.headers)
+    # Allow this to be GC now that there is no risk of use in C callback
+    unpreserve_handle(req)
+    # Increment the request semaphore to allow more requests through
+    release(grpc.sem)
+    # Unblock anything waiting on the request
+    notify(req.ready)
 end
 
 struct CURLMsg
@@ -771,35 +786,24 @@ function check_multi_info(grpc::gRPCCURL)
         p == C_NULL && return
         message = unsafe_load(convert(Ptr{CURLMsg}, p))
         if message.msg == CURLMSG_DONE
+            # When requests go according to plan, we clean up after them and notify any tasks waiting on them here
             easy_handle = message.easy
             req_p_ref = Ref{Ptr{Cvoid}}()
             curl_easy_getinfo(easy_handle, CURLINFO_PRIVATE, req_p_ref)
-
             req = unsafe_pointer_to_objref(req_p_ref[])::gRPCRequest
             @assert easy_handle == req.easy
             req.code = message.code
 
-            # Doing the cleanup here helps with lock contention
-            curl_multi_remove_handle(req.multi, req.easy)
-            curl_slist_free_all(req.headers)
-            curl_easy_cleanup(req.easy)
+            # The actual cleanup/notification happens here
+            cleanup_request(grpc, req)
 
-            # Now that curl is done with the handle we don't need to worry about it being collected before/during a C callback
-            unpreserve_handle(req)
-
+            # Remove from the list of requests associated
             grpc.requests = filter(x -> x !== req, grpc.requests)
-
-            # Request is all done, notify anything blocking on it
-            notify(req.ready)
-
-            # Allow a new request now that this one is complete
-            release(grpc.sem)
         else
             @error("curl_multi_info_read: unknown message", message, maxlog = 1_000)
         end
     end
 end
-
 
 
 function stoptimer!(grpc::gRPCCURL)

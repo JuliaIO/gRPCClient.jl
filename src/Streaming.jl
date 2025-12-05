@@ -68,15 +68,9 @@ function grpc_async_stream_request(
             end
 
         elseif isa(ex, gRPCServiceCallException)
-            if isnothing(req.ex)
-                req.ex = ex
-                notify(req.ready)
-            end
+            handle_exception(req, ex; notify_ready = true)
         else
-            if isnothing(req.ex)
-                req.ex = ex
-                notify(req.ready)
-            end
+            handle_exception(req, ex; notify_ready = true)
             @error "grpc_async_stream_request: unexpected exception" exception = ex
         end
     finally
@@ -98,13 +92,8 @@ function grpc_async_stream_response(
             put!(channel, response)
         end
     catch ex
-        if isa(ex, InvalidStateException)
-
-        else
-            if isnothing(req.ex)
-                req.ex = ex
-                notify(req.ready)
-            end
+        if !isa(ex, InvalidStateException)
+            handle_exception(req, ex; notify_ready = true)
             @error "grpc_async_stream_response: unexpected exception" exception = ex
         end
     finally
