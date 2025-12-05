@@ -567,7 +567,6 @@ function socket_callback(
                         CURL_CSELECT_OUT * iswritable(events) +
                         CURL_CSELECT_ERR * (events.disconnect || events.timedout)
 
-                    n_recursive_spin = 0
                     lock(grpc.lock) do
                         status = curl_multi_socket_action(grpc.multi, sock, flags, Ref{Cint}())
                         @assert status == CURLM_OK
@@ -586,10 +585,13 @@ function socket_callback(
             @isdefined(errormonitor) && errormonitor(task)
         else
             lock(grpc.watchers_lock) do
-                # Shut down and cleanup the watcher for this socket
-                watcher = grpc.watchers[sock]
-                close(watcher)
-                delete!(grpc.watchers, sock)
+                # Its possible this was already cleaned up if close() was called on the gRPCCURL, check to avoid race condition
+                if sock ∈ keys(grpc.watchers)
+                    # Shut down and cleanup the watcher for this socket
+                    watcher = grpc.watchers[sock]
+                    close(watcher)
+                    delete!(grpc.watchers, sock)
+                end
             end
         end
 
