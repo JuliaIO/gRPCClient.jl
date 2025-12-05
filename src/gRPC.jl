@@ -88,11 +88,15 @@ end
 
 function url(client::gRPCServiceClient)
     protocol = if client.secure
-        "grpcs"
+        "https"
     else
-        "grpc"
+        "http"
     end
-    "$protocol://$(client.host):$(client.port)$(client.path)"
+
+    # "$protocol://$(client.host):$(client.port)$(client.path)"
+    buffer = IOBuffer()
+    write(buffer, protocol, "://", client.host, ":", string(client.port), client.path)
+    String(take!(buffer))
 end
 
 

@@ -138,21 +138,21 @@ end
 function grpc_timeout_header_val(timeout::Real)
     if round(Int, timeout) == timeout
         timeout_secs = round(Int64, timeout)
-        return "$(timeout_secs)S"
+        return "$(string(timeout_secs))S"
     end
     timeout *= 1000
     if round(Int, timeout) == timeout
         timeout_millisecs = round(Int64, timeout)
-        return "$(timeout_millisecs)m"
+        return "$(string(timeout_millisecs))m"
     end
     timeout *= 1000
     if round(Int, timeout) == timeout
         timeout_microsecs = round(Int64, timeout)
-        return "$(timeout_microsecs)u"
+        return "$(string(timeout_microsecs))u"
     end
     timeout *= 1000
     timeout_nanosecs = round(Int64, timeout)
-    return "$(timeout_nanosecs)n"
+    return "$(string(timeout_nanosecs))n"
 end
 
 mutable struct gRPCRequest
@@ -238,22 +238,19 @@ mutable struct gRPCRequest
         # Uncomment this for debugging purposes
         # curl_easy_setopt(easy_handle, CURLOPT_VERBOSE, UInt32(1))
 
-        http_url = replace(url, "grpc://" => "http://")
-        http_url = replace(http_url, "grpcs://" => "https://")
-
-        curl_easy_setopt(easy_handle, CURLOPT_URL, http_url)
+        curl_easy_setopt(easy_handle, CURLOPT_URL, url)
         curl_easy_setopt(easy_handle, CURLOPT_TIMEOUT, deadline)
         curl_easy_setopt(easy_handle, CURLOPT_PIPEWAIT, Clong(1))
         curl_easy_setopt(easy_handle, CURLOPT_POST, Clong(1))
         curl_easy_setopt(easy_handle, CURLOPT_CUSTOMREQUEST, "POST")
 
-        if startswith(http_url, "http://")
+        if startswith(url, "http://")
             curl_easy_setopt(
                 easy_handle,
                 CURLOPT_HTTP_VERSION,
                 CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE,
             )
-        elseif startswith(http_url, "https://")
+        elseif startswith(url, "https://")
             curl_easy_setopt(easy_handle, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2TLS)
         end
 
@@ -275,7 +272,7 @@ mutable struct gRPCRequest
             easy_handle,
             grpc.multi,
             headers,
-            http_url,
+            url,
             request,
             0,
             response,
@@ -797,8 +794,9 @@ function check_multi_info(grpc::gRPCCURL)
             # The actual cleanup/notification happens here
             cleanup_request(grpc, req)
 
-            # Remove from the list of requests associated
-            grpc.requests = filter(x -> x !== req, grpc.requests)
+            # Remove from the list of requests associated (in-place, no allocation)
+            idx = findfirst(x -> x === req, grpc.requests)
+            !isnothing(idx) && deleteat!(grpc.requests, idx)
         else
             @error("curl_multi_info_read: unknown message", message, maxlog = 1_000)
         end
