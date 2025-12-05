@@ -219,8 +219,27 @@ mutable struct gRPCRequest
         max_send_message_length = 4 * 1024 * 1024,
         max_recieve_message_length = 4 * 1024 * 1024,
     )
+        if !grpc.running
+            throw(
+                gRPCServiceCallException(
+                    GRPC_FAILED_PRECONDITION,
+                    "Tried to make a request when the provided grpc handle is shutdown",
+                ),
+            )
+        end
+
         # Reduce number of available requests by one or block if its currently zero
         acquire(grpc.sem)
+
+        if !grpc.running
+            release(grpc.sem)
+            throw(
+                gRPCServiceCallException(
+                    GRPC_FAILED_PRECONDITION,
+                    "Tried to make a request when the provided grpc handle is shutdown",
+                ),
+            )
+        end
 
         easy_handle = curl_easy_init()
 
@@ -512,38 +531,44 @@ function socket_callback(
         end
 
         grpc = unsafe_pointer_to_objref(grpc_p)::gRPCCURL
+        !grpc.running && return -1
 
         if action in (CURL_POLL_IN, CURL_POLL_OUT, CURL_POLL_INOUT)
             readable = action in (CURL_POLL_IN, CURL_POLL_INOUT)
             writable = action in (CURL_POLL_OUT, CURL_POLL_INOUT)
 
             watcher = lock(grpc.watchers_lock) do
-                if sock in keys(grpc.watchers)
+                if grpc.running
+                    if sock in keys(grpc.watchers)
 
-                    # We already have a watcher for this sock
-                    watcher = grpc.watchers[sock]
+                        # We already have a watcher for this sock
+                        watcher = grpc.watchers[sock]
 
-                    # Reset the ready event and trigger an EOFError
-                    reset(watcher.ready)
-                    close(watcher.fdw)
+                        # Reset the ready event and trigger an EOFError
+                        reset(watcher.ready)
+                        close(watcher.fdw)
 
-                    # Update the FDWatcher with the new flags
-                    watcher.fdw =
-                        FDWatcher(CROSS_PLATFORM_OS_HANDLE(sock), readable, writable)
+                        # Update the FDWatcher with the new flags
+                        watcher.fdw = FDWatcher(
+                            CROSS_PLATFORM_OS_HANDLE(sock),
+                            readable,
+                            writable,
+                        )
 
-                    # Start waiting on the socket with the new flags
-                    notify(watcher.ready)
+                        # Start waiting on the socket with the new flags
+                        notify(watcher.ready)
 
-                    nothing
-                else
-                    # Don't have a watcher, create one and start a task
-                    watcher = CURLWatcher(
-                        sock,
-                        FDWatcher(CROSS_PLATFORM_OS_HANDLE(sock), readable, writable),
-                    )
-                    grpc.watchers[sock] = watcher
+                        nothing
+                    else
+                        # Don't have a watcher, create one and start a task
+                        watcher = CURLWatcher(
+                            sock,
+                            FDWatcher(CROSS_PLATFORM_OS_HANDLE(sock), readable, writable),
+                        )
+                        grpc.watchers[sock] = watcher
 
-                    watcher
+                        watcher
+                    end
                 end
             end
 
@@ -567,11 +592,20 @@ function socket_callback(
                         CURL_CSELECT_OUT * iswritable(events) +
                         CURL_CSELECT_ERR * (events.disconnect || events.timedout)
 
-                    n_recursive_spin = 0
                     lock(grpc.lock) do
-                        status = curl_multi_socket_action(grpc.multi, sock, flags, Ref{Cint}())
-                        @assert status == CURLM_OK
-                        check_multi_info(grpc)
+                        if grpc.running
+                            status = curl_multi_socket_action(
+                                grpc.multi,
+                                sock,
+                                flags,
+                                Ref{Cint}(),
+                            )
+                            if status != CURLM_OK
+                                @error "curl_multi_socket_action: $status" maxlog=1000
+                                return 0
+                            end
+                            check_multi_info(grpc)
+                        end
                     end
                 end
 
@@ -580,16 +614,19 @@ function socket_callback(
 
                 # When we shut down the watcher do the check_multi_info in this task to avoid creating a new one
                 lock(grpc.lock) do
-                    check_multi_info(grpc)
+                    grpc.running && check_multi_info(grpc)
                 end
             end
             @isdefined(errormonitor) && errormonitor(task)
         else
             lock(grpc.watchers_lock) do
-                # Shut down and cleanup the watcher for this socket
-                watcher = grpc.watchers[sock]
-                close(watcher)
-                delete!(grpc.watchers, sock)
+                # Its possible this was already cleaned up if close() was called on the gRPCCURL, check to avoid race condition
+                if sock ∈ keys(grpc.watchers)
+                    # Shut down and cleanup the watcher for this socket
+                    watcher = grpc.watchers[sock]
+                    close(watcher)
+                    delete!(grpc.watchers, sock)
+                end
             end
         end
 
@@ -667,6 +704,7 @@ function Base.close(grpc::gRPCCURL)
                 curl_slist_free_all(request.headers)
                 curl_easy_cleanup(request.easy)
                 unpreserve_handle(request)
+                release(grpc.sem)
                 # Unblock anything waiting on the request
                 notify(request.ready)
             end
