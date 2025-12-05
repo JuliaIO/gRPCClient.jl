@@ -401,5 +401,49 @@ include("gen/test/test_pb.jl")
         )
     end
 
+    @testset "Graceful shutdown during concurrent requests" begin
+        # Create a separate gRPCCURL handle for this test to avoid interfering with other tests
+        grpc_handle = gRPCCURL()
+        grpc_init(grpc_handle)
+        # Create client using the custom handle
+        client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT; grpc = grpc_handle)
+
+        # Start multiple concurrent requests
+        N = 100
+        tasks = Vector{Task}(undef, N)
+
+        for i = 1:N
+            tasks[i] = @spawn begin
+                try
+                    # Make requests with varying sizes
+                    request = grpc_async_request(client, TestRequest(i, zeros(UInt64, i)))
+                    grpc_async_await(client, request)
+                catch ex
+                    # It's acceptable to get exceptions during shutdown
+                    # Just verify they are the expected types
+                    @test isa(ex, gRPCServiceCallException)
+                end
+            end
+        end
+
+        # Allow the scheduler to schedule the requests
+        yield()
+
+        # Close the handle while requests are in flight
+        grpc_shutdown(grpc_handle)
+
+        # Wait for all tasks to complete - they should finish gracefully
+        # even though the handle was closed
+        for task in tasks
+            wait(task)
+        end
+
+        # Verify the handle is properly closed
+        @test grpc_handle.multi == Ptr{Cvoid}(0)
+        @test !grpc_handle.running
+        @test isempty(grpc_handle.requests)
+        @test isempty(grpc_handle.watchers)
+    end
+
     grpc_shutdown()
 end
