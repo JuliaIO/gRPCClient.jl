@@ -231,7 +231,9 @@ mutable struct gRPCRequest
         end
 
         # Reduce number of available requests by one or block if its currently zero
-        acquire(grpc.sem)
+        # Also reduces the need to allocate the curl_done_reading Event for every request
+        # This is a 7% reduction in allocations overall
+        curl_done_reading = max_reqs_dec(grpc)
 
         easy_handle = curl_easy_init()
 
@@ -287,7 +289,7 @@ mutable struct gRPCRequest
             false,
             false,
             0,
-            Event(),
+            curl_done_reading,
             GRPC_OK,
             "",
         )
@@ -324,7 +326,8 @@ mutable struct gRPCRequest
                 curl_slist_free_all(headers)
                 unpreserve_handle(req)
                 # *MUST* increment the sem or we could deadlock
-                release(grpc.sem)
+                max_reqs_inc(grpc, req)
+
                 throw(
                     gRPCServiceCallException(
                         GRPC_FAILED_PRECONDITION,
@@ -678,7 +681,7 @@ mutable struct gRPCCURL
     running::Bool
     requests::Vector{gRPCRequest}
     # Allows for controlling the maximum number of concurrent gRPC requests/streams
-    sem::Semaphore
+    events::Channel{Event}
 
     function gRPCCURL(max_streams = GRPC_MAX_STREAMS)
         grpc = new(
@@ -689,8 +692,13 @@ mutable struct gRPCCURL
             ReentrantLock(),
             true,
             Vector{gRPCRequest}(),
-            Semaphore(max_streams),
+            Channel{Event}(max_streams),
         )
+
+        # We use a channel as a Semaphore which also acts as a way to reuse Events to reduce allocations
+        for _ = 1:max_streams
+            put!(grpc.events, Event())
+        end
 
         preserve_handle(grpc)
 
@@ -745,15 +753,26 @@ function Base.open(grpc::gRPCCURL)
                 grpc.watchers = Dict{curl_socket_t,CURLWatcher}()
             end
 
+            grpc.events = Channel{Event}(grpc.events.sz_max)
+            for _ = 1:grpc.events.sz_max
+                put!(grpc.events, Event())
+            end
+
             grpc.requests = Vector{gRPCRequest}()
             grpc.timer = nothing
-            grpc.sem = Semaphore(grpc.sem.sem_size)
 
             grpc.running = true
             grpc_multi_init(grpc)
             preserve_handle(grpc)
         end
     end
+end
+
+max_reqs_dec(grpc::gRPCCURL) = take!(grpc.events)
+function max_reqs_inc(grpc::gRPCCURL, req::gRPCRequest)
+    # Reset before we recycle
+    reset(req.curl_done_reading)
+    put!(grpc.events, req.curl_done_reading)
 end
 
 function cleanup_request(grpc::gRPCCURL, req::gRPCRequest)
@@ -766,7 +785,7 @@ function cleanup_request(grpc::gRPCCURL, req::gRPCRequest)
     # Allow this to be GC now that there is no risk of use in C callback
     unpreserve_handle(req)
     # Increment the request semaphore to allow more requests through
-    release(grpc.sem)
+    max_reqs_inc(grpc, req)
     # Unblock anything waiting on the request
     notify(req.ready)
 end
