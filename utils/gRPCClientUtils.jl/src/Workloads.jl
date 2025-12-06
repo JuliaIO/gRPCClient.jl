@@ -1,10 +1,4 @@
-const workload_smol_N = 1_000
-const workload_32_224_224_uint8_N = 100
-const workload_streaming_request_N = 1_000
-const workload_streaming_response_N = 1_000
-const workload_streaming_bidirectional_N = 1_000
-
-function workload_32_224_224_uint8(n)
+function workload_32_224_224_uint8(n = 100)
     client = TestService_TestRPC_Client("localhost", 8001)
 
     reqs = Vector{gRPCRequest}()
@@ -20,9 +14,11 @@ function workload_32_224_224_uint8(n)
     for req in reqs
         grpc_async_await(req)
     end
+
+    n
 end
 
-function workload_smol(n)
+function workload_smol(n = 1_000)
     client = TestService_TestRPC_Client("localhost", 8001)
 
     # Since requests are lightweight, use async / await pattern to avoid creating an extra task per request
@@ -35,9 +31,11 @@ function workload_smol(n)
     for req in reqs
         grpc_async_await(req)
     end
+
+    n
 end
 
-function workload_streaming_request(n)
+function workload_streaming_request(n = 1_000)
     client = TestService_TestClientStreamRPC_Client("localhost", 8001)
     requests_c = Channel{TestRequest}(16)
 
@@ -53,10 +51,10 @@ function workload_streaming_request(n)
         response = grpc_async_await(req)
     end
 
-    nothing
+    n
 end
 
-function workload_streaming_response(n)
+function workload_streaming_response(n = 1_000)
     client = TestService_TestServerStreamRPC_Client("localhost", 8001)
     response_c = Channel{TestResponse}(16)
 
@@ -67,11 +65,11 @@ function workload_streaming_response(n)
     end
     close(response_c)
 
-    nothing
+    n
 end
 
 
-function workload_streaming_bidirectional(n)
+function workload_streaming_bidirectional(n = 1_000)
     client = TestService_TestBidirectionalStreamRPC_Client("localhost", 8001)
     requests_c = Channel{TestRequest}(16)
     response_c = Channel{TestResponse}(16)
@@ -97,4 +95,6 @@ function workload_streaming_bidirectional(n)
 
         nothing
     end
+
+    n
 end
