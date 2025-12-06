@@ -1,12 +1,14 @@
-benchmark_workload_smol() = @benchmark workload_smol(1_000)
-benchmark_workload_32_224_224_uint8() = @benchmark workload_32_224_224_uint8(100)
-benchmark_workload_streaming_request() = @benchmark workload_streaming_request(1_000)
-benchmark_workload_streaming_response() = @benchmark workload_streaming_response(1_000)
-benchmark_workload_streaming_bidirectional() =
-    @benchmark workload_streaming_bidirectional(1_000)
+benchmark_workload_smol() = @benchmark workload_smol()
+benchmark_workload_32_224_224_uint8() = @benchmark workload_32_224_224_uint8()
+benchmark_workload_streaming_request() = @benchmark workload_streaming_request()
+benchmark_workload_streaming_response() = @benchmark workload_streaming_response()
+benchmark_workload_streaming_bidirectional() = @benchmark workload_streaming_bidirectional()
 
 
-function perform_benchmark(f, N)
+function perform_benchmark(f)
+    # Hack to make the code cleaner (benchmarks return number of messages per workload)
+    N = f()
+
     b = @benchmark $f($N)
     timing = sum(b.times) / 1e9
     timings_us = b.times ./ 1e3
@@ -42,14 +44,14 @@ function benchmark_table()
         ["", "KiB/message", "allocs/message", "messages/s", "μs", "μs", "μs", "μs"],
     ]
     all_benchmarks = [
-        (workload_smol, 1_000),
-        (workload_32_224_224_uint8, 100),
-        (workload_streaming_request, 1_000),
-        (workload_streaming_response, 1_000),
-        (workload_streaming_bidirectional, 1_000),
+        workload_smol,
+        workload_32_224_224_uint8,
+        workload_streaming_request,
+        workload_streaming_response,
+        workload_streaming_bidirectional,
     ]
 
-    all_results = [perform_benchmark(f, N) for (f, N) in ProgressBar(all_benchmarks)]
+    all_results = [perform_benchmark(f) for f in ProgressBar(all_benchmarks)]
 
     pretty_table(
         permutedims(reduce(hcat, all_results));
