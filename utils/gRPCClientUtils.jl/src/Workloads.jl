@@ -1,3 +1,9 @@
+const workload_smol_N = 1_000
+const workload_32_224_224_uint8_N = 100
+const workload_streaming_request_N = 1_000
+const workload_streaming_response_N = 1_000
+const workload_streaming_bidirectional_N = 1_000
+
 function workload_32_224_224_uint8(n)
     client = TestService_TestRPC_Client("localhost", 8001)
 

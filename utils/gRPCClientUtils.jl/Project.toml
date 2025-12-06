@@ -5,15 +5,21 @@ authors = ["Carroll Vance <cs.vance@icloud.com>"]
 
 [deps]
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
-gRPCClient = "aaca4a50-36af-4a1d-b878-4c443f2061ad"
+PProf = "e4faabce-9ead-11e9-39d9-4379958e3056"
 PrettyTables = "08abe8d2-0d0c-5749-adfa-8a2ac140af0d"
+Profile = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
 ProgressBars = "49802e3a-d2f1-5c88-81d8-b72133a6f568"
 ProtoBuf = "3349acd9-ac6a-5e09-bcdb-63829b23a429"
+gRPCClient = "aaca4a50-36af-4a1d-b878-4c443f2061ad"
+
+[sources]
+gRPCClient = {path = "../.."}
 
 [compat]
 BenchmarkTools = "~1.6.0"
-gRPCClient = "~1.0.0"
+PProf = "3.2.0"
 PrettyTables = "~3.1.0"
+Profile = "1.11.0"
 ProgressBars = "~1.5.0"
 ProtoBuf = "~1.2"
-
+gRPCClient = "~1.0.0"

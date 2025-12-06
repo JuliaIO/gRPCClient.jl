@@ -1,9 +1,12 @@
-benchmark_workload_smol() = @benchmark workload_smol(1_000)
-benchmark_workload_32_224_224_uint8() = @benchmark workload_32_224_224_uint8(100)
-benchmark_workload_streaming_request() = @benchmark workload_streaming_request(1_000)
-benchmark_workload_streaming_response() = @benchmark workload_streaming_response(1_000)
+benchmark_workload_smol() = @benchmark workload_smol(workload_smol_N)
+benchmark_workload_32_224_224_uint8() =
+    @benchmark workload_32_224_224_uint8(workload_32_224_224_uint8_N)
+benchmark_workload_streaming_request() =
+    @benchmark workload_streaming_request(workload_streaming_request_N)
+benchmark_workload_streaming_response() =
+    @benchmark workload_streaming_response(workload_streaming_response_N)
 benchmark_workload_streaming_bidirectional() =
-    @benchmark workload_streaming_bidirectional(1_000)
+    @benchmark workload_streaming_bidirectional(workload_streaming_bidirectional_N)
 
 
 function perform_benchmark(f, N)
@@ -42,11 +45,11 @@ function benchmark_table()
         ["", "KiB/message", "allocs/message", "messages/s", "μs", "μs", "μs", "μs"],
     ]
     all_benchmarks = [
-        (workload_smol, 1_000),
-        (workload_32_224_224_uint8, 100),
-        (workload_streaming_request, 1_000),
-        (workload_streaming_response, 1_000),
-        (workload_streaming_bidirectional, 1_000),
+        (workload_smol, workload_smol_N),
+        (workload_32_224_224_uint8, workload_32_224_224_uint8_N),
+        (workload_streaming_request, workload_streaming_request_N),
+        (workload_streaming_response, workload_streaming_response_N),
+        (workload_streaming_bidirectional, workload_streaming_bidirectional_N),
     ]
 
     all_results = [perform_benchmark(f, N) for (f, N) in ProgressBar(all_benchmarks)]
