@@ -158,13 +158,13 @@ benchmark_table()
 ```
 ╭──────────────────────────────────┬─────────────┬────────────────┬────────────┬──────────────┬─────────┬──────┬──────╮
 │                        Benchmark │  Avg Memory │     Avg Allocs │ Throughput │ Avg duration │ Std-dev │  Min │  Max │
-│                                  │ KiB/message │ allocs/message │    calls/s │           μs │      μs │   μs │   μs │
+│                                  │ KiB/message │ allocs/message │ messages/s │           μs │      μs │   μs │   μs │
 ├──────────────────────────────────┼─────────────┼────────────────┼────────────┼──────────────┼─────────┼──────┼──────┤
-│                    workload_smol │        2.95 │           72.5 │      18014 │           56 │    3.08 │   50 │   64 │
-│        workload_32_224_224_uint8 │       637.0 │           79.7 │        567 │         1762 │   99.07 │ 1628 │ 1911 │
-│       workload_streaming_request │        0.86 │            6.5 │     341851 │            3 │    1.68 │    2 │   30 │
-│      workload_streaming_response │        13.0 │           27.7 │      64515 │           16 │    5.12 │    6 │   33 │
-│ workload_streaming_bidirectional │        1.41 │           25.6 │     102072 │           10 │    6.23 │    4 │   52 │
+│                    workload_smol │        2.78 │           67.5 │      17744 │           56 │     3.3 │   51 │   66 │
+│        workload_32_224_224_uint8 │       636.8 │           74.1 │        578 │         1731 │   99.33 │ 1583 │ 1899 │
+│       workload_streaming_request │        0.87 │            6.5 │     339916 │            3 │    1.61 │    2 │   20 │
+│      workload_streaming_response │        13.0 │           27.7 │      65732 │           15 │    4.94 │    6 │   50 │
+│ workload_streaming_bidirectional │        1.45 │           25.6 │     105133 │           10 │    6.06 │    4 │   55 │
 ╰──────────────────────────────────┴─────────────┴────────────────┴────────────┴──────────────┴─────────┴──────┴──────╯
 ```
 

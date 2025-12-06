@@ -39,7 +39,7 @@ function benchmark_table()
             "Min",
             "Max",
         ],
-        ["", "KiB/message", "allocs/message", "calls/s", "μs", "μs", "μs", "μs"],
+        ["", "KiB/message", "allocs/message", "messages/s", "μs", "μs", "μs", "μs"],
     ]
     all_benchmarks = [
         (workload_smol, 1_000),

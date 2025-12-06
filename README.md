@@ -24,13 +24,13 @@ However, it is unlikely Julia will be used this way in the real world.
 ```
 ╭──────────────────────────────────┬─────────────┬────────────────┬────────────┬──────────────┬─────────┬──────┬──────╮
 │                        Benchmark │  Avg Memory │     Avg Allocs │ Throughput │ Avg duration │ Std-dev │  Min │  Max │
-│                                  │ KiB/message │ allocs/message │    calls/s │           μs │      μs │   μs │   μs │
+│                                  │ KiB/message │ allocs/message │ messages/s │           μs │      μs │   μs │   μs │
 ├──────────────────────────────────┼─────────────┼────────────────┼────────────┼──────────────┼─────────┼──────┼──────┤
-│                    workload_smol │        2.95 │           72.5 │      18424 │           54 │    3.54 │   48 │   66 │
-│        workload_32_224_224_uint8 │       637.0 │           79.1 │        548 │         1826 │  405.48 │ 1602 │ 2730 │
-│       workload_streaming_request │        0.61 │            6.6 │     508983 │            2 │    0.67 │    1 │   15 │
-│      workload_streaming_response │       12.99 │           27.6 │     194689 │            5 │    0.52 │    4 │    9 │
-│ workload_streaming_bidirectional │        1.98 │           25.5 │     490718 │            2 │    0.59 │    1 │   13 │
+│                    workload_smol │        2.78 │           67.5 │      18348 │           55 │    3.36 │   48 │   70 │
+│        workload_32_224_224_uint8 │       636.8 │           74.5 │        553 │         1809 │  370.93 │ 1582 │ 2678 │
+│       workload_streaming_request │        0.62 │            6.6 │     487223 │            2 │    0.68 │    1 │   14 │
+│      workload_streaming_response │        13.0 │           27.6 │     192730 │            5 │    0.52 │    4 │    8 │
+│ workload_streaming_bidirectional │        1.98 │           25.5 │     502387 │            2 │    0.56 │    1 │   14 │
 ╰──────────────────────────────────┴─────────────┴────────────────┴────────────┴──────────────┴─────────┴──────┴──────╯
 ```
 
@@ -41,13 +41,13 @@ Using more threads isn't great for async IO, but this is likely how most people 
 ```
 ╭──────────────────────────────────┬─────────────┬────────────────┬────────────┬──────────────┬─────────┬──────┬──────╮
 │                        Benchmark │  Avg Memory │     Avg Allocs │ Throughput │ Avg duration │ Std-dev │  Min │  Max │
-│                                  │ KiB/message │ allocs/message │    calls/s │           μs │      μs │   μs │   μs │
+│                                  │ KiB/message │ allocs/message │ messages/s │           μs │      μs │   μs │   μs │
 ├──────────────────────────────────┼─────────────┼────────────────┼────────────┼──────────────┼─────────┼──────┼──────┤
-│                    workload_smol │        2.95 │           72.5 │      18014 │           56 │    3.08 │   50 │   64 │
-│        workload_32_224_224_uint8 │       637.0 │           79.7 │        567 │         1762 │   99.07 │ 1628 │ 1911 │
-│       workload_streaming_request │        0.86 │            6.5 │     341851 │            3 │    1.68 │    2 │   30 │
-│      workload_streaming_response │        13.0 │           27.7 │      64515 │           16 │    5.12 │    6 │   33 │
-│ workload_streaming_bidirectional │        1.41 │           25.6 │     102072 │           10 │    6.23 │    4 │   52 │
+│                    workload_smol │        2.78 │           67.5 │      17744 │           56 │     3.3 │   51 │   66 │
+│        workload_32_224_224_uint8 │       636.8 │           74.1 │        578 │         1731 │   99.33 │ 1583 │ 1899 │
+│       workload_streaming_request │        0.87 │            6.5 │     339916 │            3 │    1.61 │    2 │   20 │
+│      workload_streaming_response │        13.0 │           27.7 │      65732 │           15 │    4.94 │    6 │   50 │
+│ workload_streaming_bidirectional │        1.45 │           25.6 │     105133 │           10 │    6.06 │    4 │   55 │
 ╰──────────────────────────────────┴─────────────┴────────────────┴────────────┴──────────────┴─────────┴──────┴──────╯
 ```
 
