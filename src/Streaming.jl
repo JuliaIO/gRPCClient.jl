@@ -173,6 +173,7 @@ function grpc_async_request(
         keepalive = client.keepalive,
         max_send_message_length = client.max_send_message_length,
         max_recieve_message_length = client.max_recieve_message_length,
+        token = client.token,
     )
 
     request_task = Threads.@spawn grpc_async_stream_request(req, request)
@@ -261,6 +262,7 @@ function grpc_async_request(
         keepalive = client.keepalive,
         max_send_message_length = client.max_send_message_length,
         max_recieve_message_length = client.max_recieve_message_length,
+        token = client.token,
     )
 
     response_task = Threads.@spawn grpc_async_stream_response(req, response)
@@ -355,6 +357,7 @@ function grpc_async_request(
         keepalive = client.keepalive,
         max_send_message_length = client.max_send_message_length,
         max_recieve_message_length = client.max_recieve_message_length,
+        token = client.token,
     )
 
     request_task = Threads.@spawn grpc_async_stream_request(req, request)

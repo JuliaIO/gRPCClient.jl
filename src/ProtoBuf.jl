@@ -24,6 +24,7 @@ function service_codegen_handler(io, t::ServiceType, ctx::Context)
         println(io, "\tkeepalive=60,")
         println(io, "\tmax_send_message_length = 4*1024*1024,")
         println(io, "\tmax_recieve_message_length = 4*1024*1024,")
+        println(io, "\ttoken=nothing,")
         println(
             io,
             ") = gRPCServiceClient{$request_type, $(rpc.request_stream), $response_type, $(rpc.response_stream)}(",
@@ -35,6 +36,7 @@ function service_codegen_handler(io, t::ServiceType, ctx::Context)
         println(io, "\tkeepalive=keepalive,")
         println(io, "\tmax_send_message_length=max_send_message_length,")
         println(io, "\tmax_recieve_message_length=max_recieve_message_length,")
+        println(io, "\ttoken=token,")
         println(io, ")\n")
     end
 end
