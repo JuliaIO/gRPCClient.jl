@@ -1,9 +1,9 @@
-function service_codegen_handler(io, t::ServiceType, ctx::Context)
+function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Context)
     namespace = join(ctx.proto_file.preamble.namespace, ".")
     service_name = t.name
 
 
-    for rpc in t.rpcs
+    for (i, rpc) in enumerate(t.rpcs)
         rpc_path = "/$namespace.$service_name/$(rpc.name)"
 
         request_type = rpc.request_type.name
@@ -19,14 +19,14 @@ function service_codegen_handler(io, t::ServiceType, ctx::Context)
         println(io, "$(service_name)_$(rpc.name)_Client(")
         println(io, "\thost, port;")
         println(io, "\tsecure=false,")
-        println(io, "\tgrpc=grpc_global_handle(),")
+        println(io, "\tgrpc=gRPCClient.grpc_global_handle(),")
         println(io, "\tdeadline=10,")
         println(io, "\tkeepalive=60,")
         println(io, "\tmax_send_message_length = 4*1024*1024,")
         println(io, "\tmax_recieve_message_length = 4*1024*1024,")
         println(
             io,
-            ") = gRPCServiceClient{$request_type, $(rpc.request_stream), $response_type, $(rpc.response_stream)}(",
+            ") = gRPCClient.gRPCServiceClient{$request_type, $(rpc.request_stream), $response_type, $(rpc.response_stream)}(",
         )
         println(io, "\thost, port, \"$rpc_path\";")
         println(io, "\tsecure=secure,")
@@ -35,9 +35,14 @@ function service_codegen_handler(io, t::ServiceType, ctx::Context)
         println(io, "\tkeepalive=keepalive,")
         println(io, "\tmax_send_message_length=max_send_message_length,")
         println(io, "\tmax_recieve_message_length=max_recieve_message_length,")
-        println(io, ")\n")
+        println(io, i < length(t.rpcs) ? ")\n" : ")")
     end
 end
 
+import_cb(io, ctx) = println(io, "import gRPCClient")
 
-grpc_register_service_codegen() = register_service_codegen(service_codegen_handler)
+grpc_register_service_codegen() = CodeGenerators.register_external_codegen_handler(
+    "gRPCClient.jl";
+    import_cb = import_cb,
+    service_cb = service_cb,
+)
