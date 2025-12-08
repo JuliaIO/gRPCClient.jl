@@ -2,8 +2,6 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
     namespace = join(ctx.proto_file.preamble.namespace, ".")
     service_name = t.name
 
-    export_names = Vector{String}()
-
     for (i, rpc) in enumerate(t.rpcs)
         rpc_path = "/$namespace.$service_name/$(rpc.name)"
 
@@ -18,7 +16,6 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
         end
 
         export_name = "$(service_name)_$(rpc.name)_Client"
-        push!(export_names, export_name)
 
         println(io, "$(export_name)(")
         println(io, "\thost, port;")
@@ -39,13 +36,20 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
         println(io, "\tkeepalive=keepalive,")
         println(io, "\tmax_send_message_length=max_send_message_length,")
         println(io, "\tmax_recieve_message_length=max_recieve_message_length,")
-        println(io, ")\n")
+        println(io, ")")
+
+        # TODO: define a standard way to check whether we should export that is used in both ProtoBuf.jl and gRPCClient.jl
+        if CodeGenerators.is_namespaced(ctx.proto_file) || ctx.options.always_use_modules
+            println(io, "export $(export_name)")
+        else
+            println(io, "")
+        end
+
+        if i < lastindex(t.rpcs)
+            println(io, "")
+        end
     end
 
-    # TODO: define a standard way to check whether we should export that is used in both ProtoBuf.jl and gRPCClient.jl
-    if !isempty(export_names) && (CodeGenerators.is_namespaced(ctx.proto_file) || ctx.options.always_use_modules)
-        map(x->println(io, "export $x"), export_names)
-    end
 end
 
 import_cb(io, ctx, definitions) =
