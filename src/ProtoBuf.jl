@@ -48,7 +48,10 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
     end
 end
 
-import_cb(io, ctx) = println(io, "import gRPCClient")
+import_cb(io, ctx, definitions) =
+    mapreduce(x->x isa CodeGenerators.ServiceType ? 1 : 0, +, values(definitions)) > 0 &&
+        println(io, "import gRPCClient")
+
 
 grpc_register_service_codegen() = CodeGenerators.register_external_codegen_handler(
     "gRPCClient.jl";
