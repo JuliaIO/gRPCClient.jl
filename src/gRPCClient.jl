@@ -13,8 +13,7 @@ using Base: OS_HANDLE, preserve_handle, unpreserve_handle
 
 import Base.wait,
     Base.reset, Base.notify, Base.isreadable, Base.iswritable, Base.close, Base.open
-import ProtoBuf.CodeGenerators.ServiceType,
-    ProtoBuf.CodeGenerators.Context, ProtoBuf.CodeGenerators.register_service_codegen
+import ProtoBuf.CodeGenerators
 
 
 abstract type gRPCException <: Exception end
