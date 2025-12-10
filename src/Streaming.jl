@@ -88,6 +88,9 @@ function grpc_async_stream_response(
     try
         while isnothing(req.ex)
             response_buf = take!(req.response_c)
+            if response_buf === nothing
+                continue
+            end
             response = decode(ProtoDecoder(response_buf), TResponse)
             put!(channel, response)
         end
@@ -168,7 +171,7 @@ function grpc_async_request(
         IOBuffer(),
         IOBuffer(),
         Channel{IOBuffer}(16),
-        nothing;
+        NOCHANNEL;
         deadline = client.deadline,
         keepalive = client.keepalive,
         max_send_message_length = client.max_send_message_length,
@@ -255,7 +258,7 @@ function grpc_async_request(
         url(client),
         request_buf,
         IOBuffer(),
-        nothing,
+        NOCHANNEL,
         Channel{IOBuffer}(16);
         deadline = client.deadline,
         keepalive = client.keepalive,
