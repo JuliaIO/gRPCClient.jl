@@ -143,8 +143,8 @@ func main() {
 	}
 
 	if *publicMode {
-		host = "::"
-		log.Printf("Listening on [%s]:%d in public mode", host, port)
+		host = ""
+		log.Printf("Listening on [::]:%d in public mode", port)
 		log.Println("(len(response.data) will always be 1)")
 	} else {
 		log.Printf("Listening on %s:%d in test mode", host, port)
