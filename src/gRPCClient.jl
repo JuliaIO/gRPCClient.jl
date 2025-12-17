@@ -113,27 +113,27 @@ export gRPCServiceCallException
 
 
 @setup_workload begin
-    function _get_test_host()
-        if "GRPC_TEST_SERVER_HOST" in keys(ENV)
-            ENV["GRPC_TEST_SERVER_HOST"]
+    function _get_precompile_host()
+        if "GRPC_PRECOMPILE_SERVER_HOST" in keys(ENV)
+            ENV["GRPC_PRECOMPILE_SERVER_HOST"]
         else
             # We don't have a Julia gRPC server so call my Linode's public gRPC endpoint
             "172.238.177.88"
         end
     end
 
-    function _get_test_port()
-        if "GRPC_TEST_SERVER_PORT" in keys(ENV)
-            parse(UInt16, ENV["GRPC_TEST_SERVER_PORT"])
+    function _get_precompile_port()
+        if "GRPC_PRECOMPILE_SERVER_PORT" in keys(ENV)
+            parse(UInt16, ENV["GRPC_PRECOMPILE_SERVER_PORT"])
         else
             8001
         end
     end    
 
-    TEST_HOST = _get_test_host()
-    TEST_PORT = _get_test_port()
+    TEST_HOST = _get_precompile_host()
+    TEST_PORT = _get_precompile_port()
 
-    PRECOMPILE_DEADLINE = 10
+    PRECOMPILE_DEADLINE = 5
 
     @compile_workload begin
         include("../test/gen/test/test_pb.jl")
@@ -211,7 +211,7 @@ export gRPCServiceCallException
             If you care about precompile you can consider the following options:
             - Request that your network administrator allow connections to this address on TCP: $(TEST_HOST):$(TEST_PORT)
             - Add a precompile block to your own package which calls an accessible gRPC server
-            - Run your own instance of the Go gRPC test server in public mode `./grpc_test_server -public` and set GRPC_TEST_SERVER_HOST and GRPC_TEST_SERVER_PORT environment variables to point to it 
+            - Run your own instance of the Go gRPC test server in public mode `./grpc_test_server -public` and set GRPC_PRECOMPILE_SERVER_HOST and GRPC_PRECOMPILE_SERVER_PORT environment variables to point to it 
             """
         end
 
