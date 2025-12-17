@@ -33,7 +33,7 @@ go build -o grpc_test_server
 
 ### Code Generation
 
-`pkg> add https://github.com/csvance/ProtoBuf.jl`
+`pkg> add https://github.com/JuliaIO/ProtoBuf.jl.git`
 
 gRPCClient.jl integrates with ProtoBuf.jl to automatically generate Julia client stubs for calling gRPC. 
 
