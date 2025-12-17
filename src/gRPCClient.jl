@@ -133,7 +133,7 @@ export gRPCServiceCallException
     TEST_HOST = _get_test_host()
     TEST_PORT = _get_test_port()
 
-    PRECOMPILE_DEADLINE = 5
+    PRECOMPILE_DEADLINE = 10
 
     @compile_workload begin
         include("../test/gen/test/test_pb.jl")
