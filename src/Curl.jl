@@ -259,7 +259,8 @@ mutable struct gRPCRequest
         # curl_easy_setopt(easy_handle, CURLOPT_VERBOSE, UInt32(1))
 
         curl_easy_setopt(easy_handle, CURLOPT_URL, url)
-        curl_easy_setopt(easy_handle, CURLOPT_TIMEOUT, deadline)
+        curl_easy_setopt(easy_handle, CURLOPT_TIMEOUT, Clong(ceil(deadline)))
+        curl_easy_setopt(easy_handle, CURLOPT_CONNECTTIMEOUT, Clong(ceil(deadline)))
         curl_easy_setopt(easy_handle, CURLOPT_PIPEWAIT, Clong(1))
         curl_easy_setopt(easy_handle, CURLOPT_POST, Clong(1))
         curl_easy_setopt(easy_handle, CURLOPT_CUSTOMREQUEST, "POST")
