@@ -128,22 +128,21 @@ export gRPCServiceCallException
         else
             8001
         end
-    end    
+    end
 
     TEST_HOST = _get_precompile_host()
     TEST_PORT = _get_precompile_port()
 
-    PRECOMPILE_DEADLINE = 5
-
     @compile_workload begin
+        "GRPC_PRECOMPILE_DISABLE" in keys(ENV) && return
+
         include("../test/gen/test/test_pb.jl")
 
         # Initialize the gRPC package - grpc_shutdown() does the opposite for use with Revise.
         grpc_init()
 
         # Unary 
-        client_unary =
-            TestService_TestRPC_Client(TEST_HOST, TEST_PORT; deadline = PRECOMPILE_DEADLINE)
+        client_unary = TestService_TestRPC_Client(TEST_HOST, TEST_PORT)
 
         try
             # Sync API
@@ -158,11 +157,8 @@ export gRPCServiceCallException
             @static if VERSION >= v"1.12"
 
                 # Request 
-                client_request = TestService_TestClientStreamRPC_Client(
-                    TEST_HOST,
-                    TEST_PORT;
-                    deadline = PRECOMPILE_DEADLINE,
-                )
+                client_request =
+                    TestService_TestClientStreamRPC_Client(TEST_HOST, TEST_PORT)
                 request_c = Channel{TestRequest}(16)
                 put!(request_c, TestRequest(1, zeros(UInt64, 1)))
                 close(request_c)
@@ -172,11 +168,8 @@ export gRPCServiceCallException
                 )
 
                 # Response 
-                client_response = TestService_TestServerStreamRPC_Client(
-                    TEST_HOST,
-                    TEST_PORT;
-                    deadline = PRECOMPILE_DEADLINE,
-                )
+                client_response =
+                    TestService_TestServerStreamRPC_Client(TEST_HOST, TEST_PORT)
                 response_c = Channel{TestResponse}(16)
                 req = grpc_async_request(
                     client_response,
@@ -204,14 +197,16 @@ export gRPCServiceCallException
             !isa(ex, gRPCServiceCallException) &&
                 ex.code == DEADLINE_EXCEEDED &&
                 rethrow(ex)
+
             @warn """
             DEADLINE_EXCEEDED during gRPCClient.jl precompile
 
             A dedicated server for allowing this package to precompile is provided to the public but is not accessible from this network.
-            If you care about precompile you can consider the following options:
+            If you care about this you can consider the following options:
             - Request that your network administrator allow connections to this address on TCP: $(TEST_HOST):$(TEST_PORT)
             - Add a precompile block to your own package which calls an accessible gRPC server
-            - Run your own instance of the Go gRPC test server in public mode `./grpc_test_server -public` and set GRPC_PRECOMPILE_SERVER_HOST and GRPC_PRECOMPILE_SERVER_PORT environment variables to point to it 
+            - Run your own instance of the Go gRPC test server in public mode `./grpc_test_server -public` and set GRPC_PRECOMPILE_SERVER_HOST and GRPC_PRECOMPILE_SERVER_PORT environment variables to point to it
+            - Set the GRPC_PRECOMPILE_DISABLE environment variable to disable gRPCClient.jl precompiliation and this message
             """
         end
 
