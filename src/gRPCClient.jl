@@ -180,11 +180,8 @@ export gRPCServiceCallException
                 grpc_async_await(req)
 
                 # Bidirectional 
-                client_bidirectional = TestService_TestBidirectionalStreamRPC_Client(
-                    TEST_HOST,
-                    TEST_PORT;
-                    deadline = PRECOMPILE_DEADLINE,
-                )
+                client_bidirectional =
+                    TestService_TestBidirectionalStreamRPC_Client(TEST_HOST, TEST_PORT)
                 request_c = Channel{TestRequest}(16)
                 response_c = Channel{TestResponse}(16)
                 put!(request_c, TestRequest(1, zeros(UInt64, 1)))
