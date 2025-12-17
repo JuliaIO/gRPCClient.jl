@@ -113,10 +113,27 @@ export gRPCServiceCallException
 
 
 @setup_workload begin
-    # We don't have a Julia gRPC server so call my Linode's public gRPC endpoint
-    TEST_HOST = "172.238.177.88"
-    # TODO: change this to port 80 to fix issues with corporate firewalls
-    TEST_PORT = 8001
+    function _get_test_host()
+        if "GRPC_TEST_SERVER_HOST" in keys(ENV)
+            ENV["GRPC_TEST_SERVER_HOST"]
+        else
+            # We don't have a Julia gRPC server so call my Linode's public gRPC endpoint
+            "172.238.177.88"
+        end
+    end
+
+    function _get_test_port()
+        if "GRPC_TEST_SERVER_PORT" in keys(ENV)
+            parse(UInt16, ENV["GRPC_TEST_SERVER_PORT"])
+        else
+            8001
+        end
+    end    
+
+    TEST_HOST = _get_test_host()
+    TEST_PORT = _get_test_port()
+
+    PRECOMPILE_DEADLINE = 5
 
     @compile_workload begin
         include("../test/gen/test/test_pb.jl")
@@ -125,49 +142,77 @@ export gRPCServiceCallException
         grpc_init()
 
         # Unary 
-        client_unary = TestService_TestRPC_Client(TEST_HOST, TEST_PORT)
+        client_unary =
+            TestService_TestRPC_Client(TEST_HOST, TEST_PORT; deadline = PRECOMPILE_DEADLINE)
 
-        # Sync API
-        test_response = grpc_sync_request(client_unary, TestRequest(1, Vector{UInt64}()))
+        try
+            # Sync API
+            test_response =
+                grpc_sync_request(client_unary, TestRequest(1, Vector{UInt64}()))
 
-        # Async API
-        request = grpc_async_request(client_unary, TestRequest(1, Vector{UInt64}()))
-        test_response = grpc_async_await(client_unary, request)
+            # Async API
+            request = grpc_async_request(client_unary, TestRequest(1, Vector{UInt64}()))
+            test_response = grpc_async_await(client_unary, request)
 
-        # Streaming 
-        @static if VERSION >= v"1.12"
+            # Streaming 
+            @static if VERSION >= v"1.12"
 
-            # Request 
-            client_request = TestService_TestClientStreamRPC_Client(TEST_HOST, TEST_PORT)
-            request_c = Channel{TestRequest}(16)
-            put!(request_c, TestRequest(1, zeros(UInt64, 1)))
-            close(request_c)
-            test_response = grpc_async_await(
-                client_request,
-                grpc_async_request(client_request, request_c),
-            )
+                # Request 
+                client_request = TestService_TestClientStreamRPC_Client(
+                    TEST_HOST,
+                    TEST_PORT;
+                    deadline = PRECOMPILE_DEADLINE,
+                )
+                request_c = Channel{TestRequest}(16)
+                put!(request_c, TestRequest(1, zeros(UInt64, 1)))
+                close(request_c)
+                test_response = grpc_async_await(
+                    client_request,
+                    grpc_async_request(client_request, request_c),
+                )
 
-            # Response 
-            client_response = TestService_TestServerStreamRPC_Client(TEST_HOST, TEST_PORT)
-            response_c = Channel{TestResponse}(16)
-            req = grpc_async_request(
-                client_response,
-                TestRequest(1, zeros(UInt64, 1)),
-                response_c,
-            )
-            test_response = take!(response_c)
-            grpc_async_await(req)
+                # Response 
+                client_response = TestService_TestServerStreamRPC_Client(
+                    TEST_HOST,
+                    TEST_PORT;
+                    deadline = PRECOMPILE_DEADLINE,
+                )
+                response_c = Channel{TestResponse}(16)
+                req = grpc_async_request(
+                    client_response,
+                    TestRequest(1, zeros(UInt64, 1)),
+                    response_c,
+                )
+                test_response = take!(response_c)
+                grpc_async_await(req)
 
-            # Bidirectional 
-            client_bidirectional =
-                TestService_TestBidirectionalStreamRPC_Client(TEST_HOST, TEST_PORT)
-            request_c = Channel{TestRequest}(16)
-            response_c = Channel{TestResponse}(16)
-            put!(request_c, TestRequest(1, zeros(UInt64, 1)))
-            req = grpc_async_request(client_bidirectional, request_c, response_c)
-            test_response = take!(response_c)
-            close(request_c)
-            grpc_async_await(req)
+                # Bidirectional 
+                client_bidirectional = TestService_TestBidirectionalStreamRPC_Client(
+                    TEST_HOST,
+                    TEST_PORT;
+                    deadline = PRECOMPILE_DEADLINE,
+                )
+                request_c = Channel{TestRequest}(16)
+                response_c = Channel{TestResponse}(16)
+                put!(request_c, TestRequest(1, zeros(UInt64, 1)))
+                req = grpc_async_request(client_bidirectional, request_c, response_c)
+                test_response = take!(response_c)
+                close(request_c)
+                grpc_async_await(req)
+            end
+        catch ex
+            !isa(ex, gRPCServiceCallException) &&
+                ex.code == DEADLINE_EXCEEDED &&
+                rethrow(ex)
+            @warn """
+            DEADLINE_EXCEEDED during gRPCClient.jl precompile
+
+            A dedicated server for allowing this package to precompile is provided to the public but is not accessible from this network.
+            If you care about precompile you can consider the following options:
+            - Request that your network administrator allow connections to this address on TCP: $(TEST_HOST):$(TEST_PORT)
+            - Add a precompile block to your own package which calls an accessible gRPC server
+            - Run your own instance of the Go gRPC test server in public mode `./grpc_test_server -public` and set GRPC_TEST_SERVER_HOST and GRPC_TEST_SERVER_PORT environment variables to point to it 
+            """
         end
 
         grpc_shutdown()
