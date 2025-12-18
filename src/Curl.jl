@@ -59,7 +59,7 @@ function write_callback(
             )
 
             # If we are response streaming unblock the task waiting on response_c
-            !isnothing(req.response_c) && close(req.response_c)
+            close(req.response_c)
             return typemax(Csize_t)
         end
 
@@ -259,8 +259,8 @@ mutable struct gRPCRequest
         # curl_easy_setopt(easy_handle, CURLOPT_VERBOSE, UInt32(1))
 
         curl_easy_setopt(easy_handle, CURLOPT_URL, url)
-        curl_easy_setopt(easy_handle, CURLOPT_TIMEOUT, Clong(ceil(deadline)))
-        curl_easy_setopt(easy_handle, CURLOPT_CONNECTTIMEOUT, Clong(ceil(deadline)))
+        curl_easy_setopt(easy_handle, CURLOPT_TIMEOUT_MS, Clong(ceil(1000*deadline)))
+        curl_easy_setopt(easy_handle, CURLOPT_CONNECTTIMEOUT_MS, Clong(ceil(1000*deadline)))
         curl_easy_setopt(easy_handle, CURLOPT_PIPEWAIT, Clong(1))
         curl_easy_setopt(easy_handle, CURLOPT_POST, Clong(1))
         curl_easy_setopt(easy_handle, CURLOPT_CUSTOMREQUEST, "POST")
@@ -408,7 +408,7 @@ function handle_write(
                 )
 
                 # If we are response streaming unblock the task waiting on response_c
-                !isnothing(req.response_c) && close(req.response_c)
+                close(req.response_c)
                 notify(req.ready)
                 return n, nothing
             elseif req.response_length > req.max_recieve_message_length
@@ -420,7 +420,7 @@ function handle_write(
                     ),
                 )
                 # If we are response streaming unblock the task waiting on response_c
-                !isnothing(req.response_c) && close(req.response_c)
+                close(req.response_c)
                 notify(req.ready)
                 return n, nothing
             end
@@ -805,6 +805,9 @@ function cleanup_request(grpc::gRPCCURL, req::gRPCRequest)
     curl_slist_free_all(req.headers)
     # Allow this to be GC now that there is no risk of use in C callback
     unpreserve_handle(req)
+    # Close streaming channels 
+    close(req.response_c)
+    close(req.request_c)
     # Increment the request semaphore to allow more requests through
     max_reqs_inc(grpc, req)
     # Unblock anything waiting on the request

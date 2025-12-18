@@ -230,6 +230,46 @@ include("gen/test/test_pb.jl")
             grpc_async_await(req)
         end
 
+        @testset "Response Streaming hang after END_STREAM" begin
+            N = 10
+
+            client = TestService_TestServerStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+
+            response_c = Channel{TestResponse}(N)
+
+            req = grpc_async_request(client, TestRequest(N, zeros(UInt64, 1)), response_c)
+
+            i = 1
+            try 
+                while i <= N + 1
+                    response = take!(response_c)
+                    i += 1
+                end
+                @test false
+            catch ex 
+                @test isa(ex, InvalidStateException)
+                @test i == N + 1
+            end
+            grpc_async_await(req)
+        end
+
+        @testset "Deadline Exceeded" begin
+            client = TestService_TestClientStreamRPC_Client(_TEST_HOST, _TEST_PORT; deadline=0.001)
+            request_c = Channel{TestRequest}(1)
+
+            request = grpc_async_request(client, request_c)
+            sleep(1.0)
+
+            try
+                grpc_async_await(request)
+                @test false
+            catch ex
+                # Verify the deadline was exceeded
+                @test isa(ex, gRPCServiceCallException)
+                @test ex.grpc_status == GRPC_DEADLINE_EXCEEDED
+            end
+        end
+
         @testset "Response Streaming - Small Messages" begin
             N = 1000
             client = TestService_TestServerStreamRPC_Client(_TEST_HOST, _TEST_PORT)
@@ -394,26 +434,6 @@ include("gen/test/test_pb.jl")
     @test grpc_timeout_header_val(0.0000001) == "100n"
 
     # end
-
-    @testset "Deadline - Very short timeout" begin
-        # Test with an extremely short deadline that might timeout
-        # Note: This test is timing-sensitive and might be flaky
-        client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT; deadline = 0.000000001)
-
-        # Try to make a request - it might timeout depending on server response time
-        try
-            response = grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
-            if Sys.iswindows()
-                @test_broken false
-            else
-                @test false
-            end
-        catch ex
-            # If it times out, verify it's an exception (CURL timeout or gRPC error)
-            @test isa(ex, gRPCServiceCallException)
-            @test ex.grpc_status == GRPC_DEADLINE_EXCEEDED
-        end
-    end
 
     @testset "Max Message Size" begin
         # Create a client with much more restictive max message lengths
