@@ -32,10 +32,9 @@ go build -o grpc_test_server
 ```
 
 ### Code Generation
+Code generation support has been up-streamed but a new version has not yet been released. In order to make code generation work, you need to add ProtoBuf.jl from git.
 
-**Note: support for this is currently being upstreamed into [ProtoBuf.jl](https://github.com/JuliaIO/ProtoBuf.jl/pull/283). Until then, make sure you add the feature branch with gRPC code generation support:**
-
-`pkg> add https://github.com/csvance/ProtoBuf.jl#external-service-support`
+`pkg> add https://github.com/JuliaIO/ProtoBuf.jl.git`
 
 gRPCClient.jl integrates with ProtoBuf.jl to automatically generate Julia client stubs for calling gRPC. 
 
