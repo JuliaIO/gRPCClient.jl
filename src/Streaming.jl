@@ -1,5 +1,3 @@
-
-
 function grpc_async_stream_request(
     req::gRPCRequest,
     channel::Channel{TRequest},
