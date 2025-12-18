@@ -32,6 +32,7 @@ go build -o grpc_test_server
 ```
 
 ### Code Generation
+Code generation support has been up-streamed but a new version has not yet been released. In order to make code generation work, you need to add ProtoBuf.jl from git.
 
 `pkg> add https://github.com/JuliaIO/ProtoBuf.jl.git`
 
