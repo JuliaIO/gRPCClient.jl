@@ -137,7 +137,6 @@ function header_callback(
             capture = m_grpc_status.captures[1]
             if capture !== nothing
                 req.grpc_status = parse(UInt64, capture)
-                close(req.response_c)
             end
         elseif (m_grpc_message = match(regex_grpc_message, header)) isa RegexMatch
             capture = m_grpc_message.captures[1]
@@ -806,6 +805,9 @@ function cleanup_request(grpc::gRPCCURL, req::gRPCRequest)
     curl_slist_free_all(req.headers)
     # Allow this to be GC now that there is no risk of use in C callback
     unpreserve_handle(req)
+    # Close streaming channels 
+    close(req.response_c)
+    close(req.request_c)
     # Increment the request semaphore to allow more requests through
     max_reqs_inc(grpc, req)
     # Unblock anything waiting on the request
