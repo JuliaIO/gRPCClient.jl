@@ -191,9 +191,9 @@ export gRPCServiceCallException
                 grpc_async_await(req)
             end
         catch ex
-            !isa(ex, gRPCServiceCallException) &&
-                ex.code == DEADLINE_EXCEEDED &&
+            if !(isa(ex, gRPCServiceCallException) && ex.grpc_status == GRPC_DEADLINE_EXCEEDED)
                 rethrow(ex)
+            end
 
             @warn """
             DEADLINE_EXCEEDED during gRPCClient.jl precompile
