@@ -1,4 +1,4 @@
-const _grpc = gRPCCURL()
+const _grpc = gRPCCURL(running = false)
 
 """
     grpc_global_handle()
