@@ -239,22 +239,12 @@ mutable struct gRPCRequest
         max_send_message_length = 4 * 1024 * 1024,
         max_recieve_message_length = 4 * 1024 * 1024,
     )
-        !isready(grpc) && throw(
+        !grpc.running && throw(
             gRPCServiceCallException(
                 GRPC_FAILED_PRECONDITION,
                 "gRPCCURL backend is not running, did you forget to call grpc_init()?",
             ),
         )
-
-        # If the grpc handle is shutdown avoid acquiring the request semaphore and immediately throw an exception
-        if !grpc.running
-            throw(
-                gRPCServiceCallException(
-                    GRPC_FAILED_PRECONDITION,
-                    "Tried to make a request when the provided grpc handle is shutdown",
-                ),
-            )
-        end
 
         # Reduce number of available requests by one or block if its currently zero
         # Also reduces the need to allocate the curl_done_reading Event for every request
@@ -798,7 +788,6 @@ function Base.open(grpc::gRPCCURL)
     end
 end
 
-isready(grpc::gRPCCURL) = grpc.running
 
 max_reqs_dec(grpc::gRPCCURL) = take!(grpc.sem)
 function max_reqs_inc(grpc::gRPCCURL, req::gRPCRequest)
