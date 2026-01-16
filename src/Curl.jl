@@ -728,18 +728,13 @@ mutable struct gRPCCURL
             Channel{Event}(max_streams),
         )
 
+        finalizer((x) -> close(x), grpc)
+
+        # This is used for the global const gRPCCURL handle
+        # The user is expected to call grpc_init() in order to use it
         !running && return grpc
 
-        # We use a channel as a Semaphore which also acts as a way to reuse Events to reduce allocations
-        for _ = 1:max_streams
-            put!(grpc.sem, Event())
-        end
-
-        preserve_handle(grpc)
-
-        grpc_multi_init(grpc)
-
-        finalizer((x) -> close(x), grpc)
+        open(grpc)
 
         return grpc
     end
