@@ -12,11 +12,12 @@ const NOCHANNEL = NoChannel()
 
 
 Base.isopen(req::NoChannel) = false
-Base.isempty(req::NoChannel) = true 
+Base.isempty(req::NoChannel) = true
 Base.put!(req::NoChannel, ::IOBuffer) = false
 Base.take!(req::NoChannel) = nothing
 Base.close(req::NoChannel) = false
-Base.iterate(req::NoChannel) = Iterators.Stateful(Iterators.flatten(Iterators.repeated(nothing, 0)))
+Base.iterate(req::NoChannel) =
+    Iterators.Stateful(Iterators.flatten(Iterators.repeated(nothing, 0)))
 
 
 function write_callback(
@@ -197,8 +198,8 @@ mutable struct gRPCRequest
     response::IOBuffer
 
     # These are only used when the request or response is streaming
-    request_c::Union{Channel{IOBuffer}, NoChannel}
-    response_c::Union{Channel{IOBuffer}, NoChannel}
+    request_c::Union{Channel{IOBuffer},NoChannel}
+    response_c::Union{Channel{IOBuffer},NoChannel}
 
     # The task making the request can block on this until the request is complete
     ready::Event
@@ -231,13 +232,20 @@ mutable struct gRPCRequest
         url::String,
         request::IOBuffer,
         response::IOBuffer,
-        request_c::Union{Channel{IOBuffer}, NoChannel},
-        response_c::Union{Channel{IOBuffer}, NoChannel};
+        request_c::Union{Channel{IOBuffer},NoChannel},
+        response_c::Union{Channel{IOBuffer},NoChannel};
         deadline = 10,
         keepalive = 60,
         max_send_message_length = 4 * 1024 * 1024,
         max_recieve_message_length = 4 * 1024 * 1024,
     )
+        !isready(grpc) && throw(
+            gRPCServiceCallException(
+                GRPC_FAILED_PRECONDITION,
+                "gRPCCURL backend is not running, did you forget to call grpc_init()?",
+            ),
+        )
+
         # If the grpc handle is shutdown avoid acquiring the request semaphore and immediately throw an exception
         if !grpc.running
             throw(
@@ -259,8 +267,12 @@ mutable struct gRPCRequest
         # curl_easy_setopt(easy_handle, CURLOPT_VERBOSE, UInt32(1))
 
         curl_easy_setopt(easy_handle, CURLOPT_URL, url)
-        curl_easy_setopt(easy_handle, CURLOPT_TIMEOUT_MS, Clong(ceil(1000*deadline)))
-        curl_easy_setopt(easy_handle, CURLOPT_CONNECTTIMEOUT_MS, Clong(ceil(1000*deadline)))
+        curl_easy_setopt(easy_handle, CURLOPT_TIMEOUT_MS, Clong(ceil(1000 * deadline)))
+        curl_easy_setopt(
+            easy_handle,
+            CURLOPT_CONNECTTIMEOUT_MS,
+            Clong(ceil(1000 * deadline)),
+        )
         curl_easy_setopt(easy_handle, CURLOPT_PIPEWAIT, Clong(1))
         curl_easy_setopt(easy_handle, CURLOPT_POST, Clong(1))
         curl_easy_setopt(easy_handle, CURLOPT_CUSTOMREQUEST, "POST")
@@ -702,23 +714,25 @@ mutable struct gRPCCURL
     running::Bool
     requests::Vector{gRPCRequest}
     # Allows for controlling the maximum number of concurrent gRPC requests/streams
-    events::Channel{Event}
+    sem::Channel{Event}
 
-    function gRPCCURL(max_streams::Int = GRPC_MAX_STREAMS)
+    function gRPCCURL(; max_streams::Int = GRPC_MAX_STREAMS, running = true)
         grpc = new(
             Ptr{Cvoid}(0),
             ReentrantLock(),
             nothing,
             Dict{curl_socket_t,CURLWatcher}(),
             ReentrantLock(),
-            true,
+            running,
             Vector{gRPCRequest}(),
             Channel{Event}(max_streams),
         )
 
+        !running && return grpc
+
         # We use a channel as a Semaphore which also acts as a way to reuse Events to reduce allocations
         for _ = 1:max_streams
-            put!(grpc.events, Event())
+            put!(grpc.sem, Event())
         end
 
         preserve_handle(grpc)
@@ -774,9 +788,9 @@ function Base.open(grpc::gRPCCURL)
                 grpc.watchers = Dict{curl_socket_t,CURLWatcher}()
             end
 
-            grpc.events = Channel{Event}(grpc.events.sz_max)
-            for _ = 1:grpc.events.sz_max
-                put!(grpc.events, Event())
+            grpc.sem = Channel{Event}(grpc.sem.sz_max)
+            for _ = 1:grpc.sem.sz_max
+                put!(grpc.sem, Event())
             end
 
             grpc.requests = Vector{gRPCRequest}()
@@ -789,11 +803,13 @@ function Base.open(grpc::gRPCCURL)
     end
 end
 
-max_reqs_dec(grpc::gRPCCURL) = take!(grpc.events)
+isready(grpc::gRPCCURL) = grpc.running
+
+max_reqs_dec(grpc::gRPCCURL) = take!(grpc.sem)
 function max_reqs_inc(grpc::gRPCCURL, req::gRPCRequest)
     # Reset before we recycle
     reset(req.curl_done_reading)
-    put!(grpc.events, req.curl_done_reading)
+    put!(grpc.sem, req.curl_done_reading)
 end
 
 function cleanup_request(grpc::gRPCCURL, req::gRPCRequest)
