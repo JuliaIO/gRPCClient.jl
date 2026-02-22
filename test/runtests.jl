@@ -65,6 +65,39 @@ include("gen/test/test_pb.jl")
     # Initialize the global gRPCCURL structure
     grpc_init()
 
+    @testset "Code Generation" begin
+        grpc_register_service_codegen()
+        mktempdir() do tmpdir
+            @test isnothing(protojl("proto/test.proto", @__DIR__, tmpdir))
+            generated = read(joinpath(tmpdir, "test", "test_pb.jl"), String)
+            # gRPCClient import injected after ProtoBuf imports
+            @test contains(generated, "import gRPCClient")
+            # BEGIN/END markers wrapping the service block
+            @test contains(generated, "# gRPCClient.jl BEGIN")
+            @test contains(generated, "# gRPCClient.jl END")
+            # All four service client constructors are present
+            @test contains(generated, "TestService_TestRPC_Client(")
+            @test contains(generated, "TestService_TestServerStreamRPC_Client(")
+            @test contains(generated, "TestService_TestClientStreamRPC_Client(")
+            @test contains(generated, "TestService_TestBidirectionalStreamRPC_Client(")
+            # Correct streaming type parameters for each RPC variant
+            @test contains(generated, "gRPCClient.gRPCServiceClient{TestRequest, false, TestResponse, false}")
+            @test contains(generated, "gRPCClient.gRPCServiceClient{TestRequest, false, TestResponse, true}")
+            @test contains(generated, "gRPCClient.gRPCServiceClient{TestRequest, true, TestResponse, false}")
+            @test contains(generated, "gRPCClient.gRPCServiceClient{TestRequest, true, TestResponse, true}")
+            # Correct fully-qualified RPC paths
+            @test contains(generated, "/test.TestService/TestRPC")
+            @test contains(generated, "/test.TestService/TestServerStreamRPC")
+            @test contains(generated, "/test.TestService/TestClientStreamRPC")
+            @test contains(generated, "/test.TestService/TestBidirectionalStreamRPC")
+            # Client constructors are exported (proto has a package namespace)
+            @test contains(generated, "export TestService_TestRPC_Client")
+            @test contains(generated, "export TestService_TestServerStreamRPC_Client")
+            @test contains(generated, "export TestService_TestClientStreamRPC_Client")
+            @test contains(generated, "export TestService_TestBidirectionalStreamRPC_Client")
+        end
+    end
+
     @testset "@async varying request/response" begin
         client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
 
