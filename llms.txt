@@ -37,6 +37,8 @@ gRPCClient.jl integrates with ProtoBuf.jl to automatically generate Julia client
 
 ```julia
 using ProtoBuf
+
+# Loading gRPCClient before calling protojl is required — it registers the service stub generator that adds client constructors to the output.
 using gRPCClient
 
 # Creates Julia bindings for the messages and RPC defined in test.proto
@@ -77,7 +79,7 @@ client = TestService_TestRPC_Client("172.238.177.88", 8001; grpc=grpc_myapp)
 grpc_shutdown(grpc_myapp)
 ```
 
-[source](https://github.com/JuliaIO/gRPCClient.jl/blob/74046e6e0b01dd787e9c901f5fde79ff3674f0e5/src/gRPC.jl#L10-L28)
+[source](https://github.com/JuliaIO/gRPCClient.jl/blob/2e39c9c699b979f81dd966129119e56afba0c3aa/src/gRPC.jl#L10-L28)
 
 ```
 gRPCClient.grpc_shutdown — Method.
@@ -91,7 +93,7 @@ Shuts down the `gRPCCURL`. This neatly cleans up all active connections and requ
 development with Revise. Unless specifying the `gRPCCURL`, the global one provided by `grpc_global_handle()` is
 shutdown.
 
-[source](https://github.com/JuliaIO/gRPCClient.jl/blob/74046e6e0b01dd787e9c901f5fde79ff3674f0e5/src/gRPC.jl#L32-L36)
+[source](https://github.com/JuliaIO/gRPCClient.jl/blob/2e39c9c699b979f81dd966129119e56afba0c3aa/src/gRPC.jl#L32-L36)
 
 ```
 gRPCClient.grpc_global_handle — Method.
@@ -104,7 +106,7 @@ grpc_global_handle()
 Returns the global `gRPCCURL` state which contains a libCURL multi handle. By default all gRPC clients use this multi in
 order to ensure that HTTP/2 multiplexing happens where possible.
 
-[source](https://github.com/JuliaIO/gRPCClient.jl/blob/74046e6e0b01dd787e9c901f5fde79ff3674f0e5/src/gRPC.jl#L3-L7)
+[source](https://github.com/JuliaIO/gRPCClient.jl/blob/2e39c9c699b979f81dd966129119e56afba0c3aa/src/gRPC.jl#L3-L7)
 
 ### Generated ServiceClient Constructors
 
@@ -197,7 +199,7 @@ for request in requests
 end
 ```
 
-[source](https://github.com/JuliaIO/gRPCClient.jl/blob/74046e6e0b01dd787e9c901f5fde79ff3674f0e5/src/Unary.jl#L3-L31)
+[source](https://github.com/JuliaIO/gRPCClient.jl/blob/2e39c9c699b979f81dd966129119e56afba0c3aa/src/Unary.jl#L3-L31)
 
 ```
 gRPCClient.grpc_async_request — Method.
@@ -237,7 +239,7 @@ for i in 1:N
 end
 ```
 
-[source](https://github.com/JuliaIO/gRPCClient.jl/blob/74046e6e0b01dd787e9c901f5fde79ff3674f0e5/src/Unary.jl#L70-L101)
+[source](https://github.com/JuliaIO/gRPCClient.jl/blob/2e39c9c699b979f81dd966129119e56afba0c3aa/src/Unary.jl#L70-L101)
 
 ```
 gRPCClient.grpc_async_await — Method.
@@ -250,7 +252,7 @@ grpc_async_await(client::gRPCServiceClient{TRequest,false,TResponse,false}, requ
 Wait for the request to complete and return the response when it is ready. Throws any exceptions that were encountered
 during handling of the request.
 
-[source](https://github.com/JuliaIO/gRPCClient.jl/blob/74046e6e0b01dd787e9c901f5fde79ff3674f0e5/src/Unary.jl#L145-L149)
+[source](https://github.com/JuliaIO/gRPCClient.jl/blob/2e39c9c699b979f81dd966129119e56afba0c3aa/src/Unary.jl#L145-L149)
 
 ```
 gRPCClient.grpc_sync_request — Method.
@@ -278,7 +280,7 @@ response = grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
 @info response
 ```
 
-[source](https://github.com/JuliaIO/gRPCClient.jl/blob/74046e6e0b01dd787e9c901f5fde79ff3674f0e5/src/Unary.jl#L156-L176)
+[source](https://github.com/JuliaIO/gRPCClient.jl/blob/2e39c9c699b979f81dd966129119e56afba0c3aa/src/Unary.jl#L156-L176)
 
 #### Streaming
 
@@ -316,7 +318,7 @@ close(request_c)
 test_response = grpc_async_await(client, req)
 ```
 
-[source](https://github.com/JuliaIO/gRPCClient.jl/blob/74046e6e0b01dd787e9c901f5fde79ff3674f0e5/src/Streaming.jl#L110-L138)
+[source](https://github.com/JuliaIO/gRPCClient.jl/blob/2e39c9c699b979f81dd966129119e56afba0c3aa/src/Streaming.jl#L110-L138)
 
 ```
 gRPCClient.grpc_async_request — Method.
@@ -352,7 +354,7 @@ end
 grpc_async_await(req)
 ```
 
-[source](https://github.com/JuliaIO/gRPCClient.jl/blob/74046e6e0b01dd787e9c901f5fde79ff3674f0e5/src/Streaming.jl#L167-L195)
+[source](https://github.com/JuliaIO/gRPCClient.jl/blob/2e39c9c699b979f81dd966129119e56afba0c3aa/src/Streaming.jl#L167-L195)
 
 ```
 gRPCClient.grpc_async_request — Method.
@@ -394,7 +396,7 @@ close(request_c)
 grpc_async_await(req)
 ```
 
-[source](https://github.com/JuliaIO/gRPCClient.jl/blob/74046e6e0b01dd787e9c901f5fde79ff3674f0e5/src/Streaming.jl#L231-L265)
+[source](https://github.com/JuliaIO/gRPCClient.jl/blob/2e39c9c699b979f81dd966129119e56afba0c3aa/src/Streaming.jl#L231-L265)
 
 ```
 gRPCClient.grpc_async_await — Method.
@@ -406,7 +408,7 @@ grpc_async_await(client::gRPCServiceClient{TRequest,true,TResponse,false},reques
 
 Raise any exceptions encountered during the streaming request.
 
-[source](https://github.com/JuliaIO/gRPCClient.jl/blob/74046e6e0b01dd787e9c901f5fde79ff3674f0e5/src/Streaming.jl#L299-L303)
+[source](https://github.com/JuliaIO/gRPCClient.jl/blob/2e39c9c699b979f81dd966129119e56afba0c3aa/src/Streaming.jl#L299-L303)
 
 ### Exceptions
 
@@ -422,7 +424,7 @@ This exception type has two fields:
 1. `grpc_status::Int` - See [here](https://grpc.io/docs/guides/status-codes/) for an indepth explanation of each status.
 2. `message::String`
 
-[source](https://github.com/JuliaIO/gRPCClient.jl/blob/74046e6e0b01dd787e9c901f5fde79ff3674f0e5/src/gRPCClient.jl#L21-L29)
+[source](https://github.com/JuliaIO/gRPCClient.jl/blob/2e39c9c699b979f81dd966129119e56afba0c3aa/src/gRPCClient.jl#L21-L29)
 
 ## gRPCClientUtils.jl
 
@@ -471,5 +473,3 @@ In addition to benchmarks, a number of workloads based on these are available:
 - `stress_workload_streaming_bidirectional()`
 
 These run forever, and are useful to help identify any stability issues or resource leaks.
-
-
