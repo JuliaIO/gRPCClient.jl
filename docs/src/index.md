@@ -2,6 +2,8 @@
 
 gRPCClient.jl aims to be a production grade gRPC client emphasizing performance and reliability.
 
+A pure markdown version of this documentation is available here: [llms.txt](llms.txt)
+
 ## Features
 
 - Unary+Streaming RPC
