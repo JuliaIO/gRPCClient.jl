@@ -1,0 +1,9 @@
+syntax = "proto3";
+package ext_service;
+
+import "ext_types.proto";
+
+service ExtService {
+  rpc ExtRPC(ext_types.ExtRequest) returns (ext_types.ExtResponse) {}
+  rpc ExtStreamRPC(ext_types.ExtRequest) returns (stream ext_types.ExtResponse) {}
+}

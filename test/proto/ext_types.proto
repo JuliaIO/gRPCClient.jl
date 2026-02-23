@@ -1,0 +1,10 @@
+syntax = "proto3";
+package ext_types;
+
+message ExtRequest {
+  uint64 id = 1;
+}
+
+message ExtResponse {
+  uint64 result = 1;
+}
