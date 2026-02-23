@@ -7,6 +7,7 @@ Pkg.develop(path=".")
 EOF
 
 julia --project=docs docs/make_llms.jl
+cp docs/build/index.md LLMS.md
 
 julia --project=docs << EOF
 using Pkg
