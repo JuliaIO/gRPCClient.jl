@@ -28,8 +28,6 @@ function perform_benchmark(f)
 end
 
 function benchmark_table()
-    grpc_init()
-
     column_labels = [
         [
             "Benchmark",
