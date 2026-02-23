@@ -2,7 +2,7 @@
 
 julia --project=docs << EOF
 using Pkg
-Pkg.add(url="https://github.com/csvance/Documenter.jl", branch="markdown-output")
+Pkg.add(url="https://github.com/csvance/Documenter.jl", rev="markdown-output")
 Pkg.develop(path=".")
 EOF
 
