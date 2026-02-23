@@ -27,7 +27,7 @@ client = TestService_TestRPC_Client(&quot;172.238.177.88&quot;, 8001; grpc=grpc_
 # Make some gRPC calls 
 
 # Only shuts down your gRPC handle
-grpc_shutdown(grpc_myapp)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/c529eae300f8fe8e5b9030c8ae1773ea2d50568f/src/gRPC.jl#L10-L39">source</a></section></details></article><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_shutdown-Tuple{}"><a class="docstring-binding" href="#gRPCClient.grpc_shutdown-Tuple{}"><code>gRPCClient.grpc_shutdown</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_shutdown([grpc_curl::gRPCCURL])</code></pre><p>Shuts down the <code>gRPCCURL</code>. This neatly cleans up all active connections and requests. Useful for calling during development with Revise. Unless specifying the <code>gRPCCURL</code>, the global one provided by <code>grpc_global_handle()</code> is shutdown.</p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/c529eae300f8fe8e5b9030c8ae1773ea2d50568f/src/gRPC.jl#L43-L47">source</a></section></details></article><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_global_handle-Tuple{}"><a class="docstring-binding" href="#gRPCClient.grpc_global_handle-Tuple{}"><code>gRPCClient.grpc_global_handle</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_global_handle()</code></pre><p>Returns the global <code>gRPCCURL</code> state which contains a libCURL multi handle. By default all gRPC clients use this multi in order to ensure that HTTP/2 multiplexing happens where possible.</p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/c529eae300f8fe8e5b9030c8ae1773ea2d50568f/src/gRPC.jl#L3-L7">source</a></section></details></article><h3 id="Generated-ServiceClient-Constructors"><a class="docs-heading-anchor" href="#Generated-ServiceClient-Constructors">Generated ServiceClient Constructors</a><a id="Generated-ServiceClient-Constructors-1"></a><a class="docs-heading-anchor-permalink" href="#Generated-ServiceClient-Constructors" title="Permalink"></a></h3><p>When you generate service stubs using ProtoBuf.jl, a constructor method is automatically created for each RPC endpoint. These constructors create <code>gRPCServiceClient</code> instances that are used to make RPC calls.</p><h4 id="Constructor-Signature"><a class="docs-heading-anchor" href="#Constructor-Signature">Constructor Signature</a><a id="Constructor-Signature-1"></a><a class="docs-heading-anchor-permalink" href="#Constructor-Signature" title="Permalink"></a></h4><p>For a service method named <code>TestRPC</code> in service <code>TestService</code>, the generated constructor will have the form:</p><pre><code class="language-julia hljs">TestService_TestRPC_Client(
+grpc_shutdown(grpc_myapp)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/016bc66c51519168c3248b1585c4b45a2e29ea8d/src/gRPC.jl#L10-L39">source</a></section></details></article><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_shutdown-Tuple{}"><a class="docstring-binding" href="#gRPCClient.grpc_shutdown-Tuple{}"><code>gRPCClient.grpc_shutdown</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_shutdown([grpc_curl::gRPCCURL])</code></pre><p>Shuts down the <code>gRPCCURL</code>. This neatly cleans up all active connections and requests. Useful for calling during development with Revise. Unless specifying the <code>gRPCCURL</code>, the global one provided by <code>grpc_global_handle()</code> is shutdown.</p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/016bc66c51519168c3248b1585c4b45a2e29ea8d/src/gRPC.jl#L43-L47">source</a></section></details></article><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_global_handle-Tuple{}"><a class="docstring-binding" href="#gRPCClient.grpc_global_handle-Tuple{}"><code>gRPCClient.grpc_global_handle</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_global_handle()</code></pre><p>Returns the global <code>gRPCCURL</code> state which contains a libCURL multi handle. By default all gRPC clients use this multi in order to ensure that HTTP/2 multiplexing happens where possible.</p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/016bc66c51519168c3248b1585c4b45a2e29ea8d/src/gRPC.jl#L3-L7">source</a></section></details></article><h3 id="Generated-ServiceClient-Constructors"><a class="docs-heading-anchor" href="#Generated-ServiceClient-Constructors">Generated ServiceClient Constructors</a><a id="Generated-ServiceClient-Constructors-1"></a><a class="docs-heading-anchor-permalink" href="#Generated-ServiceClient-Constructors" title="Permalink"></a></h3><p>When you generate service stubs using ProtoBuf.jl, a constructor method is automatically created for each RPC endpoint. These constructors create <code>gRPCServiceClient</code> instances that are used to make RPC calls.</p><h4 id="Constructor-Signature"><a class="docs-heading-anchor" href="#Constructor-Signature">Constructor Signature</a><a id="Constructor-Signature-1"></a><a class="docs-heading-anchor-permalink" href="#Constructor-Signature" title="Permalink"></a></h4><p>For a service method named <code>TestRPC</code> in service <code>TestService</code>, the generated constructor will have the form:</p><pre><code class="language-julia hljs">TestService_TestRPC_Client(
     host, port;
     secure=false,
     grpc=grpc_global_handle(),
@@ -44,276 +44,139 @@ client = TestService_TestRPC_Client(
     max_recieve_message_length=10*1024*1024  # 10 MiB max receive
 )</code></pre><h3 id="RPC"><a class="docs-heading-anchor" href="#RPC">RPC</a><a id="RPC-1"></a><a class="docs-heading-anchor-permalink" href="#RPC" title="Permalink"></a></h3><h4 id="Unary"><a class="docs-heading-anchor" href="#Unary">Unary</a><a id="Unary-1"></a><a class="docs-heading-anchor-permalink" href="#Unary" title="Permalink"></a></h4><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, false}, TRequest}} where {TRequest, TResponse}"><a class="docstring-binding" href="#gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, false}, TRequest}} where {TRequest, TResponse}"><code>gRPCClient.grpc_async_request</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::TRequest) where {TRequest&lt;:Any,TResponse&lt;:Any}</code></pre><p>Initiate an asynchronous gRPC request: send the request to the server and then immediately return a <code>gRPCRequest</code> object without waiting for the response. In order to wait on / retrieve the result once its ready, call <code>grpc_async_await</code>. This is ideal when you need to send many requests in parallel and waiting on each response before sending the next request would things down.</p><pre><code class="language-julia hljs">using gRPCClient
 
-# ============================================================================
-# Step 1: Initialize gRPC
-# ============================================================================
-# This must be called once before making any gRPC requests.
-# It initializes the underlying libcurl multi handle and other resources.
+# Step 1: Initialize gRPC (must be called once before making any gRPC requests)
 grpc_init()
 
-# ============================================================================
-# Step 2: Include Generated Protocol Buffer Bindings
-# ============================================================================
-# These bindings define the message types (e.g., TestRequest, TestResponse)
-# and client stubs for your gRPC service. They are generated from .proto files.
+# Step 2: Include generated Protocol Buffer bindings
 include(&quot;test/gen/test/test_pb.jl&quot;)
 
-# ============================================================================
-# Step 3: Create a Client for Your RPC Method
-# ============================================================================
-# The client is bound to a specific RPC method on your gRPC service.
-# Arguments: hostname, port
+# Step 3: Create a client for your RPC method (hostname, port)
 client = TestService_TestRPC_Client(&quot;localhost&quot;, 8001)
 
-# ============================================================================
-# Step 4: Send Multiple Async Requests
-# ============================================================================
-# Use grpc_async_request when you want to send requests without blocking.
-# This is useful for sending many requests in parallel.
-
-# Send all requests without waiting for responses
+# Step 4: Send all requests without waiting for responses
 requests = Vector{gRPCRequest}()
 for i in 1:10
-    # Each request is sent immediately and returns a gRPCRequest handle
-    push!(
-        requests,
-        grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
-    )
+    push!(requests, grpc_async_request(client, TestRequest(1, zeros(UInt64, 1))))
 end
 
-# ============================================================================
-# Step 5: Wait for and Process Responses
-# ============================================================================
-# Use grpc_async_await to retrieve the response when you need it.
+# Step 5: Wait for and process responses
 for request in requests
-    # This blocks until the specific request completes
     response = grpc_async_await(client, request)
     @info response
-end</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/c529eae300f8fe8e5b9030c8ae1773ea2d50568f/src/Unary.jl#L3-L60">source</a></section></details></article><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, false}, TRequest, Channel{gRPCAsyncChannelResponse{TResponse}}, Int64}} where {TRequest, TResponse}"><a class="docstring-binding" href="#gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, false}, TRequest, Channel{gRPCAsyncChannelResponse{TResponse}}, Int64}} where {TRequest, TResponse}"><code>gRPCClient.grpc_async_request</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::TRequest, channel::Channel{gRPCAsyncChannelResponse{TResponse}}, index::Int64) where {TRequest&lt;:Any,TResponse&lt;:Any}</code></pre><p>Initiate an asynchronous gRPC request: send the request to the server and then immediately return. When the request is complete a background task will put the response in the provided channel. This has the advantage over the request / await patern in that you can handle responses immediately after they are recieved in any order.</p><pre><code class="language-julia hljs">using gRPCClient
+end</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/016bc66c51519168c3248b1585c4b45a2e29ea8d/src/Unary.jl#L3-L34">source</a></section></details></article><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, false}, TRequest, Channel{gRPCAsyncChannelResponse{TResponse}}, Int64}} where {TRequest, TResponse}"><a class="docstring-binding" href="#gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, false}, TRequest, Channel{gRPCAsyncChannelResponse{TResponse}}, Int64}} where {TRequest, TResponse}"><code>gRPCClient.grpc_async_request</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::TRequest, channel::Channel{gRPCAsyncChannelResponse{TResponse}}, index::Int64) where {TRequest&lt;:Any,TResponse&lt;:Any}</code></pre><p>Initiate an asynchronous gRPC request: send the request to the server and then immediately return. When the request is complete a background task will put the response in the provided channel. This has the advantage over the request / await patern in that you can handle responses immediately after they are recieved in any order.</p><pre><code class="language-julia hljs">using gRPCClient
 
-# ============================================================================
 # Step 1: Initialize gRPC
-# ============================================================================
-# This must be called once before making any gRPC requests.
 grpc_init()
 
-# ============================================================================
-# Step 2: Include Generated Protocol Buffer Bindings
-# ============================================================================
+# Step 2: Include generated Protocol Buffer bindings
 include(&quot;test/gen/test/test_pb.jl&quot;)
 
-# ============================================================================
-# Step 3: Create a Client for Your RPC Method
-# ============================================================================
+# Step 3: Create a client
 client = TestService_TestRPC_Client(&quot;localhost&quot;, 8001)
 
-# ============================================================================
-# Step 4: Create a Channel to Receive Responses
-# ============================================================================
-# Use the channel-based pattern when you want to process responses as soon
-# as they arrive, regardless of the order they were sent.
+# Step 4: Create a channel to receive responses (processes responses as they arrive, in any order)
 N = 10
 channel = Channel{gRPCAsyncChannelResponse{TestResponse}}(N)
 
-# ============================================================================
-# Step 5: Send All Requests
-# ============================================================================
-# The index parameter allows you to track which request each response
-# corresponds to, since responses may arrive out of order.
+# Step 5: Send all requests (the index tracks which response corresponds to which request)
 for (index, request) in enumerate([TestRequest(i, zeros(UInt64, i)) for i in 1:N])
     grpc_async_request(client, request, channel, index)
 end
 
-# ============================================================================
-# Step 6: Process Responses as They Arrive
-# ============================================================================
-# Responses are pushed to the channel as they complete. You can process
-# them immediately without waiting for all requests to finish first.
+# Step 6: Process responses as they arrive
 for i in 1:N
     cr = take!(channel)
-
-    # Check if an exception was thrown during the request
     !isnothing(cr.ex) &amp;&amp; throw(cr.ex)
-
-    # Use the index to match responses to requests
     @assert length(cr.response.data) == cr.index
-end</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/c529eae300f8fe8e5b9030c8ae1773ea2d50568f/src/Unary.jl#L99-L156">source</a></section></details></article><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_async_await-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, false}, gRPCRequest}} where {TRequest, TResponse}"><a class="docstring-binding" href="#gRPCClient.grpc_async_await-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, false}, gRPCRequest}} where {TRequest, TResponse}"><code>gRPCClient.grpc_async_await</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_async_await(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::gRPCRequest) where {TRequest&lt;:Any,TResponse&lt;:Any}</code></pre><p>Wait for the request to complete and return the response when it is ready. Throws any exceptions that were encountered during handling of the request.</p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/c529eae300f8fe8e5b9030c8ae1773ea2d50568f/src/Unary.jl#L200-L204">source</a></section></details></article><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_sync_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, false}, TRequest}} where {TRequest, TResponse}"><a class="docstring-binding" href="#gRPCClient.grpc_sync_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, false}, TRequest}} where {TRequest, TResponse}"><code>gRPCClient.grpc_sync_request</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_sync_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::TRequest) where {TRequest&lt;:Any,TResponse&lt;:Any}</code></pre><p>Do a synchronous gRPC request: send the request and wait for the response before returning it. Under the hood this just calls <code>grpc_async_request</code> and <code>grpc_async_await</code>. Use this when you want the simplest possible interface for a single request.</p><pre><code class="language-julia hljs">using gRPCClient
+end</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/016bc66c51519168c3248b1585c4b45a2e29ea8d/src/Unary.jl#L73-L107">source</a></section></details></article><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_async_await-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, false}, gRPCRequest}} where {TRequest, TResponse}"><a class="docstring-binding" href="#gRPCClient.grpc_async_await-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, false}, gRPCRequest}} where {TRequest, TResponse}"><code>gRPCClient.grpc_async_await</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_async_await(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::gRPCRequest) where {TRequest&lt;:Any,TResponse&lt;:Any}</code></pre><p>Wait for the request to complete and return the response when it is ready. Throws any exceptions that were encountered during handling of the request.</p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/016bc66c51519168c3248b1585c4b45a2e29ea8d/src/Unary.jl#L151-L155">source</a></section></details></article><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_sync_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, false}, TRequest}} where {TRequest, TResponse}"><a class="docstring-binding" href="#gRPCClient.grpc_sync_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, false}, TRequest}} where {TRequest, TResponse}"><code>gRPCClient.grpc_sync_request</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_sync_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::TRequest) where {TRequest&lt;:Any,TResponse&lt;:Any}</code></pre><p>Do a synchronous gRPC request: send the request and wait for the response before returning it. Under the hood this just calls <code>grpc_async_request</code> and <code>grpc_async_await</code>. Use this when you want the simplest possible interface for a single request.</p><pre><code class="language-julia hljs">using gRPCClient
 
-# ============================================================================
 # Step 1: Initialize gRPC
-# ============================================================================
-# This must be called once before making any gRPC requests.
 grpc_init()
 
-# ============================================================================
-# Step 2: Include Generated Protocol Buffer Bindings
-# ============================================================================
+# Step 2: Include generated Protocol Buffer bindings
 include(&quot;test/gen/test/test_pb.jl&quot;)
 
-# ============================================================================
-# Step 3: Create a Client for Your RPC Method
-# ============================================================================
+# Step 3: Create a client
 client = TestService_TestRPC_Client(&quot;localhost&quot;, 8001)
 
-# ============================================================================
-# Step 4: Make a Synchronous Request
-# ============================================================================
-# This blocks until the response is ready. It&#39;s the simplest way to make
-# a single gRPC request when you don&#39;t need parallelism.
+# Step 4: Make a synchronous request (blocks until response is ready)
 response = grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
-@info response</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/c529eae300f8fe8e5b9030c8ae1773ea2d50568f/src/Unary.jl#L211-L245">source</a></section></details></article><h4 id="Streaming"><a class="docs-heading-anchor" href="#Streaming">Streaming</a><a id="Streaming-1"></a><a class="docs-heading-anchor-permalink" href="#Streaming" title="Permalink"></a></h4><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, true, TResponse, false}, Channel{TRequest}}} where {TRequest, TResponse}"><a class="docstring-binding" href="#gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, true, TResponse, false}, Channel{TRequest}}} where {TRequest, TResponse}"><code>gRPCClient.grpc_async_request</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,false}, request::Channel{TRequest}) where {TRequest&lt;:Any,TResponse&lt;:Any}</code></pre><p>Start a client streaming gRPC request (multiple requests, single response).</p><pre><code class="language-julia hljs">using gRPCClient
+@info response</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/016bc66c51519168c3248b1585c4b45a2e29ea8d/src/Unary.jl#L162-L185">source</a></section></details></article><h4 id="Streaming"><a class="docs-heading-anchor" href="#Streaming">Streaming</a><a id="Streaming-1"></a><a class="docs-heading-anchor-permalink" href="#Streaming" title="Permalink"></a></h4><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, true, TResponse, false}, Channel{TRequest}}} where {TRequest, TResponse}"><a class="docstring-binding" href="#gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, true, TResponse, false}, Channel{TRequest}}} where {TRequest, TResponse}"><code>gRPCClient.grpc_async_request</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,false}, request::Channel{TRequest}) where {TRequest&lt;:Any,TResponse&lt;:Any}</code></pre><p>Start a client streaming gRPC request (multiple requests, single response).</p><pre><code class="language-julia hljs">using gRPCClient
 
-# ============================================================================
 # Step 1: Initialize gRPC
-# ============================================================================
-# This must be called once before making any gRPC requests.
 grpc_init()
 
-# ============================================================================
-# Step 2: Include Generated Protocol Buffer Bindings
-# ============================================================================
+# Step 2: Include generated Protocol Buffer bindings
 include(&quot;test/gen/test/test_pb.jl&quot;)
 
-# ============================================================================
-# Step 3: Create a Client for Your Streaming RPC Method
-# ============================================================================
+# Step 3: Create a client
 client = TestService_TestClientStreamRPC_Client(&quot;localhost&quot;, 8001)
 
-# ============================================================================
-# Step 4: Create a Request Channel and Send Requests
-# ============================================================================
-# The channel buffers requests that will be streamed to the server.
-# Buffer size of 16 means up to 16 requests can be queued.
+# Step 4: Create a request channel and send requests
 request_c = Channel{TestRequest}(16)
-
-# Send one or more requests through the channel
 put!(request_c, TestRequest(1, zeros(UInt64, 1)))
 
-# ============================================================================
-# Step 5: Initiate the Streaming Request
-# ============================================================================
+# Step 5: Initiate the streaming request
 req = grpc_async_request(client, request_c)
 
-# ============================================================================
-# Step 6: Close the Request Channel When Done
-# ============================================================================
-# IMPORTANT: You must close the channel to signal that no more requests
-# will be sent. The server won&#39;t send the response until the stream ends.
+# Step 6: Close the channel to signal no more requests will be sent
+# (the server won&#39;t respond until the stream ends)
 close(request_c)
 
-# ============================================================================
-# Step 7: Wait for the Single Response
-# ============================================================================
-# After all requests are sent and processed, the server returns one response.
-test_response = grpc_async_await(client, req)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/c529eae300f8fe8e5b9030c8ae1773ea2d50568f/src/Streaming.jl#L110-L162">source</a></section></details></article><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, true}, TRequest, Channel{TResponse}}} where {TRequest, TResponse}"><a class="docstring-binding" href="#gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, true}, TRequest, Channel{TResponse}}} where {TRequest, TResponse}"><code>gRPCClient.grpc_async_request</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,true},request::TRequest,response::Channel{TResponse}) where {TRequest&lt;:Any,TResponse&lt;:Any}</code></pre><p>Start a server streaming gRPC request (single request, multiple responses).</p><pre><code class="language-julia hljs">using gRPCClient
+# Step 7: Wait for the single response
+test_response = grpc_async_await(client, req)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/016bc66c51519168c3248b1585c4b45a2e29ea8d/src/Streaming.jl#L110-L141">source</a></section></details></article><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, true}, TRequest, Channel{TResponse}}} where {TRequest, TResponse}"><a class="docstring-binding" href="#gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, false, TResponse, true}, TRequest, Channel{TResponse}}} where {TRequest, TResponse}"><code>gRPCClient.grpc_async_request</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,true},request::TRequest,response::Channel{TResponse}) where {TRequest&lt;:Any,TResponse&lt;:Any}</code></pre><p>Start a server streaming gRPC request (single request, multiple responses).</p><pre><code class="language-julia hljs">using gRPCClient
 
-# ============================================================================
 # Step 1: Initialize gRPC
-# ============================================================================
-# This must be called once before making any gRPC requests.
 grpc_init()
 
-# ============================================================================
-# Step 2: Include Generated Protocol Buffer Bindings
-# ============================================================================
+# Step 2: Include generated Protocol Buffer bindings
 include(&quot;test/gen/test/test_pb.jl&quot;)
 
-# ============================================================================
-# Step 3: Create a Client for Your Streaming RPC Method
-# ============================================================================
+# Step 3: Create a client
 client = TestService_TestServerStreamRPC_Client(&quot;localhost&quot;, 8001)
 
-# ============================================================================
-# Step 4: Create a Response Channel
-# ============================================================================
-# The channel will receive multiple responses from the server.
-# Buffer size of 16 means up to 16 responses can be queued.
+# Step 4: Create a response channel to receive multiple responses
 response_c = Channel{TestResponse}(16)
 
-# ============================================================================
-# Step 5: Initiate the Streaming Request
-# ============================================================================
-# Send a single request. The server will respond with multiple messages.
-req = grpc_async_request(
-    client,
-    TestRequest(1, zeros(UInt64, 1)),
-    response_c,
-)
+# Step 5: Send a single request (the server will respond with multiple messages)
+req = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)), response_c)
 
-# ============================================================================
-# Step 6: Process Streaming Responses
-# ============================================================================
-# Read responses from the channel as they arrive. The channel will be closed
-# when the server finishes sending all responses.
+# Step 6: Process streaming responses (channel closes when server finishes)
 for test_response in response_c
     @info test_response
 end
 
-# ============================================================================
-# Step 7: Check for Exceptions
-# ============================================================================
-# Call grpc_async_await to raise any exceptions that occurred during the request.
-grpc_async_await(req)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/c529eae300f8fe8e5b9030c8ae1773ea2d50568f/src/Streaming.jl#L191-L247">source</a></section></details></article><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, true, TResponse, true}, Channel{TRequest}, Channel{TResponse}}} where {TRequest, TResponse}"><a class="docstring-binding" href="#gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, true, TResponse, true}, Channel{TRequest}, Channel{TResponse}}} where {TRequest, TResponse}"><code>gRPCClient.grpc_async_request</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,true},request::Channel{TRequest},response::Channel{TResponse}) where {TRequest&lt;:Any,TResponse&lt;:Any}</code></pre><p>Start a bidirectional streaming gRPC request (multiple requests, multiple responses).</p><pre><code class="language-julia hljs">using gRPCClient
+# Step 7: Check for exceptions
+grpc_async_await(req)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/016bc66c51519168c3248b1585c4b45a2e29ea8d/src/Streaming.jl#L170-L201">source</a></section></details></article><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, true, TResponse, true}, Channel{TRequest}, Channel{TResponse}}} where {TRequest, TResponse}"><a class="docstring-binding" href="#gRPCClient.grpc_async_request-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, true, TResponse, true}, Channel{TRequest}, Channel{TResponse}}} where {TRequest, TResponse}"><code>gRPCClient.grpc_async_request</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,true},request::Channel{TRequest},response::Channel{TResponse}) where {TRequest&lt;:Any,TResponse&lt;:Any}</code></pre><p>Start a bidirectional streaming gRPC request (multiple requests, multiple responses).</p><pre><code class="language-julia hljs">using gRPCClient
 
-# ============================================================================
 # Step 1: Initialize gRPC
-# ============================================================================
-# This must be called once before making any gRPC requests.
 grpc_init()
 
-# ============================================================================
-# Step 2: Include Generated Protocol Buffer Bindings
-# ============================================================================
+# Step 2: Include generated Protocol Buffer bindings
 include(&quot;test/gen/test/test_pb.jl&quot;)
 
-# ============================================================================
-# Step 3: Create a Client for Your Streaming RPC Method
-# ============================================================================
+# Step 3: Create a client
 client = TestService_TestBidirectionalStreamRPC_Client(&quot;localhost&quot;, 8001)
 
-# ============================================================================
-# Step 4: Create Request and Response Channels
-# ============================================================================
-# Both channels allow streaming in both directions simultaneously.
-# Buffer size of 16 means up to 16 messages can be queued in each direction.
+# Step 4: Create request and response channels (streaming in both directions simultaneously)
 request_c = Channel{TestRequest}(16)
 response_c = Channel{TestResponse}(16)
 
-# ============================================================================
-# Step 5: Initiate the Bidirectional Streaming Request
-# ============================================================================
+# Step 5: Initiate the bidirectional streaming request
 req = grpc_async_request(client, request_c, response_c)
 
-# ============================================================================
-# Step 6: Send Requests and Receive Responses Concurrently
-# ============================================================================
-# In bidirectional streaming, you can send and receive at the same time.
-# This example shows a simple pattern, but you can use tasks for more
-# complex concurrent communication patterns.
-
-# Send a request
+# Step 6: Send requests and receive responses concurrently
 put!(request_c, TestRequest(1, zeros(UInt64, 1)))
-
-# Receive responses as they arrive
 for test_response in response_c
     @info test_response
-    # Optionally send more requests based on responses
-    # put!(request_c, ...)
     break  # Exit after first response for this example
 end
 
-# ============================================================================
-# Step 7: Close the Request Channel When Done
-# ============================================================================
-# IMPORTANT: You must close the request channel to signal that no more
-# requests will be sent.
+# Step 7: Close the request channel to signal no more requests will be sent
 close(request_c)
 
-# ============================================================================
-# Step 8: Check for Exceptions
-# ============================================================================
-# Call grpc_async_await to raise any exceptions that occurred during the request.
-grpc_async_await(req)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/c529eae300f8fe8e5b9030c8ae1773ea2d50568f/src/Streaming.jl#L283-L351">source</a></section></details></article><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_async_await-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, true, TResponse, false}, gRPCRequest}} where {TRequest, TResponse}"><a class="docstring-binding" href="#gRPCClient.grpc_async_await-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, true, TResponse, false}, gRPCRequest}} where {TRequest, TResponse}"><code>gRPCClient.grpc_async_await</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_async_await(client::gRPCServiceClient{TRequest,true,TResponse,false},request::gRPCRequest) where {TRequest&lt;:Any,TResponse&lt;:Any}</code></pre><p>Raise any exceptions encountered during the streaming request.</p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/c529eae300f8fe8e5b9030c8ae1773ea2d50568f/src/Streaming.jl#L385-L389">source</a></section></details></article><h3 id="Exceptions"><a class="docs-heading-anchor" href="#Exceptions">Exceptions</a><a id="Exceptions-1"></a><a class="docs-heading-anchor-permalink" href="#Exceptions" title="Permalink"></a></h3><article><details class="docstring" open="true"><summary id="gRPCClient.gRPCServiceCallException"><a class="docstring-binding" href="#gRPCClient.gRPCServiceCallException"><code>gRPCClient.gRPCServiceCallException</code></a> — <span class="docstring-category">Type</span></summary><section><div><p>Exception type that is thrown when something goes wrong while calling an RPC. This can either be triggered by the servers response code or by the client when something fails.</p><p>This exception type has two fields:</p><ol><li><code>grpc_status::Int</code> - See <a href="https://grpc.io/docs/guides/status-codes/">here</a> for an indepth explanation of each status.</li><li><code>message::String</code></li></ol></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/c529eae300f8fe8e5b9030c8ae1773ea2d50568f/src/gRPCClient.jl#L21-L29">source</a></section></details></article><h2 id="gRPCClientUtils.jl"><a class="docs-heading-anchor" href="#gRPCClientUtils.jl">gRPCClientUtils.jl</a><a id="gRPCClientUtils.jl-1"></a><a class="docs-heading-anchor-permalink" href="#gRPCClientUtils.jl" title="Permalink"></a></h2><p>A module for benchmarking and stress testing has been included in <code>utils/gRPCClientUtils.jl</code>. In order to add it to your test environment:</p><pre><code class="language-julia hljs">using Pkg
+# Step 8: Check for exceptions
+grpc_async_await(req)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/016bc66c51519168c3248b1585c4b45a2e29ea8d/src/Streaming.jl#L237-L274">source</a></section></details></article><article><details class="docstring" open="true"><summary id="gRPCClient.grpc_async_await-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, true, TResponse, false}, gRPCRequest}} where {TRequest, TResponse}"><a class="docstring-binding" href="#gRPCClient.grpc_async_await-Union{Tuple{TResponse}, Tuple{TRequest}, Tuple{gRPCServiceClient{TRequest, true, TResponse, false}, gRPCRequest}} where {TRequest, TResponse}"><code>gRPCClient.grpc_async_await</code></a> — <span class="docstring-category">Method</span></summary><section><div><pre><code class="language-julia hljs">grpc_async_await(client::gRPCServiceClient{TRequest,true,TResponse,false},request::gRPCRequest) where {TRequest&lt;:Any,TResponse&lt;:Any}</code></pre><p>Raise any exceptions encountered during the streaming request.</p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/016bc66c51519168c3248b1585c4b45a2e29ea8d/src/Streaming.jl#L308-L312">source</a></section></details></article><h3 id="Exceptions"><a class="docs-heading-anchor" href="#Exceptions">Exceptions</a><a id="Exceptions-1"></a><a class="docs-heading-anchor-permalink" href="#Exceptions" title="Permalink"></a></h3><article><details class="docstring" open="true"><summary id="gRPCClient.gRPCServiceCallException"><a class="docstring-binding" href="#gRPCClient.gRPCServiceCallException"><code>gRPCClient.gRPCServiceCallException</code></a> — <span class="docstring-category">Type</span></summary><section><div><p>Exception type that is thrown when something goes wrong while calling an RPC. This can either be triggered by the servers response code or by the client when something fails.</p><p>This exception type has two fields:</p><ol><li><code>grpc_status::Int</code> - See <a href="https://grpc.io/docs/guides/status-codes/">here</a> for an indepth explanation of each status.</li><li><code>message::String</code></li></ol></div><a class="docs-sourcelink" target="_blank" href="https://github.com/JuliaIO/gRPCClient.jl/blob/016bc66c51519168c3248b1585c4b45a2e29ea8d/src/gRPCClient.jl#L21-L29">source</a></section></details></article><h2 id="gRPCClientUtils.jl"><a class="docs-heading-anchor" href="#gRPCClientUtils.jl">gRPCClientUtils.jl</a><a id="gRPCClientUtils.jl-1"></a><a class="docs-heading-anchor-permalink" href="#gRPCClientUtils.jl" title="Permalink"></a></h2><p>A module for benchmarking and stress testing has been included in <code>utils/gRPCClientUtils.jl</code>. In order to add it to your test environment:</p><pre><code class="language-julia hljs">using Pkg
 Pkg.add(path=&quot;utils/gRPCClientUtils.jl&quot;)</code></pre><h3 id="Benchmarks"><a class="docs-heading-anchor" href="#Benchmarks">Benchmarks</a><a id="Benchmarks-1"></a><a class="docs-heading-anchor-permalink" href="#Benchmarks" title="Permalink"></a></h3><p>All benchmarks run against the Test gRPC Server in <code>test/go</code>. See the relevant <a href="#Test-gRPC-Server">documentation</a> for information on how to run this.</p><h4 id="All-Benchmarks-w/-PrettyTables.jl"><a class="docs-heading-anchor" href="#All-Benchmarks-w/-PrettyTables.jl">All Benchmarks w/ PrettyTables.jl</a><a id="All-Benchmarks-w/-PrettyTables.jl-1"></a><a class="docs-heading-anchor-permalink" href="#All-Benchmarks-w/-PrettyTables.jl" title="Permalink"></a></h4><pre><code class="language-julia hljs">using gRPCClientUtils
 
 benchmark_table()</code></pre><pre><code class="nohighlight hljs">╭──────────────────────────────────┬─────────────┬────────────────┬────────────┬──────────────┬─────────┬──────┬──────╮
@@ -325,4 +188,4 @@ benchmark_table()</code></pre><pre><code class="nohighlight hljs">╭───�
 │       workload_streaming_request │        0.87 │            6.5 │     339916 │            3 │    1.61 │    2 │   20 │
 │      workload_streaming_response │        13.0 │           27.7 │      65732 │           15 │    4.94 │    6 │   50 │
 │ workload_streaming_bidirectional │        1.45 │           25.6 │     105133 │           10 │    6.06 │    4 │   55 │
-╰──────────────────────────────────┴─────────────┴────────────────┴────────────┴──────────────┴─────────┴──────┴──────╯</code></pre><h3 id="Stress-Workloads"><a class="docs-heading-anchor" href="#Stress-Workloads">Stress Workloads</a><a id="Stress-Workloads-1"></a><a class="docs-heading-anchor-permalink" href="#Stress-Workloads" title="Permalink"></a></h3><p>In addition to benchmarks, a number of workloads based on these are available:</p><ul><li><code>stress_workload_smol()</code></li><li><code>stress_workload_32_224_224_uint8()</code></li><li><code>stress_workload_streaming_request()</code></li><li><code>stress_workload_streaming_response()</code></li><li><code>stress_workload_streaming_bidirectional()</code></li></ul><p>These run forever, and are useful to help identify any stability issues or resource leaks.</p></article><nav class="docs-footer"><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Sunday 22 February 2026 05:52">Sunday 22 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+╰──────────────────────────────────┴─────────────┴────────────────┴────────────┴──────────────┴─────────┴──────┴──────╯</code></pre><h3 id="Stress-Workloads"><a class="docs-heading-anchor" href="#Stress-Workloads">Stress Workloads</a><a id="Stress-Workloads-1"></a><a class="docs-heading-anchor-permalink" href="#Stress-Workloads" title="Permalink"></a></h3><p>In addition to benchmarks, a number of workloads based on these are available:</p><ul><li><code>stress_workload_smol()</code></li><li><code>stress_workload_32_224_224_uint8()</code></li><li><code>stress_workload_streaming_request()</code></li><li><code>stress_workload_streaming_response()</code></li><li><code>stress_workload_streaming_bidirectional()</code></li></ul><p>These run forever, and are useful to help identify any stability issues or resource leaks.</p></article><nav class="docs-footer"><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Monday 23 February 2026 16:01">Monday 23 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
