@@ -1,6 +1,4 @@
 function profile_memory_fn(f::Function)
-    grpc_init()
-
     # Warmup
     _ = f()
 

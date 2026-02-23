@@ -62,11 +62,7 @@ include("gen/test/test_pb.jl")
 
 @testset "gRPCClient.jl" begin
 
-    # Initialize the global gRPCCURL structure
-    grpc_init()
-
     @testset "Code Generation" begin
-        grpc_register_service_codegen()
         mktempdir() do tmpdir
             @test isnothing(protojl("proto/test.proto", @__DIR__, tmpdir))
             generated = read(joinpath(tmpdir, "test", "test_pb.jl"), String)
