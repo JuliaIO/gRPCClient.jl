@@ -1,6 +1,6 @@
 name = "gRPCClient"
 uuid = "aaca4a50-36af-4a1d-b878-4c443f2061ad"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["Carroll Vance <cs.vance@icloud.com>"]
 
 [deps]
