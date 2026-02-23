@@ -111,4 +111,9 @@ export gRPCAsyncChannelResponse
 export gRPCException
 export gRPCServiceCallException
 
+function __init__()
+    grpc_init()
+    grpc_register_service_codegen()
+end
+
 end

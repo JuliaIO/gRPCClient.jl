@@ -10,22 +10,19 @@ This is ideal when you need to send many requests in parallel and waiting on eac
 ```julia
 using gRPCClient
 
-# Step 1: Initialize gRPC (must be called once before making any gRPC requests)
-grpc_init()
-
-# Step 2: Include generated Protocol Buffer bindings
+# Step 1: Include generated Protocol Buffer bindings
 include("test/gen/test/test_pb.jl")
 
-# Step 3: Create a client for your RPC method (hostname, port)
+# Step 2: Create a client for your RPC method (hostname, port)
 client = TestService_TestRPC_Client("localhost", 8001)
 
-# Step 4: Send all requests without waiting for responses
+# Step 3: Send all requests without waiting for responses
 requests = Vector{gRPCRequest}()
 for i in 1:10
     push!(requests, grpc_async_request(client, TestRequest(1, zeros(UInt64, 1))))
 end
 
-# Step 5: Wait for and process responses
+# Step 4: Wait for and process responses
 for request in requests
     response = grpc_async_await(client, request)
     @info response
@@ -79,25 +76,22 @@ This has the advantage over the request / await patern in that you can handle re
 ```julia
 using gRPCClient
 
-# Step 1: Initialize gRPC
-grpc_init()
-
-# Step 2: Include generated Protocol Buffer bindings
+# Step 1: Include generated Protocol Buffer bindings
 include("test/gen/test/test_pb.jl")
 
-# Step 3: Create a client
+# Step 2: Create a client
 client = TestService_TestRPC_Client("localhost", 8001)
 
-# Step 4: Create a channel to receive responses (processes responses as they arrive, in any order)
+# Step 3: Create a channel to receive responses (processes responses as they arrive, in any order)
 N = 10
 channel = Channel{gRPCAsyncChannelResponse{TestResponse}}(N)
 
-# Step 5: Send all requests (the index tracks which response corresponds to which request)
+# Step 4: Send all requests (the index tracks which response corresponds to which request)
 for (index, request) in enumerate([TestRequest(i, zeros(UInt64, i)) for i in 1:N])
     grpc_async_request(client, request, channel, index)
 end
 
-# Step 6: Process responses as they arrive
+# Step 5: Process responses as they arrive
 for i in 1:N
     cr = take!(channel)
     !isnothing(cr.ex) && throw(cr.ex)
@@ -169,16 +163,13 @@ Use this when you want the simplest possible interface for a single request.
 ```julia
 using gRPCClient
 
-# Step 1: Initialize gRPC
-grpc_init()
-
-# Step 2: Include generated Protocol Buffer bindings
+# Step 1: Include generated Protocol Buffer bindings
 include("test/gen/test/test_pb.jl")
 
-# Step 3: Create a client
+# Step 2: Create a client
 client = TestService_TestRPC_Client("localhost", 8001)
 
-# Step 4: Make a synchronous request (blocks until response is ready)
+# Step 3: Make a synchronous request (blocks until response is ready)
 response = grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
 @info response
 ```
