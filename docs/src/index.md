@@ -37,6 +37,8 @@ gRPCClient.jl integrates with ProtoBuf.jl to automatically generate Julia client
 
 ```julia
 using ProtoBuf
+
+# Loading gRPCClient before calling protojl is required — it registers the service stub generator that adds client constructors to the output.
 using gRPCClient
 
 # Creates Julia bindings for the messages and RPC defined in test.proto
