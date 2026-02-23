@@ -12,7 +12,7 @@ gRPCClient.jl aims to be a production grade gRPC client emphasizing performance 
 ## Documentation
 
 The documentation for gRPCClient.jl can be found [here](https://juliaio.github.io/gRPCClient.jl).
-LLM / agent friendly documentation is available in `docs/src/llms.txt`.
+LLM / agent friendly documentation is available in [llms.txt](https://juliaio.github.io/gRPCClient.jl/llms.txt).
 
 ## Benchmarks
 
