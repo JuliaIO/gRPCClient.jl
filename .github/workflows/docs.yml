@@ -42,7 +42,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git fetch origin gh-pages
-          git checkout gh-pages
+          git checkout -f gh-pages
           cp /tmp/llms.txt llms.txt
           git add llms.txt
           git diff --staged --quiet || git commit -m "Update llms.txt at docs root"
