@@ -721,7 +721,7 @@ mutable struct gRPCCURL
         finalizer((x) -> close(x), grpc)
 
         # This is used for the global const gRPCCURL handle
-        # The user is expected to call grpc_init() in order to use it
+        # grpc_init() is called automatically via __init__() when the package is loaded
         !running && return grpc
 
         open(grpc)

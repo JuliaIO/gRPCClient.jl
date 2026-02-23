@@ -10,28 +10,17 @@ grpc_global_handle() = _grpc
 """
     grpc_init([grpc_curl::gRPCCURL])
 
-Initializes the `gRPCCURL` object. This should be called once before making gRPC calls. There is no harm in calling this more than once (ie by different packages/dependencies). Typical usage looks like this:
-
-```julia
-grpc_init()
-
-client = TestService_TestRPC_Client("172.238.177.88", 8001)
-
-# Make some gRPC calls 
-
-# Shut down the global gRPC handle
-grpc_shutdown()
-```
+Initializes the `gRPCCURL` object. The global handle is initialized automatically when the package is loaded. There is no harm in calling this more than once (ie by different packages/dependencies).
 
 Unless specifying a `gRPCCURL` the global one provided by `grpc_global_handle()` is used. Each `gRPCCURL` state has its own connection pool and request semaphore, so sometimes you may want to manage your own like shown below:
 
-```julia 
+```julia
 grpc_myapp = gRPCCURL()
 grpc_init(grpc_myapp)
 
 client = TestService_TestRPC_Client("172.238.177.88", 8001; grpc=grpc_myapp)
 
-# Make some gRPC calls 
+# Make some gRPC calls
 
 # Only shuts down your gRPC handle
 grpc_shutdown(grpc_myapp)
