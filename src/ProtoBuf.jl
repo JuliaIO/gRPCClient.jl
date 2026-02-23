@@ -9,10 +9,10 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
         response_type = rpc.response_type.name
 
         if rpc.request_type.package_namespace !== nothing
-            request_type = join([rpc.package_namespace, request_type], ".")
+            request_type = join([rpc.request_type.package_namespace, request_type], ".")
         end
         if rpc.response_type.package_namespace !== nothing
-            response_type = join([rpc.package_namespace, response_type], ".")
+            response_type = join([rpc.response_type.package_namespace, response_type], ".")
         end
 
         export_name = "$(service_name)_$(rpc.name)_Client"

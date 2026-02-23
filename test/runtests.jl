@@ -92,6 +92,25 @@ include("gen/test/test_pb.jl")
             @test contains(generated, "export TestService_TestClientStreamRPC_Client")
             @test contains(generated, "export TestService_TestBidirectionalStreamRPC_Client")
         end
+
+        # Test that request/response type package_namespace is correctly applied when types
+        # come from a different proto package. Previously this was broken because the code
+        # checked rpc.package_namespace instead of rpc.request_type.package_namespace and
+        # rpc.response_type.package_namespace.
+        mktempdir() do tmpdir
+            @test isnothing(protojl("ext_service.proto", joinpath(@__DIR__, "proto"), tmpdir))
+            generated = read(joinpath(tmpdir, "ext_service", "ext_service_pb.jl"), String)
+            # Request type from ext_types package must be prefixed with package namespace
+            @test contains(generated, "ext_types.ExtRequest")
+            # Response type from ext_types package must be prefixed with package namespace
+            @test contains(generated, "ext_types.ExtResponse")
+            # Full type parameter string with both namespaced types
+            @test contains(generated, "gRPCClient.gRPCServiceClient{ext_types.ExtRequest, false, ext_types.ExtResponse, false}")
+            @test contains(generated, "gRPCClient.gRPCServiceClient{ext_types.ExtRequest, false, ext_types.ExtResponse, true}")
+            # Service client constructors are present
+            @test contains(generated, "ExtService_ExtRPC_Client(")
+            @test contains(generated, "ExtService_ExtStreamRPC_Client(")
+        end
     end
 
     @testset "@async varying request/response" begin
