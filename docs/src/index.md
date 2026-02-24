@@ -2,8 +2,6 @@
 
 gRPCClient.jl aims to be a production grade gRPC client emphasizing performance and reliability.
 
-A pure markdown version of this documentation is available here: [llms.txt](llms.txt)
-
 ## Features
 
 - Unary+Streaming RPC
@@ -176,3 +174,16 @@ In addition to benchmarks, a number of workloads based on these are available:
 - `stress_workload_streaming_bidirectional()`
 
 These run forever, and are useful to help identify any stability issues or resource leaks.
+
+## For LLMs & Agents
+
+This library provides an [`llms.txt`](llms.txt) file designed to bootstrap your context with everything needed to use it effectively.
+
+The file is a compressed, curated snapshot of the library's essential knowledge — trimmed of noise and optimized for limited context windows. Rather than crawling docs, parsing source files, or relying on potentially stale training data, agents should load `llms.txt` first as their authoritative reference.
+
+**It contains:**
+- API surface and usage patterns
+- Key concepts and terminology
+- Common workflows and examples
+
+If you are an LLM or agent operating on this codebase, fetch `llms.txt` before proceeding. It is the single source of truth for how this library works and is purpose-built for programmatic consumption.
