@@ -76,11 +76,15 @@ include("gen/test/test_pb.jl")
             @test contains(generated, "TestService_TestServerStreamRPC_Client(")
             @test contains(generated, "TestService_TestClientStreamRPC_Client(")
             @test contains(generated, "TestService_TestBidirectionalStreamRPC_Client(")
+            # Message types default via overridable TRequest/TResponse kwargs,
+            # so the construction uses the type-parameter names (raw-buffer support).
+            @test contains(generated, "TRequest=TestRequest,")
+            @test contains(generated, "TResponse=TestResponse,")
             # Correct streaming type parameters for each RPC variant
-            @test contains(generated, "gRPCClient.gRPCServiceClient{TestRequest, false, TestResponse, false}")
-            @test contains(generated, "gRPCClient.gRPCServiceClient{TestRequest, false, TestResponse, true}")
-            @test contains(generated, "gRPCClient.gRPCServiceClient{TestRequest, true, TestResponse, false}")
-            @test contains(generated, "gRPCClient.gRPCServiceClient{TestRequest, true, TestResponse, true}")
+            @test contains(generated, "gRPCClient.gRPCServiceClient{TRequest, false, TResponse, false}")
+            @test contains(generated, "gRPCClient.gRPCServiceClient{TRequest, false, TResponse, true}")
+            @test contains(generated, "gRPCClient.gRPCServiceClient{TRequest, true, TResponse, false}")
+            @test contains(generated, "gRPCClient.gRPCServiceClient{TRequest, true, TResponse, true}")
             # Correct fully-qualified RPC paths
             @test contains(generated, "/test.TestService/TestRPC")
             @test contains(generated, "/test.TestService/TestServerStreamRPC")
@@ -101,12 +105,12 @@ include("gen/test/test_pb.jl")
             @test isnothing(protojl("ext_service.proto", joinpath(@__DIR__, "proto"), tmpdir))
             generated = read(joinpath(tmpdir, "ext_service", "ext_service_pb.jl"), String)
             # Request type from ext_types package must be prefixed with package namespace
-            @test contains(generated, "ext_types.ExtRequest")
+            @test contains(generated, "TRequest=ext_types.ExtRequest,")
             # Response type from ext_types package must be prefixed with package namespace
-            @test contains(generated, "ext_types.ExtResponse")
-            # Full type parameter string with both namespaced types
-            @test contains(generated, "gRPCClient.gRPCServiceClient{ext_types.ExtRequest, false, ext_types.ExtResponse, false}")
-            @test contains(generated, "gRPCClient.gRPCServiceClient{ext_types.ExtRequest, false, ext_types.ExtResponse, true}")
+            @test contains(generated, "TResponse=ext_types.ExtResponse,")
+            # Streaming flags differ per RPC; message types come through the kwargs above
+            @test contains(generated, "gRPCClient.gRPCServiceClient{TRequest, false, TResponse, false}")
+            @test contains(generated, "gRPCClient.gRPCServiceClient{TRequest, false, TResponse, true}")
             # Service client constructors are present
             @test contains(generated, "ExtService_ExtRPC_Client(")
             @test contains(generated, "ExtService_ExtStreamRPC_Client(")

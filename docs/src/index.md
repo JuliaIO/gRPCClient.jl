@@ -137,10 +137,10 @@ is unambiguous as a "raw buffer" marker for the message type parameter. The raw
 buffer is the serialized protobuf message body only; the 5-byte gRPC framing is
 still added and stripped by the library, so you never handle it yourself.
 
-The generated `*_Client` constructors always use the concrete proto types, so
-for raw calls construct a [`gRPCServiceClient`](#Generated-ServiceClient-Constructors)
-directly, passing the RPC path. The request and response sides are independent,
-so you can make either or both raw.
+Each generated `*_Client` constructor accepts `TRequest` and `TResponse`
+keyword arguments that default to the proto message types. Override either (or
+both) with `Vector{UInt8}` to make that side raw. The request and response sides
+are independent, so you can make either or both raw.
 
 Send a raw request and receive a raw response:
 
@@ -152,8 +152,9 @@ io = IOBuffer()
 encode(ProtoEncoder(io), MyRequest(42, zeros(UInt64, 10)))
 raw_request = take!(io)
 
-client = gRPCClient.gRPCServiceClient{Vector{UInt8}, false, Vector{UInt8}, false}(
-    "localhost", 50051, "/foo.MyService/MyRPC",
+client = MyService_MyRPC_Client(
+    "localhost", 50051;
+    TRequest = Vector{UInt8}, TResponse = Vector{UInt8},
 )
 raw_response = grpc_sync_request(client, raw_request)   # raw_response::Vector{UInt8}
 
@@ -162,22 +163,21 @@ response = decode(ProtoDecoder(IOBuffer(raw_response)), MyResponse)
 ```
 
 Mixed combinations work too. To send a typed request but receive the response
-as raw bytes, make only the response type raw:
+as raw bytes, override only `TResponse`:
 
 ```julia
-client = gRPCClient.gRPCServiceClient{MyRequest, false, Vector{UInt8}, false}(
-    "localhost", 50051, "/foo.MyService/MyRPC",
-)
+client = MyService_MyRPC_Client("localhost", 50051; TResponse = Vector{UInt8})
 raw_response = grpc_sync_request(client, MyRequest(42, UInt64[]))
 ```
 
-Raw buffers apply to streaming as well: declare the streaming side's message
-type as `Vector{UInt8}` and use a `Channel{Vector{UInt8}}`. For example, a
+Raw buffers apply to streaming as well: override the streaming side's type with
+`Vector{UInt8}` and use a `Channel{Vector{UInt8}}`. For example, a
 server-streaming call that receives each response as raw bytes:
 
 ```julia
-client = gRPCClient.gRPCServiceClient{Vector{UInt8}, false, Vector{UInt8}, true}(
-    "localhost", 50051, "/foo.MyService/MyServerStreamRPC",
+client = MyService_MyServerStreamRPC_Client(
+    "localhost", 50051;
+    TResponse = Vector{UInt8},
 )
 response_c = Channel{Vector{UInt8}}(16)
 req = grpc_async_request(client, raw_request, response_c)
@@ -187,6 +187,11 @@ for raw in response_c
 end
 grpc_async_await(req)
 ```
+
+If you do not have a generated constructor, the same applies by building a
+[`gRPCServiceClient`](#Generated-ServiceClient-Constructors) directly with
+`Vector{UInt8}` type parameters and the RPC path, for example
+`gRPCClient.gRPCServiceClient{Vector{UInt8}, false, Vector{UInt8}, false}("localhost", 50051, "/foo.MyService/MyRPC")`.
 
 ### Exceptions
 

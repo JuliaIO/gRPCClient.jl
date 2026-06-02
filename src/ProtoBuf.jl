@@ -19,6 +19,11 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
 
         println(io, "$(export_name)(")
         println(io, "\thost, port;")
+        # TRequest / TResponse default to the generated proto types. Override
+        # either (or both) with Vector{UInt8} to send / receive that side as a
+        # raw, already-encoded protobuf payload (partial decoding).
+        println(io, "\tTRequest=$request_type,")
+        println(io, "\tTResponse=$response_type,")
         println(io, "\tsecure=false,")
         println(io, "\tgrpc=gRPCClient.grpc_global_handle(),")
         println(io, "\tdeadline=10,")
@@ -27,7 +32,7 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
         println(io, "\tmax_recieve_message_length = 4*1024*1024,")
         println(
             io,
-            ") = gRPCClient.gRPCServiceClient{$request_type, $(rpc.request_stream), $response_type, $(rpc.response_stream)}(",
+            ") = gRPCClient.gRPCServiceClient{TRequest, $(rpc.request_stream), TResponse, $(rpc.response_stream)}(",
         )
         println(io, "\thost, port, \"$rpc_path\";")
         println(io, "\tsecure=secure,")
