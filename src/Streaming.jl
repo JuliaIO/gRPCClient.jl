@@ -91,7 +91,7 @@ function grpc_async_stream_response(
             if response_buf === nothing
                 continue
             end
-            response = decode(ProtoDecoder(response_buf), TResponse)
+            response = _decode_message(response_buf, TResponse)
             put!(channel, response)
         end
     catch ex
