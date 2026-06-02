@@ -610,7 +610,7 @@ function socket_callback(
 
             isnothing(watcher) && return 0
 
-            task = @async begin
+            task = Threads.@spawn begin
                 while watcher.running && grpc.running
                     # Watcher configuration might be changed, wait until its safe to wait on the watcher
                     wait(watcher.ready)
