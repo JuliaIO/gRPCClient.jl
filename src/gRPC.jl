@@ -14,6 +14,8 @@ Initializes the `gRPCCURL` object. The global handle is initialized automaticall
 
 Unless specifying a `gRPCCURL` the global one provided by `grpc_global_handle()` is used. Each `gRPCCURL` state has its own connection pool and request semaphore, so sometimes you may want to manage your own like shown below:
 
+The `sticky` keyword selects the concurrency model used for every task the handle spawns. The default `sticky = false` uses a multithreading model (`Threads.@spawn`). Passing `sticky = true` uses a coroutine model (`@async`) that is pinned to the spawning thread and is incompatible with multithreading.
+
 ```julia
 grpc_myapp = gRPCCURL()
 grpc_init(grpc_myapp)
@@ -74,6 +76,10 @@ struct gRPCServiceClient{TRequest,SRequest,TResponse,SResponse}
     end
 
 end
+
+# Spawn a task using the concurrency model configured on the client's handle.
+# Supports do-block syntax: `_spawn(client) do ... end`.
+_spawn(f, client::gRPCServiceClient) = _spawn(f, client.grpc)
 
 function url(client::gRPCServiceClient)
     protocol = if client.secure

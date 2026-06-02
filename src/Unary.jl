@@ -129,7 +129,7 @@ function grpc_async_request(
         max_recieve_message_length = max_recieve_message_length,
     )
 
-    Threads.@spawn begin
+    _spawn(client) do
         try
             response = grpc_async_await(client, req)
             put!(channel, gRPCAsyncChannelResponse{TResponse}(index, response, nothing))

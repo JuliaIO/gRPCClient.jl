@@ -158,7 +158,7 @@ function grpc_async_request(
         max_recieve_message_length = max_recieve_message_length,
     )
 
-    request_task = Threads.@spawn grpc_async_stream_request(req, request)
+    request_task = _spawn(() -> grpc_async_stream_request(req, request), client)
     errormonitor(request_task)
 
     req
@@ -222,7 +222,7 @@ function grpc_async_request(
         max_recieve_message_length = max_recieve_message_length,
     )
 
-    response_task = Threads.@spawn grpc_async_stream_response(req, response)
+    response_task = _spawn(() -> grpc_async_stream_response(req, response), client)
     errormonitor(response_task)
 
     req
@@ -286,10 +286,10 @@ function grpc_async_request(
         max_recieve_message_length = max_recieve_message_length,
     )
 
-    request_task = Threads.@spawn grpc_async_stream_request(req, request)
+    request_task = _spawn(() -> grpc_async_stream_request(req, request), client)
     errormonitor(request_task)
 
-    response_task = Threads.@spawn grpc_async_stream_response(req, response)
+    response_task = _spawn(() -> grpc_async_stream_response(req, response), client)
     errormonitor(response_task)
 
     req
