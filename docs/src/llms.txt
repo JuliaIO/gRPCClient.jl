@@ -169,6 +169,19 @@ client = MyService_MyRPC_Client("host", 50051; grpc=h)
 grpc_shutdown(h)
 ```
 
+### Concurrency Model
+
+The `gRPCCURL` handle's `sticky` property selects how all background tasks (socket I/O, streaming pumps, async unary fan-out) are scheduled. It is set per handle and applies to every client constructed with `grpc=h`.
+
+```julia
+h = gRPCCURL(sticky = true)   # default is sticky = false
+```
+
+- `sticky = false` (default): `Threads.@spawn`, migratable tasks, scales across threads with `julia -t auto`. Use when multithreaded or for CPU-bound encode/decode work
+- `sticky = true`: `@async`, tasks pinned to the spawning thread, cooperative single-threaded scheduling. Incompatible with multithreading (no cross-thread parallelism). Lower overhead for purely I/O-bound or single-threaded use
+
+The global handle from `grpc_global_handle()` uses `sticky = false`.
+
 ### Client Constructor Parameters
 
 All generated constructors share the same keyword parameters:
