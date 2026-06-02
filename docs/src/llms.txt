@@ -119,6 +119,8 @@ RPC variant → type parameters:
 - Client streaming: `{TReq, true, TResp, false}`
 - Bidirectional: `{TReq, true, TResp, true}`
 
+Setting `TRequest` and/or `TResponse` to `Vector{UInt8}` sends/receives that side as a raw protobuf payload instead of a typed message. See "Raw Encoded Buffers" under API Reference.
+
 ### Cross-Package Types
 
 When a service in `pkg_a` uses message types from `pkg_b` (via proto `import`), the generated constructor uses the package-namespaced type name:
@@ -242,6 +244,44 @@ grpc_async_await(req)
 ```
 
 Note: For streaming variants, `grpc_async_await` does **not** return the response — it only raises exceptions. The response data flows through the channel.
+
+### Raw Encoded Buffers (Partial Decoding)
+
+Declaring a message type parameter as `Vector{UInt8}` bypasses ProtoBuf encode/decode for that side and sends/receives the raw protobuf payload directly. Use it to forward bytes you already hold, or to partially decode a large response. A generated message type is always a struct, so `Vector{UInt8}` is an unambiguous "raw buffer" marker. The raw buffer is the protobuf message body only; the 5-byte gRPC framing is still handled by the library.
+
+The generated `*_Client` constructors use concrete proto types, so construct `gRPCServiceClient` directly for raw calls, passing the RPC path. Request and response sides are independent, so either or both can be raw.
+
+```julia
+using ProtoBuf
+
+# Raw request + raw response
+io = IOBuffer(); encode(ProtoEncoder(io), MyRequest(42, UInt64[])); raw_request = take!(io)
+client = gRPCClient.gRPCServiceClient{Vector{UInt8}, false, Vector{UInt8}, false}(
+    "localhost", 50051, "/foo.MyService/MyRPC")
+raw_response = grpc_sync_request(client, raw_request)            # ::Vector{UInt8}
+response = decode(ProtoDecoder(IOBuffer(raw_response)), MyResponse)
+
+# Mixed: typed request, raw response (make only one side Vector{UInt8})
+client = gRPCClient.gRPCServiceClient{MyRequest, false, Vector{UInt8}, false}(
+    "localhost", 50051, "/foo.MyService/MyRPC")
+raw_response = grpc_sync_request(client, MyRequest(42, UInt64[]))
+```
+
+Streaming works the same way: declare the streaming side as `Vector{UInt8}` and use a `Channel{Vector{UInt8}}`.
+
+```julia
+# Server streaming with raw responses
+client = gRPCClient.gRPCServiceClient{Vector{UInt8}, false, Vector{UInt8}, true}(
+    "localhost", 50051, "/foo.MyService/MyServerStreamRPC")
+response_c = Channel{Vector{UInt8}}(16)
+req = grpc_async_request(client, raw_request, response_c)
+for raw in response_c
+    response = decode(ProtoDecoder(IOBuffer(raw)), MyResponse)
+end
+grpc_async_await(req)
+```
+
+Note: `Vector{UInt8}` here is the whole-message type parameter, not a `bytes` field inside a message. A `bytes` field still maps to `Vector{UInt8}` within a normal generated struct and is unaffected.
 
 ### Exceptions
 
