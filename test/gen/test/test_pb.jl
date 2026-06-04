@@ -12,10 +12,15 @@ export TestResponse, TestRequest
 struct TestResponse
     data::Vector{UInt64}
 end
-PB.default_values(::Type{TestResponse}) = (;data = Vector{UInt64}())
-PB.field_numbers(::Type{TestResponse}) = (;data = 1)
+PB.default_values(::Type{TestResponse}) = (; data = Vector{UInt64}())
+PB.field_numbers(::Type{TestResponse}) = (; data = 1)
 
-function PB.decode(d::PB.AbstractProtoDecoder, ::Type{<:TestResponse}, _endpos::Int=0, _group::Bool=false)
+function PB.decode(
+    d::PB.AbstractProtoDecoder,
+    ::Type{<:TestResponse},
+    _endpos::Int = 0,
+    _group::Bool = false,
+)
     data = PB.BufferedVector{UInt64}()
     while !PB.message_done(d, _endpos, _group)
         field_number, wire_type = PB.decode_tag(d)
@@ -43,10 +48,16 @@ struct TestRequest
     test_response_sz::UInt64
     data::Vector{UInt64}
 end
-PB.default_values(::Type{TestRequest}) = (;test_response_sz = zero(UInt64), data = Vector{UInt64}())
-PB.field_numbers(::Type{TestRequest}) = (;test_response_sz = 1, data = 2)
+PB.default_values(::Type{TestRequest}) =
+    (; test_response_sz = zero(UInt64), data = Vector{UInt64}())
+PB.field_numbers(::Type{TestRequest}) = (; test_response_sz = 1, data = 2)
 
-function PB.decode(d::PB.AbstractProtoDecoder, ::Type{<:TestRequest}, _endpos::Int=0, _group::Bool=false)
+function PB.decode(
+    d::PB.AbstractProtoDecoder,
+    ::Type{<:TestRequest},
+    _endpos::Int = 0,
+    _group::Bool = false,
+)
     test_response_sz = zero(UInt64)
     data = PB.BufferedVector{UInt64}()
     while !PB.message_done(d, _endpos, _group)
@@ -70,93 +81,106 @@ function PB.encode(e::PB.AbstractProtoEncoder, x::TestRequest)
 end
 function PB._encoded_size(x::TestRequest)
     encoded_size = 0
-    x.test_response_sz != zero(UInt64) && (encoded_size += PB._encoded_size(x.test_response_sz, 1))
+    x.test_response_sz != zero(UInt64) &&
+        (encoded_size += PB._encoded_size(x.test_response_sz, 1))
     !isempty(x.data) && (encoded_size += PB._encoded_size(x.data, 2))
     return encoded_size
 end
 
 # gRPCClient.jl BEGIN
 TestService_TestRPC_Client(
-	host, port;
-	TRequest=TestRequest,
-	TResponse=TestResponse,
-	secure=false,
-	grpc=gRPCClient.grpc_global_handle(),
-	deadline=10,
-	keepalive=60,
-	max_send_message_length = 4*1024*1024,
-	max_recieve_message_length = 4*1024*1024,
-) = gRPCClient.gRPCServiceClient{TRequest, false, TResponse, false}(
-	host, port, "/test.TestService/TestRPC";
-	secure=secure,
-	grpc=grpc,
-	deadline=deadline,
-	keepalive=keepalive,
-	max_send_message_length=max_send_message_length,
-	max_recieve_message_length=max_recieve_message_length,
+    host,
+    port;
+    TRequest = TestRequest,
+    TResponse = TestResponse,
+    secure = false,
+    grpc = gRPCClient.grpc_global_handle(),
+    deadline = 10,
+    keepalive = 60,
+    max_send_message_length = 4*1024*1024,
+    max_recieve_message_length = 4*1024*1024,
+) = gRPCClient.gRPCServiceClient{TRequest,false,TResponse,false}(
+    host,
+    port,
+    "/test.TestService/TestRPC";
+    secure = secure,
+    grpc = grpc,
+    deadline = deadline,
+    keepalive = keepalive,
+    max_send_message_length = max_send_message_length,
+    max_recieve_message_length = max_recieve_message_length,
 )
 export TestService_TestRPC_Client
 
 TestService_TestServerStreamRPC_Client(
-	host, port;
-	TRequest=TestRequest,
-	TResponse=TestResponse,
-	secure=false,
-	grpc=gRPCClient.grpc_global_handle(),
-	deadline=10,
-	keepalive=60,
-	max_send_message_length = 4*1024*1024,
-	max_recieve_message_length = 4*1024*1024,
-) = gRPCClient.gRPCServiceClient{TRequest, false, TResponse, true}(
-	host, port, "/test.TestService/TestServerStreamRPC";
-	secure=secure,
-	grpc=grpc,
-	deadline=deadline,
-	keepalive=keepalive,
-	max_send_message_length=max_send_message_length,
-	max_recieve_message_length=max_recieve_message_length,
+    host,
+    port;
+    TRequest = TestRequest,
+    TResponse = TestResponse,
+    secure = false,
+    grpc = gRPCClient.grpc_global_handle(),
+    deadline = 10,
+    keepalive = 60,
+    max_send_message_length = 4*1024*1024,
+    max_recieve_message_length = 4*1024*1024,
+) = gRPCClient.gRPCServiceClient{TRequest,false,TResponse,true}(
+    host,
+    port,
+    "/test.TestService/TestServerStreamRPC";
+    secure = secure,
+    grpc = grpc,
+    deadline = deadline,
+    keepalive = keepalive,
+    max_send_message_length = max_send_message_length,
+    max_recieve_message_length = max_recieve_message_length,
 )
 export TestService_TestServerStreamRPC_Client
 
 TestService_TestClientStreamRPC_Client(
-	host, port;
-	TRequest=TestRequest,
-	TResponse=TestResponse,
-	secure=false,
-	grpc=gRPCClient.grpc_global_handle(),
-	deadline=10,
-	keepalive=60,
-	max_send_message_length = 4*1024*1024,
-	max_recieve_message_length = 4*1024*1024,
-) = gRPCClient.gRPCServiceClient{TRequest, true, TResponse, false}(
-	host, port, "/test.TestService/TestClientStreamRPC";
-	secure=secure,
-	grpc=grpc,
-	deadline=deadline,
-	keepalive=keepalive,
-	max_send_message_length=max_send_message_length,
-	max_recieve_message_length=max_recieve_message_length,
+    host,
+    port;
+    TRequest = TestRequest,
+    TResponse = TestResponse,
+    secure = false,
+    grpc = gRPCClient.grpc_global_handle(),
+    deadline = 10,
+    keepalive = 60,
+    max_send_message_length = 4*1024*1024,
+    max_recieve_message_length = 4*1024*1024,
+) = gRPCClient.gRPCServiceClient{TRequest,true,TResponse,false}(
+    host,
+    port,
+    "/test.TestService/TestClientStreamRPC";
+    secure = secure,
+    grpc = grpc,
+    deadline = deadline,
+    keepalive = keepalive,
+    max_send_message_length = max_send_message_length,
+    max_recieve_message_length = max_recieve_message_length,
 )
 export TestService_TestClientStreamRPC_Client
 
 TestService_TestBidirectionalStreamRPC_Client(
-	host, port;
-	TRequest=TestRequest,
-	TResponse=TestResponse,
-	secure=false,
-	grpc=gRPCClient.grpc_global_handle(),
-	deadline=10,
-	keepalive=60,
-	max_send_message_length = 4*1024*1024,
-	max_recieve_message_length = 4*1024*1024,
-) = gRPCClient.gRPCServiceClient{TRequest, true, TResponse, true}(
-	host, port, "/test.TestService/TestBidirectionalStreamRPC";
-	secure=secure,
-	grpc=grpc,
-	deadline=deadline,
-	keepalive=keepalive,
-	max_send_message_length=max_send_message_length,
-	max_recieve_message_length=max_recieve_message_length,
+    host,
+    port;
+    TRequest = TestRequest,
+    TResponse = TestResponse,
+    secure = false,
+    grpc = gRPCClient.grpc_global_handle(),
+    deadline = 10,
+    keepalive = 60,
+    max_send_message_length = 4*1024*1024,
+    max_recieve_message_length = 4*1024*1024,
+) = gRPCClient.gRPCServiceClient{TRequest,true,TResponse,true}(
+    host,
+    port,
+    "/test.TestService/TestBidirectionalStreamRPC";
+    secure = secure,
+    grpc = grpc,
+    deadline = deadline,
+    keepalive = keepalive,
+    max_send_message_length = max_send_message_length,
+    max_recieve_message_length = max_recieve_message_length,
 )
 export TestService_TestBidirectionalStreamRPC_Client
 # gRPCClient.jl END

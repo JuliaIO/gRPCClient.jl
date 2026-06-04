@@ -1,6 +1,6 @@
 #!/bin/bash
 
-pushd python 
+pushd python
 uv run -m grpc_tools.protoc -I ../proto --python_out=. --pyi_out=. --grpc_python_out=. ../proto/test.proto
 popd
 
