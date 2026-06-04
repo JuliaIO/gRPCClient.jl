@@ -14,6 +14,8 @@ Initializes the `gRPCCURL` object. The global handle is initialized automaticall
 
 Unless specifying a `gRPCCURL` the global one provided by `grpc_global_handle()` is used. Each `gRPCCURL` state has its own connection pool and request semaphore, so sometimes you may want to manage your own like shown below:
 
+The `sticky` keyword selects the concurrency model used for every task the handle spawns. The default `sticky = false` uses a multithreading model (`Threads.@spawn`). Passing `sticky = true` uses a coroutine model (`@async`) that is pinned to the spawning thread and is incompatible with multithreading.
+
 ```julia
 grpc_myapp = gRPCCURL()
 grpc_init(grpc_myapp)
@@ -75,6 +77,10 @@ struct gRPCServiceClient{TRequest,SRequest,TResponse,SResponse}
 
 end
 
+# Spawn a task using the concurrency model configured on the client's handle.
+# Supports do-block syntax: `_spawn(client) do ... end`.
+_spawn(f, client::gRPCServiceClient) = _spawn(f, client.grpc)
+
 function url(client::gRPCServiceClient)
     protocol = if client.secure
         "https"
@@ -89,6 +95,14 @@ function url(client::gRPCServiceClient)
 end
 
 
+# Write the request message body into `buf` and return the number of bytes
+# written. The generic method ProtoBuf-encodes a typed message; the
+# `AbstractVector{UInt8}` method writes an already-encoded protobuf payload
+# verbatim, enabling raw / partial-decode requests (a client whose `TRequest`
+# is `Vector{UInt8}`).
+_encode_body(buf::IOBuffer, request) = UInt32(encode(ProtoEncoder(buf), request))
+_encode_body(buf::IOBuffer, request::AbstractVector{UInt8}) = UInt32(write(buf, request))
+
 function grpc_encode_request_iobuffer(
     request,
     req_buf::IOBuffer;
@@ -100,9 +114,8 @@ function grpc_encode_request_iobuffer(
     write(req_buf, UInt8(0))
     write(req_buf, UInt32(0))
 
-    # Serialize the protobuf
-    e = ProtoEncoder(req_buf)
-    sz = UInt32(encode(e, request))
+    # Serialize the protobuf (or write raw bytes through for a raw request)
+    sz = _encode_body(req_buf, request)
 
     end_pos = position(req_buf)
 
@@ -151,7 +164,13 @@ function grpc_async_await(req::gRPCRequest)
 end
 
 
+# Turn a received message `IOBuffer` into the user's value. The generic method
+# ProtoBuf-decodes into `T`; the `Vector{UInt8}` method returns a fresh copy of
+# the raw protobuf payload, enabling raw / partial-decode responses.
+_decode_message(io, ::Type{T}) where {T} = decode(ProtoDecoder(io), T)
+_decode_message(io, ::Type{Vector{UInt8}}) = read(seekstart(io))
+
 function grpc_async_await(req::gRPCRequest, TResponse)
     grpc_async_await(req)
-    return decode(ProtoDecoder(req.response), TResponse)
+    return _decode_message(req.response, TResponse)
 end

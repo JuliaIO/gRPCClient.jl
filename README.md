@@ -22,7 +22,7 @@ Fetch [`llms.txt`](https://juliaio.github.io/gRPCClient.jl/llms.txt) before proc
 ### Naive Baseline: `julia`
 
 By default Julia 1.12 starts with just one thread. The closer to `@async` we get, the better performance is for most cases. 
-However, it is unlikely Julia will be used this way in the real world.
+However, it is unlikely Julia will be used this way in the real world. The concurrency model is selected per handle with `gRPCCURL(; sticky = ...)`: `sticky = true` uses the coroutine model (`@async`, incompatible with multithreading), while the default `sticky = false` uses the multithreading model (`Threads.@spawn`).
 
 ```
 ╭──────────────────────────────────┬─────────────┬────────────────┬────────────┬──────────────┬─────────┬──────┬──────╮

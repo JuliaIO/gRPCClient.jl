@@ -1,5 +1,8 @@
+# Port of the TestService benchmark server. Override with GRPC_BENCH_PORT.
+_bench_port() = parse(Int, get(ENV, "GRPC_BENCH_PORT", "8001"))
+
 function workload_32_224_224_uint8(n = 100)
-    client = TestService_TestRPC_Client("localhost", 8001)
+    client = TestService_TestRPC_Client("localhost", _bench_port())
 
     reqs = Vector{gRPCRequest}()
 
@@ -19,7 +22,7 @@ function workload_32_224_224_uint8(n = 100)
 end
 
 function workload_smol(n = 1_000)
-    client = TestService_TestRPC_Client("localhost", 8001)
+    client = TestService_TestRPC_Client("localhost", _bench_port())
 
     # Since requests are lightweight, use async / await pattern to avoid creating an extra task per request
     reqs = Vector{gRPCRequest}()
@@ -36,7 +39,7 @@ function workload_smol(n = 1_000)
 end
 
 function workload_streaming_request(n = 1_000)
-    client = TestService_TestClientStreamRPC_Client("localhost", 8001)
+    client = TestService_TestClientStreamRPC_Client("localhost", _bench_port())
     requests_c = Channel{TestRequest}(16)
 
     @sync begin
@@ -55,7 +58,7 @@ function workload_streaming_request(n = 1_000)
 end
 
 function workload_streaming_response(n = 1_000)
-    client = TestService_TestServerStreamRPC_Client("localhost", 8001)
+    client = TestService_TestServerStreamRPC_Client("localhost", _bench_port())
     response_c = Channel{TestResponse}(16)
 
     req = grpc_async_request(client, TestRequest(n, zeros(UInt64, 1)), response_c)
@@ -70,7 +73,7 @@ end
 
 
 function workload_streaming_bidirectional(n = 1_000)
-    client = TestService_TestBidirectionalStreamRPC_Client("localhost", 8001)
+    client = TestService_TestBidirectionalStreamRPC_Client("localhost", _bench_port())
     requests_c = Channel{TestRequest}(16)
     response_c = Channel{TestResponse}(16)
 

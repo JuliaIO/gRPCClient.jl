@@ -49,6 +49,27 @@ protojl("test/proto/test.proto", ".", "test/gen")
 
 See [here](#RPC) for examples covering all provided interfaces for both unary and streaming gRPC calls. 
 
+## Concurrency Model
+
+gRPCClient.jl runs background tasks for socket I/O, streaming request and response pumps, and asynchronous unary fan-out. The `gRPCCURL` handle decides how those tasks are scheduled through its `sticky` property, so a single setting controls the model for every request made through that handle.
+
+Two models are available:
+
+- **Non-sticky** (`sticky = false`, the default) uses `Threads.@spawn`. Tasks are migratable and can run on any thread, so the client scales across threads when Julia is started with more than one (for example `julia -t auto`). This is the right choice when you run multithreaded or have CPU-bound encode and decode work
+- **Sticky** (`sticky = true`) uses `@async`. Tasks are pinned to the thread that spawned them and run under cooperative, single-threaded scheduling. This model is incompatible with multithreading: it does not parallelize across threads even when more than one is available. It has lower scheduling overhead and avoids cross-thread data movement, which suits purely I/O-bound workloads and single-threaded deployments
+
+The property is set when the handle is constructed and applies to every client that uses it:
+
+```julia
+# Coroutine model, pinned to the calling thread
+h = gRPCCURL(sticky = true)
+grpc_init(h)
+
+client = MyService_MyRPC_Client("localhost", 50051; grpc = h)
+```
+
+The global handle returned by `grpc_global_handle()` uses the default `sticky = false`.
+
 ## API
 
 ### Package Initialization / Shutdown
@@ -122,6 +143,76 @@ grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,true},requ
 grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,true},request::Channel{TRequest},response::Channel{TResponse}) where {TRequest<:Any,TResponse<:Any}
 grpc_async_await(client::gRPCServiceClient{TRequest,true,TResponse,false},request::gRPCRequest) where {TRequest<:Any,TResponse<:Any} 
 ```
+
+### Raw Encoded Buffers (Partial Decoding)
+
+By default the client encodes a typed message before sending and decodes the
+response into a typed message before returning it. You can bypass either step
+and work directly with the raw protobuf payload by declaring the relevant
+message type parameter as `Vector{UInt8}`. This is useful when you want to
+forward bytes you already hold, or partially decode a large response and read
+only the fields you care about.
+
+A normal protobuf message type is always a generated struct, so `Vector{UInt8}`
+is unambiguous as a "raw buffer" marker for the message type parameter. The raw
+buffer is the serialized protobuf message body only; the 5-byte gRPC framing is
+still added and stripped by the library, so you never handle it yourself.
+
+Each generated `*_Client` constructor accepts `TRequest` and `TResponse`
+keyword arguments that default to the proto message types. Override either (or
+both) with `Vector{UInt8}` to make that side raw. The request and response sides
+are independent, so you can make either or both raw.
+
+Send a raw request and receive a raw response:
+
+```julia
+using ProtoBuf
+
+# Build the request bytes yourself (here, by encoding a typed message)
+io = IOBuffer()
+encode(ProtoEncoder(io), MyRequest(42, zeros(UInt64, 10)))
+raw_request = take!(io)
+
+client = MyService_MyRPC_Client(
+    "localhost", 50051;
+    TRequest = Vector{UInt8}, TResponse = Vector{UInt8},
+)
+raw_response = grpc_sync_request(client, raw_request)   # raw_response::Vector{UInt8}
+
+# Partially decode only what you need from the response payload
+response = decode(ProtoDecoder(IOBuffer(raw_response)), MyResponse)
+```
+
+Mixed combinations work too. To send a typed request but receive the response
+as raw bytes, override only `TResponse`:
+
+```julia
+client = MyService_MyRPC_Client("localhost", 50051; TResponse = Vector{UInt8})
+raw_response = grpc_sync_request(client, MyRequest(42, UInt64[]))
+```
+
+Raw buffers apply to streaming as well: override the streaming side's type with
+`Vector{UInt8}` and use a `Channel{Vector{UInt8}}`. For example, a
+server-streaming call that receives each response as raw bytes:
+
+```julia
+client = MyService_MyServerStreamRPC_Client(
+    "localhost", 50051;
+    TResponse = Vector{UInt8},
+)
+response_c = Channel{Vector{UInt8}}(16)
+req = grpc_async_request(client, raw_request, response_c)
+for raw in response_c
+    response = decode(ProtoDecoder(IOBuffer(raw)), MyResponse)
+    # process response
+end
+grpc_async_await(req)
+```
+
+If you do not have a generated constructor, the same applies by building a
+[`gRPCServiceClient`](#Generated-ServiceClient-Constructors) directly with
+`Vector{UInt8}` type parameters and the RPC path, for example
+`gRPCClient.gRPCServiceClient{Vector{UInt8}, false, Vector{UInt8}, false}("localhost", 50051, "/foo.MyService/MyRPC")`.
 
 ### Exceptions
 

@@ -10,14 +10,17 @@ import gRPCClient: grpc_timeout_header_val, GRPC_DEADLINE_EXCEEDED
 # By launching the server asynchronously within julia, we ensure
 # that the server is active while testing, which otherwise would require
 # scheduling a task on windows CI. 
-if haskey(ENV, "JULIA_GRPCCLIENT_TEST_START_SERVER") 
+if haskey(ENV, "JULIA_GRPCCLIENT_TEST_START_SERVER")
     if ENV["JULIA_GRPCCLIENT_TEST_START_SERVER"] == "go"
         pipe = Pipe()
-        process = run(pipeline(`./go/grpc_test_server`; stdout = pipe, stderr = pipe), wait = false)
+        process = run(
+            pipeline(`./go/grpc_test_server`; stdout = pipe, stderr = pipe),
+            wait = false,
+        )
         finalizer(process) do x
             kill(x)
         end
-        
+
         # Display the prints from the server and
         # wait until it is properly launched before proceeding with requests
         t1 = time()
@@ -26,15 +29,22 @@ if haskey(ENV, "JULIA_GRPCCLIENT_TEST_START_SERVER")
             line = readline(pipe) # blocking
             println(line)
             contains(line, "gRPC server started") && break
-            contains(lowercase(line), "error") && throw(ErrorException("Failed to start gRPC test server"))
-            contains(lowercase(line), "failed") && throw(ErrorException("Failed to start gRPC test server"))
-            time() > t1 + 10 && throw(ErrorException("Failed to start gRPC test server due to time-out"))
+            contains(lowercase(line), "error") &&
+                throw(ErrorException("Failed to start gRPC test server"))
+            contains(lowercase(line), "failed") &&
+                throw(ErrorException("Failed to start gRPC test server"))
+            time() > t1 + 10 &&
+                throw(ErrorException("Failed to start gRPC test server due to time-out"))
         end
         sleep(0.01)
     elseif ENV["JULIA_GRPCCLIENT_TEST_START_SERVER"] == "false"
         nothing
     else
-        throw(ErrorException("Unsupported option for JULIA_GRPCCLIENT_TEST_START_SERVER: $(ENV["JULIA_GRPCCLIENT_TEST_START_SERVER"])"))
+        throw(
+            ErrorException(
+                "Unsupported option for JULIA_GRPCCLIENT_TEST_START_SERVER: $(ENV["JULIA_GRPCCLIENT_TEST_START_SERVER"])",
+            ),
+        )
     end
 end
 
@@ -76,11 +86,27 @@ include("gen/test/test_pb.jl")
             @test contains(generated, "TestService_TestServerStreamRPC_Client(")
             @test contains(generated, "TestService_TestClientStreamRPC_Client(")
             @test contains(generated, "TestService_TestBidirectionalStreamRPC_Client(")
+            # Message types default via overridable TRequest/TResponse kwargs,
+            # so the construction uses the type-parameter names (raw-buffer support).
+            @test contains(generated, "TRequest=TestRequest,")
+            @test contains(generated, "TResponse=TestResponse,")
             # Correct streaming type parameters for each RPC variant
-            @test contains(generated, "gRPCClient.gRPCServiceClient{TestRequest, false, TestResponse, false}")
-            @test contains(generated, "gRPCClient.gRPCServiceClient{TestRequest, false, TestResponse, true}")
-            @test contains(generated, "gRPCClient.gRPCServiceClient{TestRequest, true, TestResponse, false}")
-            @test contains(generated, "gRPCClient.gRPCServiceClient{TestRequest, true, TestResponse, true}")
+            @test contains(
+                generated,
+                "gRPCClient.gRPCServiceClient{TRequest, false, TResponse, false}",
+            )
+            @test contains(
+                generated,
+                "gRPCClient.gRPCServiceClient{TRequest, false, TResponse, true}",
+            )
+            @test contains(
+                generated,
+                "gRPCClient.gRPCServiceClient{TRequest, true, TResponse, false}",
+            )
+            @test contains(
+                generated,
+                "gRPCClient.gRPCServiceClient{TRequest, true, TResponse, true}",
+            )
             # Correct fully-qualified RPC paths
             @test contains(generated, "/test.TestService/TestRPC")
             @test contains(generated, "/test.TestService/TestServerStreamRPC")
@@ -90,7 +116,10 @@ include("gen/test/test_pb.jl")
             @test contains(generated, "export TestService_TestRPC_Client")
             @test contains(generated, "export TestService_TestServerStreamRPC_Client")
             @test contains(generated, "export TestService_TestClientStreamRPC_Client")
-            @test contains(generated, "export TestService_TestBidirectionalStreamRPC_Client")
+            @test contains(
+                generated,
+                "export TestService_TestBidirectionalStreamRPC_Client",
+            )
         end
 
         # Test that request/response type package_namespace is correctly applied when types
@@ -98,15 +127,23 @@ include("gen/test/test_pb.jl")
         # checked rpc.package_namespace instead of rpc.request_type.package_namespace and
         # rpc.response_type.package_namespace.
         mktempdir() do tmpdir
-            @test isnothing(protojl("ext_service.proto", joinpath(@__DIR__, "proto"), tmpdir))
+            @test isnothing(
+                protojl("ext_service.proto", joinpath(@__DIR__, "proto"), tmpdir),
+            )
             generated = read(joinpath(tmpdir, "ext_service", "ext_service_pb.jl"), String)
             # Request type from ext_types package must be prefixed with package namespace
-            @test contains(generated, "ext_types.ExtRequest")
+            @test contains(generated, "TRequest=ext_types.ExtRequest,")
             # Response type from ext_types package must be prefixed with package namespace
-            @test contains(generated, "ext_types.ExtResponse")
-            # Full type parameter string with both namespaced types
-            @test contains(generated, "gRPCClient.gRPCServiceClient{ext_types.ExtRequest, false, ext_types.ExtResponse, false}")
-            @test contains(generated, "gRPCClient.gRPCServiceClient{ext_types.ExtRequest, false, ext_types.ExtResponse, true}")
+            @test contains(generated, "TResponse=ext_types.ExtResponse,")
+            # Streaming flags differ per RPC; message types come through the kwargs above
+            @test contains(
+                generated,
+                "gRPCClient.gRPCServiceClient{TRequest, false, TResponse, false}",
+            )
+            @test contains(
+                generated,
+                "gRPCClient.gRPCServiceClient{TRequest, false, TResponse, true}",
+            )
             # Service client constructors are present
             @test contains(generated, "ExtService_ExtRPC_Client(")
             @test contains(generated, "ExtService_ExtStreamRPC_Client(")
@@ -288,13 +325,13 @@ include("gen/test/test_pb.jl")
             req = grpc_async_request(client, TestRequest(N, zeros(UInt64, 1)), response_c)
 
             i = 1
-            try 
+            try
                 while i <= N + 1
                     response = take!(response_c)
                     i += 1
                 end
                 @test false
-            catch ex 
+            catch ex
                 @test isa(ex, InvalidStateException)
                 @test i == N + 1
             end
@@ -302,7 +339,11 @@ include("gen/test/test_pb.jl")
         end
 
         @testset "Deadline Exceeded" begin
-            client = TestService_TestClientStreamRPC_Client(_TEST_HOST, _TEST_PORT; deadline=0.001)
+            client = TestService_TestClientStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = 0.001,
+            )
             request_c = Channel{TestRequest}(1)
 
             request = grpc_async_request(client, request_c)

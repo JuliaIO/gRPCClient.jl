@@ -610,7 +610,7 @@ function socket_callback(
 
             isnothing(watcher) && return 0
 
-            task = @async begin
+            task = _spawn(grpc) do
                 while watcher.running && grpc.running
                     # Watcher configuration might be changed, wait until its safe to wait on the watcher
                     wait(watcher.ready)
@@ -705,8 +705,17 @@ mutable struct gRPCCURL
     requests::Vector{gRPCRequest}
     # Allows for controlling the maximum number of concurrent gRPC requests/streams
     sem::Channel{Event}
+    # Selects the concurrency model for tasks spawned by this handle. When true,
+    # tasks are sticky (`@async`, a coroutine model incompatible with
+    # multithreading). When false (the default), tasks are migratable
+    # (`Threads.@spawn`, a multithreading model).
+    sticky::Bool
 
-    function gRPCCURL(; max_streams::Int = GRPC_MAX_STREAMS, running = true)
+    function gRPCCURL(;
+        max_streams::Int = GRPC_MAX_STREAMS,
+        running = true,
+        sticky::Bool = false,
+    )
         grpc = new(
             Ptr{Cvoid}(0),
             ReentrantLock(),
@@ -716,6 +725,7 @@ mutable struct gRPCCURL
             running,
             Vector{gRPCRequest}(),
             Channel{Event}(max_streams),
+            sticky,
         )
 
         finalizer((x) -> close(x), grpc)
@@ -729,6 +739,10 @@ mutable struct gRPCCURL
         return grpc
     end
 end
+
+# Spawn a task using the concurrency model configured on the handle. Supports
+# do-block syntax: `_spawn(grpc) do ... end`.
+_spawn(f, grpc::gRPCCURL) = _spawn(f; sticky = grpc.sticky)
 
 function Base.close(grpc::gRPCCURL)
     grpc.running = false
