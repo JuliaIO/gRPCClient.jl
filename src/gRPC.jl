@@ -50,6 +50,9 @@ struct gRPCServiceClient{TRequest,SRequest,TResponse,SResponse}
     keepalive::Float64
     max_send_message_length::Int64
     max_recieve_message_length::Int64
+    # Optional bearer token attached to every request as an
+    # `authorization: Bearer <token>` header. `nothing` sends no header.
+    token::Union{Nothing,String}
 
     function gRPCServiceClient{TRequest,SRequest,TResponse,SResponse}(
         host,
@@ -61,6 +64,7 @@ struct gRPCServiceClient{TRequest,SRequest,TResponse,SResponse}
         keepalive = 60,
         max_send_message_length = 4 * 1024 * 1024,
         max_recieve_message_length = 4 * 1024 * 1024,
+        token = nothing,
     ) where {TRequest<:Any,SRequest,TResponse<:Any,SResponse}
         new(
             grpc,
@@ -72,6 +76,7 @@ struct gRPCServiceClient{TRequest,SRequest,TResponse,SResponse}
             keepalive,
             max_send_message_length,
             max_recieve_message_length,
+            token,
         )
     end
 

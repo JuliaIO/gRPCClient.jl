@@ -156,6 +156,7 @@ function grpc_async_request(
         keepalive = keepalive,
         max_send_message_length = max_send_message_length,
         max_recieve_message_length = max_recieve_message_length,
+        token = client.token,
     )
 
     request_task = _spawn(() -> grpc_async_stream_request(req, request), client)
@@ -220,6 +221,7 @@ function grpc_async_request(
         keepalive = keepalive,
         max_send_message_length = max_send_message_length,
         max_recieve_message_length = max_recieve_message_length,
+        token = client.token,
     )
 
     response_task = _spawn(() -> grpc_async_stream_response(req, response), client)
@@ -284,6 +286,7 @@ function grpc_async_request(
         keepalive = keepalive,
         max_send_message_length = max_send_message_length,
         max_recieve_message_length = max_recieve_message_length,
+        token = client.token,
     )
 
     request_task = _spawn(() -> grpc_async_stream_request(req, request), client)
