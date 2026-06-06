@@ -99,6 +99,7 @@ TestService_TestRPC_Client(
     keepalive = 60,
     max_send_message_length = 4*1024*1024,
     max_recieve_message_length = 4*1024*1024,
+    token = nothing,
 ) = gRPCClient.gRPCServiceClient{TRequest,false,TResponse,false}(
     host,
     port,
@@ -109,6 +110,7 @@ TestService_TestRPC_Client(
     keepalive = keepalive,
     max_send_message_length = max_send_message_length,
     max_recieve_message_length = max_recieve_message_length,
+    token = token,
 )
 export TestService_TestRPC_Client
 
@@ -123,6 +125,7 @@ TestService_TestServerStreamRPC_Client(
     keepalive = 60,
     max_send_message_length = 4*1024*1024,
     max_recieve_message_length = 4*1024*1024,
+    token = nothing,
 ) = gRPCClient.gRPCServiceClient{TRequest,false,TResponse,true}(
     host,
     port,
@@ -133,6 +136,7 @@ TestService_TestServerStreamRPC_Client(
     keepalive = keepalive,
     max_send_message_length = max_send_message_length,
     max_recieve_message_length = max_recieve_message_length,
+    token = token,
 )
 export TestService_TestServerStreamRPC_Client
 
@@ -147,6 +151,7 @@ TestService_TestClientStreamRPC_Client(
     keepalive = 60,
     max_send_message_length = 4*1024*1024,
     max_recieve_message_length = 4*1024*1024,
+    token = nothing,
 ) = gRPCClient.gRPCServiceClient{TRequest,true,TResponse,false}(
     host,
     port,
@@ -157,6 +162,7 @@ TestService_TestClientStreamRPC_Client(
     keepalive = keepalive,
     max_send_message_length = max_send_message_length,
     max_recieve_message_length = max_recieve_message_length,
+    token = token,
 )
 export TestService_TestClientStreamRPC_Client
 
@@ -171,6 +177,7 @@ TestService_TestBidirectionalStreamRPC_Client(
     keepalive = 60,
     max_send_message_length = 4*1024*1024,
     max_recieve_message_length = 4*1024*1024,
+    token = nothing,
 ) = gRPCClient.gRPCServiceClient{TRequest,true,TResponse,true}(
     host,
     port,
@@ -181,6 +188,7 @@ TestService_TestBidirectionalStreamRPC_Client(
     keepalive = keepalive,
     max_send_message_length = max_send_message_length,
     max_recieve_message_length = max_recieve_message_length,
+    token = token,
 )
 export TestService_TestBidirectionalStreamRPC_Client
 # gRPCClient.jl END

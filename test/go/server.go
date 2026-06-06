@@ -11,7 +11,37 @@ import (
 	"strconv"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
+
+// expectedBearerToken is the token the Julia bearer-auth test sends. Used by
+// the auth interceptor: a request carrying an `authorization` header must
+// present exactly `Bearer <expectedBearerToken>`. Requests without an
+// `authorization` header are left untouched so the rest of the suite (which
+// uses no token) is unaffected.
+const expectedBearerToken = "test-secret-token"
+
+// authInterceptor rejects any request that carries an `authorization` header
+// not equal to the expected bearer token. Absence of the header is allowed so
+// only the dedicated bearer-auth test exercises this path.
+func authInterceptor(
+	ctx context.Context,
+	req any,
+	info *grpc.UnaryServerInfo,
+	handler grpc.UnaryHandler,
+) (any, error) {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		if auth := md.Get("authorization"); len(auth) > 0 {
+			if auth[0] != "Bearer "+expectedBearerToken {
+				return nil, status.Error(codes.Unauthenticated, "invalid bearer token")
+			}
+		}
+	}
+	return handler(ctx, req)
+}
 
 type testServiceServer struct {
 	UnimplementedTestServiceServer
@@ -156,7 +186,7 @@ func main() {
 		log.Fatalf("Failed to listen: %v", err)
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(authInterceptor))
 	RegisterTestServiceServer(grpcServer, newServer(*publicMode))
 
 	log.Printf("gRPC server started")

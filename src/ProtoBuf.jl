@@ -30,6 +30,8 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
         println(io, "\tkeepalive=60,")
         println(io, "\tmax_send_message_length = 4*1024*1024,")
         println(io, "\tmax_recieve_message_length = 4*1024*1024,")
+        # Optional bearer token sent as an `authorization: Bearer <token>` header.
+        println(io, "\ttoken=nothing,")
         println(
             io,
             ") = gRPCClient.gRPCServiceClient{TRequest, $(rpc.request_stream), TResponse, $(rpc.response_stream)}(",
@@ -41,6 +43,7 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
         println(io, "\tkeepalive=keepalive,")
         println(io, "\tmax_send_message_length=max_send_message_length,")
         println(io, "\tmax_recieve_message_length=max_recieve_message_length,")
+        println(io, "\ttoken=token,")
         println(io, ")")
 
         # TODO: define a standard way to check whether we should export that is used in both ProtoBuf.jl and gRPCClient.jl

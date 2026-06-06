@@ -4,7 +4,12 @@ using gRPCClient
 using Base.Threads
 
 # Import the timeout header formatting function for testing
-import gRPCClient: grpc_timeout_header_val, GRPC_DEADLINE_EXCEEDED
+import gRPCClient: grpc_timeout_header_val, GRPC_DEADLINE_EXCEEDED, GRPC_UNAUTHENTICATED
+
+# The bearer token the test Go server accepts (mirrors expectedBearerToken in
+# test/go/server.go). A request carrying an `authorization` header must present
+# exactly this value; requests without one are unaffected.
+const _TEST_BEARER_TOKEN = "test-secret-token"
 
 # This is primarily used for starting the server when running CI.
 # By launching the server asynchronously within julia, we ensure
@@ -90,6 +95,10 @@ include("gen/test/test_pb.jl")
             # so the construction uses the type-parameter names (raw-buffer support).
             @test contains(generated, "TRequest=TestRequest,")
             @test contains(generated, "TResponse=TestResponse,")
+            # Bearer token kwarg is generated (defaults to nothing) and threaded
+            # through to the underlying gRPCServiceClient constructor.
+            @test contains(generated, "token=nothing,")
+            @test contains(generated, "token=token,")
             # Correct streaming type parameters for each RPC variant
             @test contains(
                 generated,
@@ -543,6 +552,44 @@ include("gen/test/test_pb.jl")
             client,
             TestRequest(1024, zeros(UInt64, 1)),
         )
+    end
+
+    @testset "Bearer Authentication" begin
+        # A client configured with the correct bearer token sends
+        # `authorization: Bearer <token>`, which the test server validates.
+        # A successful response proves the header reached the server intact.
+        client = TestService_TestRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            token = _TEST_BEARER_TOKEN,
+        )
+        @test client.token == _TEST_BEARER_TOKEN
+
+        response = grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
+        @test length(response.data) == 1
+        @test response.data[1] == 1
+
+        # A wrong token is rejected by the server with UNAUTHENTICATED, proving
+        # the supplied token value is transmitted faithfully (not dropped).
+        bad_client = TestService_TestRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            token = "wrong-token",
+        )
+        try
+            grpc_sync_request(bad_client, TestRequest(1, zeros(UInt64, 1)))
+            @test false  # Should not reach here
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+            @test ex.grpc_status == GRPC_UNAUTHENTICATED
+        end
+
+        # The default client sends no `authorization` header, so the server's
+        # auth check is bypassed and the request succeeds as before.
+        default_client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
+        @test isnothing(default_client.token)
+        response = grpc_sync_request(default_client, TestRequest(1, zeros(UInt64, 1)))
+        @test length(response.data) == 1
     end
 
     @testset "Graceful shutdown during concurrent requests" begin

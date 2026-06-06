@@ -238,6 +238,7 @@ mutable struct gRPCRequest
         keepalive = 60,
         max_send_message_length = 4 * 1024 * 1024,
         max_recieve_message_length = 4 * 1024 * 1024,
+        token = nothing,
     )
         !grpc.running && throw(
             gRPCServiceCallException(
@@ -284,6 +285,9 @@ mutable struct gRPCRequest
         headers = curl_slist_append(headers, "te: trailers")
         headers =
             curl_slist_append(headers, "grpc-timeout: $(grpc_timeout_header_val(deadline))")
+        if !isnothing(token)
+            headers = curl_slist_append(headers, "authorization: Bearer $(token)")
+        end
         curl_easy_setopt(easy_handle, CURLOPT_HTTPHEADER, headers)
 
         curl_easy_setopt(easy_handle, CURLOPT_TCP_KEEPALIVE, Clong(1))
