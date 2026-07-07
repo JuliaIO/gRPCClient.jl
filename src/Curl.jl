@@ -179,15 +179,17 @@ function grpc_timeout_header_val(timeout::Real)
     ns = round(Int64, t * 1e9)
     ns == 0 && t > 0 && (ns = 1)
     # Coarsest-exact preference: seconds, milliseconds, microseconds, nanoseconds.
+    # `string(q) * unit` (String * Char) rather than "$(q)$(unit)": interpolating a Char takes a
+    # slower path that allocates ~2.5x more, and this runs once per request.
     for (mult, unit) in ((1_000_000_000, 'S'), (1_000_000, 'm'), (1_000, 'u'), (1, 'n'))
         q, r = divrem(ns, mult)
-        r == 0 && q <= 99_999_999 && return "$(q)$(unit)"
+        r == 0 && q <= 99_999_999 && return string(q) * unit
     end
     # No exact unit fits in 8 digits: round up to the finest unit that does (nanoseconds .. hours).
     for (mult, unit) in ((1, 'n'), (1_000, 'u'), (1_000_000, 'm'), (1_000_000_000, 'S'),
                          (60_000_000_000, 'M'), (3_600_000_000_000, 'H'))
         ticks = cld(ns, mult)
-        ticks <= 99_999_999 && return "$(ticks)$(unit)"
+        ticks <= 99_999_999 && return string(ticks) * unit
     end
     # A valid Int64 ns always fits in <=8 hour-digits, so reaching here is a logic error, not input.
     throw(gRPCServiceCallException(GRPC_INVALID_ARGUMENT,
