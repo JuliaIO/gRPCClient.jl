@@ -161,7 +161,14 @@ end
 # 29.999999046 -> "29999999046n" which the peer rejects as malformed), round UP to the finest unit
 # that does fit, keeping the header spec-valid and never encoding a shorter timeout than requested.
 function grpc_timeout_header_val(timeout::Real)
-    timeout < 0 && return "0n"
+    # A negative, non-finite, or unrepresentably-large timeout is a caller error: reject it with
+    # INVALID_ARGUMENT rather than silently coerce it into a wrong deadline on the wire.
+    (isfinite(timeout) && timeout >= 0) || throw(gRPCServiceCallException(GRPC_INVALID_ARGUMENT,
+        "grpc-timeout must be a finite, non-negative number of seconds, got $(timeout)"))
+    # Nanoseconds is the finest unit; a timeout beyond what fits in Int64 ns (~292 years) cannot be
+    # represented, so reject it here rather than overflow the conversion below.
+    timeout * 1e9 >= typemax(Int64) && throw(gRPCServiceCallException(GRPC_INVALID_ARGUMENT,
+        "grpc-timeout $(timeout)s is too large to encode as a grpc-timeout header"))
     ns = round(Int64, timeout * 1_000_000_000)
     # Coarsest-exact preference: seconds, milliseconds, microseconds, nanoseconds.
     for (mult, unit) in ((1_000_000_000, 'S'), (1_000_000, 'm'), (1_000, 'u'), (1, 'n'))
@@ -174,7 +181,9 @@ function grpc_timeout_header_val(timeout::Real)
         ticks = cld(ns, mult)
         ticks <= 99_999_999 && return "$(ticks)$(unit)"
     end
-    return "99999999H"  # unreachable for any realistic timeout
+    # A valid Int64 ns always fits in <=8 hour-digits, so reaching here is a logic error, not input.
+    throw(gRPCServiceCallException(GRPC_INVALID_ARGUMENT,
+        "grpc-timeout $(timeout)s could not be encoded within the 8-digit gRPC limit"))
 end
 
 

@@ -574,8 +574,22 @@ include("gen/test/test_pb.jl")
         end
 
         @testset "edge cases" begin
-            @test grpc_timeout_header_val(0) == "0S"
-            @test grpc_timeout_header_val(-1) == "0n"    # negative is clamped, never signed
+            @test grpc_timeout_header_val(0) == "0S"     # zero is valid: immediate deadline
+        end
+
+        @testset "invalid input throws INVALID_ARGUMENT" begin
+            # A bad timeout is a caller error and must surface as a gRPC INVALID_ARGUMENT exception,
+            # never be silently coerced into a wrong (clamped) deadline on the wire.
+            invalid_arg(f) = try
+                f(); nothing
+            catch e
+                e isa gRPCServiceCallException && e.grpc_status == gRPCClient.GRPC_INVALID_ARGUMENT
+            end
+            @test invalid_arg(() -> grpc_timeout_header_val(-1))          # negative
+            @test invalid_arg(() -> grpc_timeout_header_val(-1e-9))       # negative, sub-nanosecond
+            @test invalid_arg(() -> grpc_timeout_header_val(Inf))         # non-finite
+            @test invalid_arg(() -> grpc_timeout_header_val(NaN))         # non-finite
+            @test invalid_arg(() -> grpc_timeout_header_val(1e12))        # beyond Int64 ns (~292y)
         end
 
         @testset "invariants over a wide sweep" begin
