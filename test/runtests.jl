@@ -575,6 +575,26 @@ include("gen/test/test_pb.jl")
 
         @testset "edge cases" begin
             @test grpc_timeout_header_val(0) == "0S"     # zero is valid: immediate deadline
+            # A strictly positive timeout must never round DOWN to "0S" (already-expired). Values
+            # below half a nanosecond floor at one nanosecond instead of collapsing to zero.
+            @test grpc_timeout_header_val(1e-10) == "1n"
+            @test grpc_timeout_header_val(4e-10) == "1n"
+            @test grpc_timeout_header_val(1e-12) == "1n"
+        end
+
+        @testset "narrow and exotic Real types" begin
+            # The `::Real` signature must handle any numeric type. In particular a narrow float must
+            # not overflow the ns scale factor to Inf and crash with InexactError.
+            @test grpc_timeout_header_val(Float16(1.0)) == "1S"
+            @test grpc_timeout_header_val(Float16(0.0)) == "0S"
+            @test grpc_timeout_header_val(Float32(2.5)) == "2500m"
+            @test grpc_timeout_header_val(1) == "1S"            # Int
+            @test grpc_timeout_header_val(true) == "1S"         # Bool
+            @test grpc_timeout_header_val(big(5)) == "5S"       # BigInt
+            @test grpc_timeout_header_val(1 // 2) == "500m"     # Rational
+            # Well-formed (not necessarily exact) for irrationals and big floats.
+            @test is_wellformed(grpc_timeout_header_val(float(pi)))
+            @test is_wellformed(grpc_timeout_header_val(big"1.5"))
         end
 
         @testset "invalid input throws INVALID_ARGUMENT" begin

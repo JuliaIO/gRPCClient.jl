@@ -165,11 +165,19 @@ function grpc_timeout_header_val(timeout::Real)
     # INVALID_ARGUMENT rather than silently coerce it into a wrong deadline on the wire.
     (isfinite(timeout) && timeout >= 0) || throw(gRPCServiceCallException(GRPC_INVALID_ARGUMENT,
         "grpc-timeout must be a finite, non-negative number of seconds, got $(timeout)"))
-    # Nanoseconds is the finest unit; a timeout beyond what fits in Int64 ns (~292 years) cannot be
-    # represented, so reject it here rather than overflow the conversion below.
-    timeout * 1e9 >= typemax(Int64) && throw(gRPCServiceCallException(GRPC_INVALID_ARGUMENT,
+    # Convert to Float64 before scaling to nanoseconds. A narrow Real (e.g. Float16, whose max is
+    # 65504) would otherwise promote the 1e9 factor into its own type and overflow to Inf, corrupting
+    # the conversion; a too-large finite input (e.g. a huge BigFloat) converts to Inf and is caught
+    # by the range check below. Nanoseconds is the finest unit, so a value beyond what fits in Int64
+    # ns (~292 years) cannot be represented.
+    t = Float64(timeout)
+    t * 1e9 < typemax(Int64) || throw(gRPCServiceCallException(GRPC_INVALID_ARGUMENT,
         "grpc-timeout $(timeout)s is too large to encode as a grpc-timeout header"))
-    ns = round(Int64, timeout * 1_000_000_000)
+    # Round to the nearest nanosecond (absorbs floating-point representation error, so clean inputs
+    # stay exact, e.g. 0.001 -> "1m"). A strictly positive timeout must never collapse to "0S", which
+    # would encode an already-expired deadline, so floor it at a single nanosecond.
+    ns = round(Int64, t * 1e9)
+    ns == 0 && t > 0 && (ns = 1)
     # Coarsest-exact preference: seconds, milliseconds, microseconds, nanoseconds.
     for (mult, unit) in ((1_000_000_000, 'S'), (1_000_000, 'm'), (1_000, 'u'), (1, 'n'))
         q, r = divrem(ns, mult)
