@@ -153,24 +153,28 @@ function header_callback(
     end
 end
 
+# Render a timeout (seconds) as a gRPC `grpc-timeout` header value. Per the gRPC HTTP/2 spec the
+# value is a positive integer of AT MOST 8 digits followed by a unit char (H/M/S/m/u/n). Prefer the
+# coarsest unit from seconds down to nanoseconds that represents the timeout exactly within 8 digits,
+# so common values stay compact ("1S", "500m", "100n"). When no exact representation fits in 8 digits
+# (a fractional multi-second timeout, whose exact form needs more than 8 nanosecond digits, e.g.
+# 29.999999046 -> "29999999046n" which the peer rejects as malformed), round UP to the finest unit
+# that does fit, keeping the header spec-valid and never encoding a shorter timeout than requested.
 function grpc_timeout_header_val(timeout::Real)
-    if round(Int, timeout) == timeout
-        timeout_secs = round(Int64, timeout)
-        return "$(string(timeout_secs))S"
+    timeout < 0 && return "0n"
+    ns = round(Int64, timeout * 1_000_000_000)
+    # Coarsest-exact preference: seconds, milliseconds, microseconds, nanoseconds.
+    for (mult, unit) in ((1_000_000_000, 'S'), (1_000_000, 'm'), (1_000, 'u'), (1, 'n'))
+        q, r = divrem(ns, mult)
+        r == 0 && q <= 99_999_999 && return "$(q)$(unit)"
     end
-    timeout *= 1000
-    if round(Int, timeout) == timeout
-        timeout_millisecs = round(Int64, timeout)
-        return "$(string(timeout_millisecs))m"
+    # No exact unit fits in 8 digits: round up to the finest unit that does (nanoseconds .. hours).
+    for (mult, unit) in ((1, 'n'), (1_000, 'u'), (1_000_000, 'm'), (1_000_000_000, 'S'),
+                         (60_000_000_000, 'M'), (3_600_000_000_000, 'H'))
+        ticks = cld(ns, mult)
+        ticks <= 99_999_999 && return "$(ticks)$(unit)"
     end
-    timeout *= 1000
-    if round(Int, timeout) == timeout
-        timeout_microsecs = round(Int64, timeout)
-        return "$(string(timeout_microsecs))u"
-    end
-    timeout *= 1000
-    timeout_nanosecs = round(Int64, timeout)
-    return "$(string(timeout_nanosecs))n"
+    return "99999999H"  # unreachable for any realistic timeout
 end
 
 
