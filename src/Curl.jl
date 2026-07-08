@@ -153,24 +153,47 @@ function header_callback(
     end
 end
 
+# Render a timeout (seconds) as a gRPC `grpc-timeout` header value. Per the gRPC HTTP/2 spec the
+# value is a positive integer of AT MOST 8 digits followed by a unit char (H/M/S/m/u/n). Prefer the
+# coarsest unit from seconds down to nanoseconds that represents the timeout exactly within 8 digits,
+# so common values stay compact ("1S", "500m", "100n"). When no exact representation fits in 8 digits
+# (a fractional multi-second timeout, whose exact form needs more than 8 nanosecond digits, e.g.
+# 29.999999046 -> "29999999046n" which the peer rejects as malformed), round UP to the finest unit
+# that does fit, keeping the header spec-valid and never encoding a shorter timeout than requested.
 function grpc_timeout_header_val(timeout::Real)
-    if round(Int, timeout) == timeout
-        timeout_secs = round(Int64, timeout)
-        return "$(string(timeout_secs))S"
+    # A negative, non-finite, or unrepresentably-large timeout is a caller error: reject it with
+    # INVALID_ARGUMENT rather than silently coerce it into a wrong deadline on the wire.
+    (isfinite(timeout) && timeout >= 0) || throw(gRPCServiceCallException(GRPC_INVALID_ARGUMENT,
+        "grpc-timeout must be a finite, non-negative number of seconds, got $(timeout)"))
+    # Convert to Float64 before scaling to nanoseconds. A narrow Real (e.g. Float16, whose max is
+    # 65504) would otherwise promote the 1e9 factor into its own type and overflow to Inf, corrupting
+    # the conversion; a too-large finite input (e.g. a huge BigFloat) converts to Inf and is caught
+    # by the range check below. Nanoseconds is the finest unit, so a value beyond what fits in Int64
+    # ns (~292 years) cannot be represented.
+    t = Float64(timeout)
+    t * 1e9 < typemax(Int64) || throw(gRPCServiceCallException(GRPC_INVALID_ARGUMENT,
+        "grpc-timeout $(timeout)s is too large to encode as a grpc-timeout header"))
+    # Round to the nearest nanosecond (absorbs floating-point representation error, so clean inputs
+    # stay exact, e.g. 0.001 -> "1m"). A strictly positive timeout must never collapse to "0S", which
+    # would encode an already-expired deadline, so floor it at a single nanosecond.
+    ns = round(Int64, t * 1e9)
+    ns == 0 && t > 0 && (ns = 1)
+    # Coarsest-exact preference: seconds, milliseconds, microseconds, nanoseconds.
+    # `string(q) * unit` (String * Char) rather than "$(q)$(unit)": interpolating a Char takes a
+    # slower path that allocates ~2.5x more, and this runs once per request.
+    for (mult, unit) in ((1_000_000_000, 'S'), (1_000_000, 'm'), (1_000, 'u'), (1, 'n'))
+        q, r = divrem(ns, mult)
+        r == 0 && q <= 99_999_999 && return string(q) * unit
     end
-    timeout *= 1000
-    if round(Int, timeout) == timeout
-        timeout_millisecs = round(Int64, timeout)
-        return "$(string(timeout_millisecs))m"
+    # No exact unit fits in 8 digits: round up to the finest unit that does (nanoseconds .. hours).
+    for (mult, unit) in ((1, 'n'), (1_000, 'u'), (1_000_000, 'm'), (1_000_000_000, 'S'),
+                         (60_000_000_000, 'M'), (3_600_000_000_000, 'H'))
+        ticks = cld(ns, mult)
+        ticks <= 99_999_999 && return string(ticks) * unit
     end
-    timeout *= 1000
-    if round(Int, timeout) == timeout
-        timeout_microsecs = round(Int64, timeout)
-        return "$(string(timeout_microsecs))u"
-    end
-    timeout *= 1000
-    timeout_nanosecs = round(Int64, timeout)
-    return "$(string(timeout_nanosecs))n"
+    # A valid Int64 ns always fits in <=8 hour-digits, so reaching here is a logic error, not input.
+    throw(gRPCServiceCallException(GRPC_INVALID_ARGUMENT,
+        "grpc-timeout $(timeout)s could not be encoded within the 8-digit gRPC limit"))
 end
 
 

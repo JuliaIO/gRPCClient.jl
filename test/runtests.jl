@@ -518,20 +518,113 @@ include("gen/test/test_pb.jl")
         end
     end
 
-    # @testset "Timeout Header Value Formatting" begin
-    # Test integer seconds
-    @test grpc_timeout_header_val(1) == "1S"
+    @testset "grpc-timeout header value formatting" begin
+        # Per the gRPC HTTP/2 spec, a grpc-timeout value is a positive integer of at most 8 digits
+        # followed by a unit char: H (hour), M (minute), S (second), m (ms), u (us), n (ns).
+        _UNIT_NS = Dict('H' => 3_600_000_000_000, 'M' => 60_000_000_000, 'S' => 1_000_000_000,
+                        'm' => 1_000_000, 'u' => 1_000, 'n' => 1)
+        # Decode a header value back to seconds so we can check it never encodes a shorter timeout.
+        decode_s(hv) = parse(Int64, hv[1:end-1]) * _UNIT_NS[hv[end]] / 1e9
+        # Assert the value obeys the spec: 1-8 ASCII digits then a known unit char.
+        function is_wellformed(hv)
+            length(hv) >= 2 || return false
+            haskey(_UNIT_NS, hv[end]) || return false
+            digits = hv[1:end-1]
+            1 <= length(digits) <= 8 && all(isdigit, digits)
+        end
 
-    # Test milliseconds
-    @test grpc_timeout_header_val(0.001) == "1m"
+        @testset "exact whole units" begin
+            # Whole seconds render as S.
+            @test grpc_timeout_header_val(1) == "1S"
+            @test grpc_timeout_header_val(5) == "5S"
+            @test grpc_timeout_header_val(60) == "60S"      # S is preferred over M
+            @test grpc_timeout_header_val(3600) == "3600S"  # S is preferred over H
+            # Whole milliseconds render as m.
+            @test grpc_timeout_header_val(0.001) == "1m"
+            @test grpc_timeout_header_val(0.1) == "100m"
+            # Whole microseconds render as u.
+            @test grpc_timeout_header_val(0.000001) == "1u"
+            @test grpc_timeout_header_val(0.0005) == "500u"
+            # Whole nanoseconds render as n.
+            @test grpc_timeout_header_val(0.0000001) == "100n"
+            @test grpc_timeout_header_val(1e-9) == "1n"
+        end
 
-    # Test microseconds
-    @test grpc_timeout_header_val(0.000001) == "1u"
+        @testset "coarsest exact unit is preferred" begin
+            # A value expressible in several units picks the coarsest (fewest ticks), not the finest.
+            @test grpc_timeout_header_val(1) == "1S"       # not "1000m"
+            @test grpc_timeout_header_val(0.5) == "500m"   # not "500000u"
+            @test grpc_timeout_header_val(2.5) == "2500m"  # not "2500000u"
+        end
 
-    # Test nanoseconds
-    @test grpc_timeout_header_val(0.0000001) == "100n"
+        @testset "8-digit boundary is exact" begin
+            # The largest value representable in each unit within 8 digits stays in that unit.
+            @test grpc_timeout_header_val(99_999_999) == "99999999S"        # 99999999 whole seconds
+            @test grpc_timeout_header_val(0.099999999) == "99999999n"       # 99999999 ns
+        end
 
-    # end
+        @testset "overflow rounds up to the finest fitting unit" begin
+            # A fractional multi-second timeout's exact form needs >8 nanosecond digits, which the
+            # peer rejects as malformed. It must round UP to the finest unit that fits in 8 digits.
+            @test grpc_timeout_header_val(29.999999046) == "30000000u"  # was the 11-digit "29999999046n" bug
+            @test grpc_timeout_header_val(10.0000001) == "10000001u"
+            @test grpc_timeout_header_val(123.4567) == "123457m"
+            # Absurdly large whole-second value overflows S and steps up to minutes.
+            @test grpc_timeout_header_val(100_000_000) == "1666667M"
+        end
+
+        @testset "edge cases" begin
+            @test grpc_timeout_header_val(0) == "0S"     # zero is valid: immediate deadline
+            # A strictly positive timeout must never round DOWN to "0S" (already-expired). Values
+            # below half a nanosecond floor at one nanosecond instead of collapsing to zero.
+            @test grpc_timeout_header_val(1e-10) == "1n"
+            @test grpc_timeout_header_val(4e-10) == "1n"
+            @test grpc_timeout_header_val(1e-12) == "1n"
+        end
+
+        @testset "narrow and exotic Real types" begin
+            # The `::Real` signature must handle any numeric type. In particular a narrow float must
+            # not overflow the ns scale factor to Inf and crash with InexactError.
+            @test grpc_timeout_header_val(Float16(1.0)) == "1S"
+            @test grpc_timeout_header_val(Float16(0.0)) == "0S"
+            @test grpc_timeout_header_val(Float32(2.5)) == "2500m"
+            @test grpc_timeout_header_val(1) == "1S"            # Int
+            @test grpc_timeout_header_val(true) == "1S"         # Bool
+            @test grpc_timeout_header_val(big(5)) == "5S"       # BigInt
+            @test grpc_timeout_header_val(1 // 2) == "500m"     # Rational
+            # Well-formed (not necessarily exact) for irrationals and big floats.
+            @test is_wellformed(grpc_timeout_header_val(float(pi)))
+            @test is_wellformed(grpc_timeout_header_val(big"1.5"))
+        end
+
+        @testset "invalid input throws INVALID_ARGUMENT" begin
+            # A bad timeout is a caller error and must surface as a gRPC INVALID_ARGUMENT exception,
+            # never be silently coerced into a wrong (clamped) deadline on the wire.
+            invalid_arg(f) = try
+                f(); nothing
+            catch e
+                e isa gRPCServiceCallException && e.grpc_status == gRPCClient.GRPC_INVALID_ARGUMENT
+            end
+            @test invalid_arg(() -> grpc_timeout_header_val(-1))          # negative
+            @test invalid_arg(() -> grpc_timeout_header_val(-1e-9))       # negative, sub-nanosecond
+            @test invalid_arg(() -> grpc_timeout_header_val(Inf))         # non-finite
+            @test invalid_arg(() -> grpc_timeout_header_val(NaN))         # non-finite
+            @test invalid_arg(() -> grpc_timeout_header_val(1e12))        # beyond Int64 ns (~292y)
+        end
+
+        @testset "invariants over a wide sweep" begin
+            # For every timeout, the header must be well-formed (<=8 digits + valid unit) and must
+            # never encode a SHORTER timeout than requested (rounding is always up).
+            vals = Float64[0, 1e-9, 5e-9, 1e-7, 0.0005, 0.05, 0.099999999, 0.1, 0.5, 1, 2.5,
+                           9.9999999, 10.0000001, 29.999999046, 60, 90.0001, 123.4567, 3600,
+                           99_999.9994, 1e6 + 0.5, 99_999_999]
+            for t in vals
+                hv = grpc_timeout_header_val(t)
+                @test is_wellformed(hv)
+                @test decode_s(hv) >= t - 1e-9
+            end
+        end
+    end
 
     @testset "Max Message Size" begin
         # Create a client with much more restictive max message lengths
