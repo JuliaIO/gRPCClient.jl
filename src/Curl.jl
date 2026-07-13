@@ -196,6 +196,39 @@ function grpc_timeout_header_val(timeout::Real)
         "grpc-timeout $(timeout)s could not be encoded within the 8-digit gRPC limit"))
 end
 
+@kwdef struct gRPCConnectionOptions
+    secure::Bool = false
+    deadline::Float64 = 10
+    keepalive::Float64 = 60
+    max_send_message_length::Int = 4 * 1024 * 1024
+    max_recieve_message_length::Int = 4 * 1024 * 1024
+    # Optional bearer token attached to every request as an
+    # `authorization: Bearer <token>` header. `nothing` sends no header.
+	# Note that this this is equivalent to adding "authorization" => "Bearer $token"
+	# to metadata
+    token::Union{Nothing, String} = nothing
+    metadata::Union{Nothing, Dict{String, String}} = nothing
+end
+
+# Creates a new options object (if necessary) where some fields are overridden 
+# based on overrides
+@generated function _merge_options(options::gRPCConnectionOptions, overrides::AbstractDict)
+    exprs = []
+    for fn in fieldnames(gRPCConnectionOptions)
+        push!(exprs, quote
+            get(overrides, $(QuoteNode(fn)), options.$fn) 
+        end)
+    end
+
+    # if no argument is overriden, just return options. 
+    # Otherwise, create a new object with some fields overridden
+    return quote
+        isempty(overrides) && return options
+        gRPCConnectionOptions(
+            $(exprs...)
+        )
+    end
+end
 
 mutable struct gRPCRequest
     # CURL multi lock for exclusive access to the easy handle after its added to the multi
@@ -256,13 +289,13 @@ mutable struct gRPCRequest
         request::IOBuffer,
         response::IOBuffer,
         request_c::Union{Channel{IOBuffer},NoChannel},
-        response_c::Union{Channel{IOBuffer},NoChannel};
-        deadline = 10,
-        keepalive = 60,
-        max_send_message_length = 4 * 1024 * 1024,
-        max_recieve_message_length = 4 * 1024 * 1024,
-        token = nothing,
+        response_c::Union{Channel{IOBuffer},NoChannel},
+        options::gRPCConnectionOptions;
+        kws...
     )
+
+        options = _merge_options(options, kws)
+
         !grpc.running && throw(
             gRPCServiceCallException(
                 GRPC_FAILED_PRECONDITION,
@@ -281,11 +314,11 @@ mutable struct gRPCRequest
         # curl_easy_setopt(easy_handle, CURLOPT_VERBOSE, UInt32(1))
 
         curl_easy_setopt(easy_handle, CURLOPT_URL, url)
-        curl_easy_setopt(easy_handle, CURLOPT_TIMEOUT_MS, Clong(ceil(1000 * deadline)))
+        curl_easy_setopt(easy_handle, CURLOPT_TIMEOUT_MS, Clong(ceil(1000 * options.deadline)))
         curl_easy_setopt(
             easy_handle,
             CURLOPT_CONNECTTIMEOUT_MS,
-            Clong(ceil(1000 * deadline)),
+            Clong(ceil(1000 * options.deadline)),
         )
         curl_easy_setopt(easy_handle, CURLOPT_PIPEWAIT, Clong(1))
         curl_easy_setopt(easy_handle, CURLOPT_POST, Clong(1))
@@ -307,15 +340,20 @@ mutable struct gRPCRequest
         headers = curl_slist_append(headers, "Content-Length:")
         headers = curl_slist_append(headers, "te: trailers")
         headers =
-            curl_slist_append(headers, "grpc-timeout: $(grpc_timeout_header_val(deadline))")
-        if !isnothing(token)
-            headers = curl_slist_append(headers, "authorization: Bearer $(token)")
+            curl_slist_append(headers, "grpc-timeout: $(grpc_timeout_header_val(options.deadline))")
+        if !isnothing(options.token)
+            headers = curl_slist_append(headers, "authorization: Bearer $(options.token)")
+        end
+        if !isnothing(options.metadata)
+            for k in (collect(keys(options.metadata)))
+                headers = curl_slist_append(headers, "$k: $(options.metadata[k])")
+            end
         end
         curl_easy_setopt(easy_handle, CURLOPT_HTTPHEADER, headers)
 
         curl_easy_setopt(easy_handle, CURLOPT_TCP_KEEPALIVE, Clong(1))
-        curl_easy_setopt(easy_handle, CURLOPT_TCP_KEEPINTVL, keepalive)
-        curl_easy_setopt(easy_handle, CURLOPT_TCP_KEEPIDLE, keepalive)
+        curl_easy_setopt(easy_handle, CURLOPT_TCP_KEEPINTVL, options.keepalive)
+        curl_easy_setopt(easy_handle, CURLOPT_TCP_KEEPIDLE, options.keepalive)
 
         req = new(
             grpc.lock,
@@ -331,8 +369,8 @@ mutable struct gRPCRequest
             Event(),
             UInt32(0),
             zeros(UInt8, CURL_ERROR_SIZE),
-            max_send_message_length,
-            max_recieve_message_length,
+            options.max_send_message_length,
+            options.max_recieve_message_length,
             nothing,
             false,
             false,

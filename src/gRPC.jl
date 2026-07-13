@@ -45,38 +45,21 @@ struct gRPCServiceClient{TRequest,SRequest,TResponse,SResponse}
     host::String
     port::Int64
     path::String
-    secure::Bool
-    deadline::Float64
-    keepalive::Float64
-    max_send_message_length::Int64
-    max_recieve_message_length::Int64
-    # Optional bearer token attached to every request as an
-    # `authorization: Bearer <token>` header. `nothing` sends no header.
-    token::Union{Nothing,String}
+    options::gRPCConnectionOptions
 
     function gRPCServiceClient{TRequest,SRequest,TResponse,SResponse}(
         host,
         port,
         path;
-        secure = false,
         grpc = grpc_global_handle(),
-        deadline = 10,
-        keepalive = 60,
-        max_send_message_length = 4 * 1024 * 1024,
-        max_recieve_message_length = 4 * 1024 * 1024,
-        token = nothing,
+        kws...
     ) where {TRequest<:Any,SRequest,TResponse<:Any,SResponse}
         new(
             grpc,
             host,
             port,
             path,
-            secure,
-            deadline,
-            keepalive,
-            max_send_message_length,
-            max_recieve_message_length,
-            token,
+            gRPCConnectionOptions(; kws...)
         )
     end
 
@@ -87,7 +70,7 @@ end
 _spawn(f, client::gRPCServiceClient) = _spawn(f, client.grpc)
 
 function url(client::gRPCServiceClient)
-    protocol = if client.secure
+    protocol = if client.options.secure
         "https"
     else
         "http"

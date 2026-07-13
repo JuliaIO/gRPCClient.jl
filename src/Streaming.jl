@@ -139,10 +139,7 @@ test_response = grpc_async_await(client, req)
 function grpc_async_request(
     client::gRPCServiceClient{TRequest,true,TResponse,false},
     request::Channel{TRequest};
-    deadline = client.deadline,
-    keepalive = client.keepalive,
-    max_send_message_length = client.max_send_message_length,
-    max_recieve_message_length = client.max_recieve_message_length,
+    kws...
 ) where {TRequest<:Any,TResponse<:Any}
 
     req = gRPCRequest(
@@ -151,12 +148,8 @@ function grpc_async_request(
         IOBuffer(),
         IOBuffer(),
         Channel{IOBuffer}(16),
-        NOCHANNEL;
-        deadline = deadline,
-        keepalive = keepalive,
-        max_send_message_length = max_send_message_length,
-        max_recieve_message_length = max_recieve_message_length,
-        token = client.token,
+        NOCHANNEL,
+        _merge_options(client.options, kws)
     )
 
     request_task = _spawn(() -> grpc_async_stream_request(req, request), client)
@@ -198,15 +191,11 @@ function grpc_async_request(
     client::gRPCServiceClient{TRequest,false,TResponse,true},
     request::TRequest,
     response::Channel{TResponse};
-    deadline = client.deadline,
-    keepalive = client.keepalive,
-    max_send_message_length = client.max_send_message_length,
-    max_recieve_message_length = client.max_recieve_message_length,
+    kws...
 ) where {TRequest<:Any,TResponse<:Any}
-
     request_buf = grpc_encode_request_iobuffer(
         request;
-        max_send_message_length = client.max_send_message_length,
+        max_send_message_length = client.options.max_send_message_length,
     )
     seekstart(request_buf)
 
@@ -216,12 +205,8 @@ function grpc_async_request(
         request_buf,
         IOBuffer(),
         NOCHANNEL,
-        Channel{IOBuffer}(16);
-        deadline = deadline,
-        keepalive = keepalive,
-        max_send_message_length = max_send_message_length,
-        max_recieve_message_length = max_recieve_message_length,
-        token = client.token,
+        Channel{IOBuffer}(16),
+        _merge_options(client.options, kws)
     )
 
     response_task = _spawn(() -> grpc_async_stream_response(req, response), client)
@@ -269,10 +254,7 @@ function grpc_async_request(
     client::gRPCServiceClient{TRequest,true,TResponse,true},
     request::Channel{TRequest},
     response::Channel{TResponse};
-    deadline = client.deadline,
-    keepalive = client.keepalive,
-    max_send_message_length = client.max_send_message_length,
-    max_recieve_message_length = client.max_recieve_message_length,
+    kws...
 ) where {TRequest<:Any,TResponse<:Any}
 
     req = gRPCRequest(
@@ -281,12 +263,8 @@ function grpc_async_request(
         IOBuffer(),
         IOBuffer(),
         Channel{IOBuffer}(16),
-        Channel{IOBuffer}(16);
-        deadline = deadline,
-        keepalive = keepalive,
-        max_send_message_length = max_send_message_length,
-        max_recieve_message_length = max_recieve_message_length,
-        token = client.token,
+        Channel{IOBuffer}(16),
+        _merge_options(client.options, kws)
     )
 
     request_task = _spawn(() -> grpc_async_stream_request(req, request), client)
