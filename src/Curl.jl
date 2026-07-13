@@ -224,6 +224,10 @@ end
     # Otherwise, create a new object with some fields overridden
     return quote
         isempty(overrides) && return options
+        bad = setdiff(keys(overrides), fieldnames(gRPCConnectionOptions))
+        if !isempty(bad)
+            throw(ArgumentError("The following are not valid fields of gRPCConnectionOptions: $(join(string.(bad), ", "))"))
+        end
         gRPCConnectionOptions(
             $(exprs...)
         )
