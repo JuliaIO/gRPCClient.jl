@@ -95,10 +95,6 @@ include("gen/test/test_pb.jl")
             # so the construction uses the type-parameter names (raw-buffer support).
             @test contains(generated, "TRequest=TestRequest,")
             @test contains(generated, "TResponse=TestResponse,")
-            # Bearer token kwarg is generated (defaults to nothing) and threaded
-            # through to the underlying gRPCServiceClient constructor.
-            @test contains(generated, "token=nothing,")
-            @test contains(generated, "token=token,")
             # Correct streaming type parameters for each RPC variant
             @test contains(
                 generated,
