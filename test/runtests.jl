@@ -652,7 +652,7 @@ include("gen/test/test_pb.jl")
             _TEST_PORT;
             token = _TEST_BEARER_TOKEN,
         )
-        @test client.token == _TEST_BEARER_TOKEN
+        @test client.options.token == _TEST_BEARER_TOKEN
 
         response = grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
         @test length(response.data) == 1
@@ -676,7 +676,7 @@ include("gen/test/test_pb.jl")
         # The default client sends no `authorization` header, so the server's
         # auth check is bypassed and the request succeeds as before.
         default_client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
-        @test isnothing(default_client.token)
+        @test isnothing(default_client.options.token)
         response = grpc_sync_request(default_client, TestRequest(1, zeros(UInt64, 1)))
         @test length(response.data) == 1
     end

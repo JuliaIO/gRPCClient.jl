@@ -103,7 +103,7 @@ function grpc_async_request(
 
     request_buf = grpc_encode_request_iobuffer(
         request;
-        max_send_message_length = client.max_send_message_length,
+        max_send_message_length = client.options.max_send_message_length,
     )
     seekstart(request_buf)
 
