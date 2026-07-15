@@ -977,7 +977,20 @@ mutable struct gRPCCURL
             sticky,
         )
 
-        finalizer((x) -> close(x), grpc)
+        # Finalizers may not block on locks or yield, and close(x) does both (grpc.lock,
+        # watchers_lock, sem_cond, closing channels and timers), so delegate the close
+        # to a freshly spawned task per the Julia manual's finalizer guidance. In
+        # practice this backstop only ever runs for handles that were already closed or
+        # never opened: open(grpc) calls preserve_handle(grpc), so an open handle is
+        # never garbage collected. An unreferenced handle cannot be reopened, so the
+        # already-closed check needs no lock, and it avoids spawning a task from the
+        # finalizer of every already-shutdown handle.
+        finalizer(grpc) do x
+            x.multi == Ptr{Cvoid}(0) && return
+            t = _spawn(() -> close(x); sticky = x.sticky)
+            @isdefined(errormonitor) && errormonitor(t)
+            nothing
+        end
 
         # This is used for the global const gRPCCURL handle
         # grpc_init() is called automatically via __init__() when the package is loaded
