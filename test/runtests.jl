@@ -2,9 +2,11 @@ using Test
 using ProtoBuf
 using gRPCClient
 using Base.Threads
+using Sockets
 
 # Import the timeout header formatting function for testing
-import gRPCClient: grpc_timeout_header_val, GRPC_DEADLINE_EXCEEDED, GRPC_UNAUTHENTICATED
+import gRPCClient:
+    grpc_timeout_header_val, GRPC_DEADLINE_EXCEEDED, GRPC_UNAUTHENTICATED, GRPC_CANCELLED
 
 # The bearer token the test Go server accepts (mirrors expectedBearerToken in
 # test/go/server.go). A request carrying an `authorization` header must present
@@ -355,6 +357,8 @@ include("gen/test/test_pb.jl")
             )
             request_c = Channel{TestRequest}(1)
 
+            # Even with a 1ms deadline submission never throws; the failure is
+            # raised by the await
             request = grpc_async_request(client, request_c)
             sleep(1.0)
 
@@ -727,6 +731,184 @@ include("gen/test/test_pb.jl")
         @test !grpc_handle.running
         @test isempty(grpc_handle.requests)
         @test isempty(grpc_handle.watchers)
+    end
+
+    @testset "Deadline watchdog and grpc_cancel on a never-ready connection" begin
+        # A server that accepts TCP but never completes the HTTP/2 handshake. libcurl
+        # parks every handle after the first behind CURLOPT_PIPEWAIT waiting for the
+        # connection to become multiplexable, and parked handles never have their
+        # CURLOPT_TIMEOUT_MS processed, so without the client-side deadline watchdog
+        # these requests wedge forever and leak all max_streams slots.
+        grpc_handle = gRPCCURL()
+        grpc_init(grpc_handle)
+
+        silent_server = listen(Sockets.localhost, 0)
+        silent_port = Int(getsockname(silent_server)[2])
+        accepted = Sockets.TCPSocket[]
+        accept_task = @async while true
+            try
+                push!(accepted, accept(silent_server))
+            catch
+                break
+            end
+        end
+
+        deadline = 1.0
+        client = TestService_TestRPC_Client(
+            "127.0.0.1",
+            silent_port;
+            grpc = grpc_handle,
+            deadline = deadline,
+        )
+
+        # Exceed max_streams so later requests also exercise semaphore hand-off
+        N = gRPCClient.GRPC_MAX_STREAMS + 4
+
+        t0 = time()
+        tasks = [
+            @spawn begin
+                try
+                    request = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+                    grpc_async_await(client, request)
+                    nothing
+                catch ex
+                    ex
+                end
+            end for _ = 1:N
+        ]
+        results = fetch.(tasks)
+        elapsed = time() - t0
+
+        # Every request resolved (no wedge) with DEADLINE_EXCEEDED at ~deadline per batch
+        @test all(
+            ex ->
+                isa(ex, gRPCServiceCallException) &&
+                    ex.grpc_status == GRPC_DEADLINE_EXCEEDED,
+            results,
+        )
+        # Two semaphore batches, each bounded by deadline + watchdog grace; generous margin
+        @test elapsed < 6 * deadline
+
+        # Explicit cancellation of an in-flight (parked) request
+        request = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+        @test grpc_cancel(request)
+        try
+            grpc_async_await(client, request)
+            @test false
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+            @test ex.grpc_status == GRPC_CANCELLED
+        end
+        # Cancelling an already-completed request is a no-op
+        @test !grpc_cancel(request)
+
+        close(silent_server)
+        foreach(close, accepted)
+        grpc_shutdown(grpc_handle)
+        @test isempty(grpc_handle.requests)
+    end
+
+    @testset "Deadline covers the max_streams queue wait" begin
+        # One slot, held by a request against a never-ready connection. A second request
+        # with a shorter deadline never gets the slot and must fail at ITS deadline,
+        # not once the occupier finally releases the slot.
+        grpc_handle = gRPCCURL(max_streams = 1)
+
+        silent_server = listen(Sockets.localhost, 0)
+        silent_port = Int(getsockname(silent_server)[2])
+        accepted = Sockets.TCPSocket[]
+        @async while true
+            try
+                push!(accepted, accept(silent_server))
+            catch
+                break
+            end
+        end
+
+        occupier_client = TestService_TestRPC_Client(
+            "127.0.0.1",
+            silent_port;
+            grpc = grpc_handle,
+            deadline = 3.0,
+        )
+        occupier = grpc_async_request(occupier_client, TestRequest(1, zeros(UInt64, 1)))
+
+        queued_client = TestService_TestRPC_Client(
+            "127.0.0.1",
+            silent_port;
+            grpc = grpc_handle,
+            deadline = 0.5,
+        )
+        t0 = time()
+        # Submission never throws, even for a request that expires while queued; the
+        # failure is raised by the await
+        queued = grpc_async_request(queued_client, TestRequest(1, zeros(UInt64, 1)))
+        try
+            grpc_async_await(queued_client, queued)
+            @test false
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+            @test ex.grpc_status == GRPC_DEADLINE_EXCEEDED
+        end
+        # Resolved around its own deadline (plus watchdog grace), well before the
+        # occupier frees the slot at ~3s
+        @test time() - t0 < 2.0
+
+        # The occupier still resolves at its own deadline
+        try
+            grpc_async_await(occupier_client, occupier)
+            @test false
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+            @test ex.grpc_status == GRPC_DEADLINE_EXCEEDED
+        end
+
+        close(silent_server)
+        foreach(close, accepted)
+        grpc_shutdown(grpc_handle)
+    end
+
+    @testset "Shutdown unblocks queued requests" begin
+        grpc_handle = gRPCCURL(max_streams = 1)
+
+        silent_server = listen(Sockets.localhost, 0)
+        silent_port = Int(getsockname(silent_server)[2])
+        accepted = Sockets.TCPSocket[]
+        @async while true
+            try
+                push!(accepted, accept(silent_server))
+            catch
+                break
+            end
+        end
+
+        client = TestService_TestRPC_Client(
+            "127.0.0.1",
+            silent_port;
+            grpc = grpc_handle,
+            deadline = 10.0,
+        )
+        # Hold the only slot, then queue a second request behind it
+        grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+        queued = @spawn try
+            req = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+            grpc_async_await(client, req)
+            nothing
+        catch ex
+            ex
+        end
+        sleep(0.5)
+        @test !istaskdone(queued)
+
+        t0 = time()
+        grpc_shutdown(grpc_handle)
+        ex = fetch(queued)
+        # The queued request was unblocked by the shutdown, well before its deadline
+        @test time() - t0 < 2.0
+        @test isa(ex, gRPCServiceCallException)
+
+        close(silent_server)
+        foreach(close, accepted)
     end
 
     grpc_shutdown()
