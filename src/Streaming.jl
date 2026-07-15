@@ -32,10 +32,16 @@ function grpc_async_stream_request(
             catch ex
                 rethrow(ex)
             finally
-                if encode_buf.size > 0
+                # Once the request has completed (cancelled, deadline exceeded, done)
+                # the easy handle is gone and curl_done_reading will never be notified
+                # by curl again, so there is nothing left to hand off. cleanup_request
+                # notifies curl_done_reading, so a wait racing the completion still
+                # wakes, and the completed re-check under req.lock below (the lock
+                # cleanup runs under) keeps curl_easy_pause off the freed easy handle.
+                if encode_buf.size > 0 && !req.completed
                     seekstart(encode_buf)
 
-                    # Wait for libCURL to not be reading anymore 
+                    # Wait for libCURL to not be reading anymore
                     wait(req.curl_done_reading)
 
                     # Write all of the encoded protobufs to the request read buffer
@@ -46,7 +52,7 @@ function grpc_async_stream_request(
 
                     # Tell curl we have more to send
                     lock(req.lock) do
-                        curl_easy_pause(req.easy, CURLPAUSE_CONT)
+                        req.completed || curl_easy_pause(req.easy, CURLPAUSE_CONT)
                     end
 
                     # Reset the encode buffer
@@ -58,13 +64,20 @@ function grpc_async_stream_request(
         end
     catch ex
         if isa(ex, InvalidStateException)
-            # Wait for any request data to be flushed by curl
-            wait(req.curl_done_reading)
+            # End of stream. Skip the handoff if the request already completed: the
+            # easy handle is gone and curl will never signal curl_done_reading again
+            # (cleanup_request notifies it, so a wait racing the completion still
+            # wakes; the re-check under req.lock keeps curl_easy_pause off the freed
+            # easy handle).
+            if !req.completed
+                # Wait for any request data to be flushed by curl
+                wait(req.curl_done_reading)
 
-            # Trigger a "return 0" in read_callback so curl ends the current request
-            reset(req.curl_done_reading)
-            lock(req.lock) do
-                curl_easy_pause(req.easy, CURLPAUSE_CONT)
+                # Trigger a "return 0" in read_callback so curl ends the current request
+                reset(req.curl_done_reading)
+                lock(req.lock) do
+                    req.completed || curl_easy_pause(req.easy, CURLPAUSE_CONT)
+                end
             end
 
         elseif isa(ex, gRPCServiceCallException)
