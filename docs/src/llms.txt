@@ -190,7 +190,7 @@ All generated constructors share the same keyword parameters:
 |----------------------------|-----------------|-------------|
 | `secure`                   | `false`         | `true` = HTTPS/gRPCS, `false` = HTTP/gRPC |
 | `grpc`                     | global handle   | `gRPCCURL` instance |
-| `deadline`                 | `10`            | Timeout in seconds covering the whole call, including client-side queueing for a `max_streams` slot; the server's `grpc-timeout` header gets the post-queue remainder. Raises `gRPCServiceCallException(GRPC_DEADLINE_EXCEEDED)` |
+| `deadline`                 | `10`            | Timeout in seconds covering the whole call, including client-side queueing for a `max_streams` slot; the server's `grpc-timeout` header gets the post-queue remainder. Raises `gRPCServiceCallException(GRPC_DEADLINE_EXCEEDED)`. `Inf` = no deadline (no header sent; end the call with `grpc_cancel`) |
 | `keepalive`                | `60`            | TCP keepalive interval (seconds); sets both idle and probe interval |
 | `max_send_message_length`  | `4*1024*1024`   | Max bytes per outgoing message |
 | `max_recieve_message_length`| `4*1024*1024`  | Max bytes per incoming message (note: typo in API — `recieve`) |
@@ -232,6 +232,11 @@ too. `grpc_async_request` never raises for request failures: a request that
 expires while queued (or hits a shut-down handle) is returned as an
 already-completed `gRPCRequest` and the exception is thrown by
 `grpc_async_await`.
+
+For explicitly-managed lifetimes (e.g. long-lived streams), `deadline = Inf`
+disables all timeouts (client-side and the `grpc-timeout` header); end the
+call with `grpc_cancel`. After cancelling a client/bidi stream, close your
+request channel to release its pump task.
 
 ### Streaming RPC (Julia >= 1.12 required)
 
