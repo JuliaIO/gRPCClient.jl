@@ -1,10 +1,24 @@
 name: CI
 
+# Only run the test matrix when something that affects the tests changed:
+# package source, the package manifest/compat, the test suite (including the
+# Go test server under test/go), or this workflow itself. Docs, README, and
+# utils changes skip CI.
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'Project.toml'
+      - '.github/workflows/ci.yml'
   pull_request:
     branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'Project.toml'
+      - '.github/workflows/ci.yml'
 
 env:
   GRPC_TEST_SERVER_HOST: "localhost"
