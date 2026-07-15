@@ -190,7 +190,7 @@ All generated constructors share the same keyword parameters:
 |----------------------------|-----------------|-------------|
 | `secure`                   | `false`         | `true` = HTTPS/gRPCS, `false` = HTTP/gRPC |
 | `grpc`                     | global handle   | `gRPCCURL` instance |
-| `deadline`                 | `10`            | Timeout in seconds; raises `gRPCServiceCallException(GRPC_DEADLINE_EXCEEDED)` |
+| `deadline`                 | `10`            | Timeout in seconds covering the whole call, including client-side queueing for a `max_streams` slot; the server's `grpc-timeout` header gets the post-queue remainder. Raises `gRPCServiceCallException(GRPC_DEADLINE_EXCEEDED)` |
 | `keepalive`                | `60`            | TCP keepalive interval (seconds); sets both idle and probe interval |
 | `max_send_message_length`  | `4*1024*1024`   | Max bytes per outgoing message |
 | `max_recieve_message_length`| `4*1024*1024`  | Max bytes per incoming message (note: typo in API — `recieve`) |
@@ -214,6 +214,24 @@ response = cr.response   # cr.index == the index passed in
 ```
 
 `gRPCAsyncChannelResponse` fields: `.response`, `.ex` (exception or `nothing`), `.index`.
+
+### Cancellation
+
+```julia
+grpc_cancel(req)      # abort an in-flight gRPCRequest; awaiters throw CANCELLED
+grpc_cancel(req, ex)  # same, but awaiters throw the provided exception
+```
+
+Returns `true` if this call cancelled the request, `false` if it had already
+completed (no-op). Deadlines are additionally enforced by a client-side
+watchdog, so requests resolve with `GRPC_DEADLINE_EXCEEDED` even when libcurl
+stalls them (e.g. handles parked on `CURLOPT_PIPEWAIT` behind a connection
+that never finishes the HTTP/2 handshake never have their timeouts driven by
+libcurl). The deadline covers client-side queueing for a `max_streams` slot
+too. `grpc_async_request` never raises for request failures: a request that
+expires while queued (or hits a shut-down handle) is returned as an
+already-completed `gRPCRequest` and the exception is thrown by
+`grpc_async_await`.
 
 ### Streaming RPC (Julia >= 1.12 required)
 
