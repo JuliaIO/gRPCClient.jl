@@ -259,10 +259,30 @@ include("gen/test/test_pb.jl")
 
     @static if VERSION >= v"1.12"
 
+        # The streaming stress tests move ~1000 messages (or ~160MB) through a single
+        # call. On a slow CI runner that can take longer than the default 10s deadline,
+        # and the call's own DEADLINE_EXCEEDED then closes the stream mid-test, so give
+        # them a deadline generous enough to only trip when something is truly wedged.
+        stream_test_deadline = 300.0
+
+        # take! that, when the stream has died and closed the channel, surfaces the
+        # request's real failure (DEADLINE_EXCEEDED, a server error, ...) through
+        # grpc_async_await instead of erroring with a bare InvalidStateException.
+        take_or_diagnose = (req, channel) -> try
+            take!(channel)
+        catch
+            grpc_async_await(req)
+            rethrow()
+        end
+
         @testset "Response Streaming" begin
             N = 1000
 
-            client = TestService_TestServerStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+            client = TestService_TestServerStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = stream_test_deadline,
+            )
 
             response_c = Channel{TestResponse}(N)
 
@@ -270,7 +290,7 @@ include("gen/test/test_pb.jl")
 
             # We should get back N messages that end with their length
             for i = 1:N
-                response = take!(response_c)
+                response = take_or_diagnose(req, response_c)
                 @test length(response.data) == i
                 @test last(response.data) == i
             end
@@ -280,7 +300,11 @@ include("gen/test/test_pb.jl")
 
         @testset "Request Streaming" begin
             N = 1000
-            client = TestService_TestClientStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+            client = TestService_TestClientStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = stream_test_deadline,
+            )
             request_c = Channel{TestRequest}(N)
 
             request = grpc_async_request(client, request_c)
@@ -300,7 +324,11 @@ include("gen/test/test_pb.jl")
 
         @testset "Bidirectional Streaming" begin
             N = 1000
-            client = TestService_TestBidirectionalStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+            client = TestService_TestBidirectionalStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = stream_test_deadline,
+            )
 
             request_c = Channel{TestRequest}(N)
             response_c = Channel{TestResponse}(N)
@@ -312,7 +340,7 @@ include("gen/test/test_pb.jl")
             end
 
             for i = 1:N
-                response = take!(response_c)
+                response = take_or_diagnose(req, response_c)
                 @test length(response.data) == i
                 @test last(response.data) == i
             end
@@ -325,7 +353,11 @@ include("gen/test/test_pb.jl")
         @testset "Response Streaming hang after END_STREAM" begin
             N = 10
 
-            client = TestService_TestServerStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+            client = TestService_TestServerStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = stream_test_deadline,
+            )
 
             response_c = Channel{TestResponse}(N)
 
@@ -370,7 +402,11 @@ include("gen/test/test_pb.jl")
 
         @testset "Response Streaming - Small Messages" begin
             N = 1000
-            client = TestService_TestServerStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+            client = TestService_TestServerStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = stream_test_deadline,
+            )
 
             response_c = Channel{TestResponse}(N)
 
@@ -378,7 +414,7 @@ include("gen/test/test_pb.jl")
 
             # We should get back N small messages
             for i = 1:N
-                response = take!(response_c)
+                response = take_or_diagnose(req, response_c)
                 @test length(response.data) >= 1
             end
 
@@ -387,7 +423,11 @@ include("gen/test/test_pb.jl")
 
         @testset "Request Streaming - Large Payloads" begin
             N = 100
-            client = TestService_TestClientStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+            client = TestService_TestClientStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = stream_test_deadline,
+            )
             request_c = Channel{TestRequest}(N)
 
             request = grpc_async_request(client, request_c)
