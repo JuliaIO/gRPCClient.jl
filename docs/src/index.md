@@ -106,7 +106,7 @@ TestService_TestRPC_Client(
 - **`port`**: The port number the gRPC server is listening on (e.g., `50051`)
 - **`secure`**: A `Bool` that controls whether HTTPS/gRPCS (when `true`) or HTTP/gRPC (when `false`) is used for the connection. Default: `false`
 - **`grpc`**: The global gRPC handle obtained from `grpc_global_handle()`. This manages the underlying libcurl multi-handle for HTTP/2 multiplexing. Default: `grpc_global_handle()`
-- **`deadline`**: The gRPC deadline in seconds. If a request takes longer than this time limit, it will be cancelled and raise an exception. Default: `10`
+- **`deadline`**: The gRPC deadline in seconds, covering the entire call from submission: time spent queued client-side waiting for one of the handle's `max_streams` slots counts against it, and the transfer (and the `grpc-timeout` header sent to the server) gets only the remaining budget. If the call takes longer than this limit it is cancelled and raises an exception. Default: `10`
 - **`keepalive`**: The TCP keepalive interval in seconds. This sets both `CURLOPT_TCP_KEEPINTVL` (interval between keepalive probes) and `CURLOPT_TCP_KEEPIDLE` (time before first keepalive probe) to help detect broken connections. Default: `60`
 - **`max_send_message_length`**: The maximum size in bytes for messages sent to the server. Attempting to send messages larger than this will raise an exception. Default: `4*1024*1024` (4 MiB)
 - **`max_recieve_message_length`**: The maximum size in bytes for messages received from the server. Receiving messages larger than this will raise an exception. Default: `4*1024*1024` (4 MiB)
@@ -142,6 +142,29 @@ grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,false}, req
 grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,true},request::TRequest,response::Channel{TResponse}) where {TRequest<:Any,TResponse<:Any}
 grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,true},request::Channel{TRequest},response::Channel{TResponse}) where {TRequest<:Any,TResponse<:Any}
 grpc_async_await(client::gRPCServiceClient{TRequest,true,TResponse,false},request::gRPCRequest) where {TRequest<:Any,TResponse<:Any} 
+```
+
+#### Cancellation
+
+Every request is bounded by its `deadline` even when libcurl stops driving the
+transfer. libcurl does not process a handle's timeouts while the handle is
+parked waiting for another request's connection to become multiplexable
+(`CURLOPT_PIPEWAIT`), so a connection that never becomes ready (for example a
+server that accepts TCP but never completes the HTTP/2 handshake) would
+otherwise wedge every queued request forever. A client-side watchdog guarantees
+each request resolves with `DEADLINE_EXCEEDED` shortly after its deadline.
+
+The deadline also covers time spent queued client-side waiting for one of the
+handle's `max_streams` slots, so a request submitted while every slot is held
+by a slow or stuck call still fails at its own deadline rather than waiting
+indefinitely for a slot. `grpc_async_request` returns promptly either way and
+never raises for a request failure; whatever went wrong (deadline exceeded,
+cancellation, shutdown) is thrown by `grpc_async_await`.
+
+An in-flight request can also be cancelled explicitly at any time:
+
+```@docs
+grpc_cancel
 ```
 
 ### Raw Encoded Buffers (Partial Decoding)
