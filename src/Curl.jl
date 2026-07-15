@@ -1124,6 +1124,10 @@ function cleanup_request(grpc::gRPCCURL, req::gRPCRequest)
     curl_multi_remove_handle(grpc.multi, req.easy)
     # Cleanup the easy handle
     curl_easy_cleanup(req.easy)
+    # Defense in depth on top of the completed flag: if any future path reaches the
+    # easy handle after cleanup, libcurl rejects C_NULL with an error code instead of
+    # touching freed memory
+    req.easy = C_NULL
     # Free the request headers
     curl_slist_free_all(req.headers)
     # Allow this to be GC now that there is no risk of use in C callback
