@@ -157,9 +157,15 @@ each request resolves with `DEADLINE_EXCEEDED` shortly after its deadline.
 The deadline also covers time spent queued client-side waiting for one of the
 handle's `max_streams` slots, so a request submitted while every slot is held
 by a slow or stuck call still fails at its own deadline rather than waiting
-indefinitely for a slot. `grpc_async_request` returns promptly either way and
-never raises for a request failure; whatever went wrong (deadline exceeded,
-cancellation, shutdown) is thrown by `grpc_async_await`.
+indefinitely for a slot.
+
+The exception contract: `grpc_async_request` throws only for programming
+errors it can detect synchronously at submission (an uninitialized or
+shut-down handle as `FAILED_PRECONDITION`, an invalid deadline as
+`INVALID_ARGUMENT`, an oversized message as `RESOURCE_EXHAUSTED`). Every
+failure that depends on time or concurrency (deadline exceeded, including
+expiry while queued, cancellation, transport errors, server statuses) is
+raised by `grpc_async_await`.
 
 An in-flight request can also be cancelled explicitly at any time:
 

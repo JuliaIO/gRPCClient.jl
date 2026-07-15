@@ -280,30 +280,30 @@ mutable struct gRPCRequest
         max_recieve_message_length = 4 * 1024 * 1024,
         token = nothing,
     )
-        # All request failures, including this one, surface in grpc_async_await rather
-        # than being thrown from submission
-        !grpc.running && return gRPCRequest(
-            grpc,
-            url,
-            request,
-            response,
-            request_c,
-            response_c,
+        # Exception contract: grpc_async_request throws only for programming errors it
+        # can detect synchronously at submission (an uninitialized or shut-down handle
+        # as FAILED_PRECONDITION, an invalid deadline as INVALID_ARGUMENT, an oversized
+        # message as RESOURCE_EXHAUSTED at encode). Failures that depend on time or
+        # concurrency (deadline exceeded, cancellation, transport errors, server
+        # statuses) are raised by grpc_async_await instead, keeping each exception type
+        # in the location callers have always handled it.
+        !grpc.running && throw(
             gRPCServiceCallException(
                 GRPC_FAILED_PRECONDITION,
                 "gRPCCURL backend is not running, did you forget to call grpc_init()?",
             ),
-            max_send_message_length,
-            max_recieve_message_length,
         )
 
         # A deadline of Inf means no deadline: no watchdog, no curl timeouts, and no
         # grpc-timeout header (per the gRPC spec an absent header means no deadline).
         # Such a request runs until it completes, grpc_cancel is called, or the handle
-        # is shut down. NaN and -Inf are programming errors, not request failures, so
-        # they throw here rather than in await.
+        # is shut down. NaN and -Inf are programming errors, so they throw here rather
+        # than in await.
         deadline == Inf || isfinite(deadline) || throw(
-            ArgumentError("deadline must be a finite number of seconds or Inf, got $(deadline)"),
+            gRPCServiceCallException(
+                GRPC_INVALID_ARGUMENT,
+                "deadline must be a finite number of seconds or Inf, got $(deadline)",
+            ),
         )
 
         # The deadline covers the entire call starting now: time spent queued waiting for
@@ -362,8 +362,11 @@ mutable struct gRPCRequest
             max_reqs_dec(grpc, expiry)
         catch ex
             isnothing(watchdog) || close(watchdog)
-            ex isa gRPCServiceCallException || rethrow()
-            # Deadline expired / handle shut down while queued: raised in await
+            # Only a deadline expiry while queued becomes an await-raised dead request;
+            # a shutdown while queued propagates as FAILED_PRECONDITION from submission,
+            # matching the contract above
+            (ex isa gRPCServiceCallException && ex.grpc_status == GRPC_DEADLINE_EXCEEDED) ||
+                rethrow()
             return gRPCRequest(
                 grpc,
                 url,
@@ -505,10 +508,9 @@ mutable struct gRPCRequest
 
         lock(grpc.lock) do
             if !grpc.running
-                # We did all that work for nothing, and now we have to cleanup. The
-                # failure is raised in await like any other, so mark the request
-                # completed (making cleanup_request / grpc_cancel no-ops on it, since
-                # the easy handle is gone) and unblock everything waiting on it.
+                # We did all that work for nothing, and now we have to cleanup. A
+                # shut-down handle is a submission-time FAILED_PRECONDITION per the
+                # contract at the top of this constructor.
                 isnothing(watchdog) || close(watchdog)
                 curl_easy_cleanup(easy_handle)
                 curl_slist_free_all(headers)
@@ -516,47 +518,39 @@ mutable struct gRPCRequest
                 # *MUST* increment the sem or we could deadlock
                 max_reqs_inc(grpc, req)
 
-                handle_exception(
-                    req,
+                throw(
                     gRPCServiceCallException(
                         GRPC_FAILED_PRECONDITION,
                         "Tried to make a request when the provided grpc handle is shutdown",
                     ),
                 )
-                req.completed = true
-                close(req.response_c)
-                close(req.request_c)
-                notify(req.ready)
-            else
-                push!(grpc.requests, req)
-                curl_multi_add_handle(grpc.multi, easy_handle)
+            end
 
-                # If the watchdog fired in the window between the queue wait and this
-                # registration it saw `req` unset and cancelled nothing; a fired one-shot
-                # Timer is no longer open, so catch that case here (grpc_cancel is a
-                # no-op if it raced a concurrent completion)
-                if !isnothing(watchdog) && !isopen(watchdog)
-                    grpc_cancel(
-                        req,
-                        gRPCServiceCallException(
-                            GRPC_DEADLINE_EXCEEDED,
-                            "Deadline exceeded.",
-                        ),
-                    )
-                end
+            push!(grpc.requests, req)
+            curl_multi_add_handle(grpc.multi, easy_handle)
+
+            # If the watchdog fired in the window between the queue wait and this
+            # registration it saw `req` unset and cancelled nothing; a fired one-shot
+            # Timer is no longer open, so catch that case here (grpc_cancel is a
+            # no-op if it raced a concurrent completion)
+            if !isnothing(watchdog) && !isopen(watchdog)
+                grpc_cancel(
+                    req,
+                    gRPCServiceCallException(GRPC_DEADLINE_EXCEEDED, "Deadline exceeded."),
+                )
             end
         end
 
         return req
     end
 
-    # Build an already-completed request that only carries an exception. Used when a
-    # request fails before ever reaching libcurl (handle not running, or the deadline
-    # expired / handle shut down while queued for a max_streams slot): submission still
-    # returns a gRPCRequest and the failure is raised from grpc_async_await like any
-    # other request failure, keeping exceptions out of grpc_async_request. Holds no
-    # easy handle and no max_streams slot, is never added to grpc.requests, and is
-    # already marked completed so cleanup_request and grpc_cancel are no-ops on it.
+    # Build an already-completed request that only carries an exception. Used when the
+    # deadline expires while queued for a max_streams slot, before the request ever
+    # reaches libcurl: submission still returns a gRPCRequest and DEADLINE_EXCEEDED is
+    # raised from grpc_async_await, where callers have always handled it (see the
+    # exception contract in the primary constructor). Holds no easy handle and no
+    # max_streams slot, is never added to grpc.requests, and is already marked
+    # completed so cleanup_request and grpc_cancel are no-ops on it.
     function gRPCRequest(
         grpc,
         url::String,

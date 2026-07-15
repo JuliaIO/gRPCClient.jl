@@ -6,7 +6,12 @@ using Sockets
 
 # Import the timeout header formatting function for testing
 import gRPCClient:
-    grpc_timeout_header_val, GRPC_DEADLINE_EXCEEDED, GRPC_UNAUTHENTICATED, GRPC_CANCELLED
+    grpc_timeout_header_val,
+    GRPC_DEADLINE_EXCEEDED,
+    GRPC_UNAUTHENTICATED,
+    GRPC_CANCELLED,
+    GRPC_INVALID_ARGUMENT,
+    GRPC_FAILED_PRECONDITION
 
 # The bearer token the test Go server accepts (mirrors expectedBearerToken in
 # test/go/server.go). A request carrying an `authorization` header must present
@@ -654,7 +659,8 @@ include("gen/test/test_pb.jl")
         end
         @test time() - t0 < 1.0
 
-        # NaN and -Inf deadlines are programming errors and throw at submission
+        # NaN and -Inf deadlines are programming errors and throw INVALID_ARGUMENT at
+        # submission (part of the submission exception contract)
         for bad in (NaN, -Inf)
             bad_client = TestService_TestRPC_Client(
                 "127.0.0.1",
@@ -662,10 +668,13 @@ include("gen/test/test_pb.jl")
                 grpc = grpc_handle,
                 deadline = bad,
             )
-            @test_throws ArgumentError grpc_async_request(
-                bad_client,
-                TestRequest(1, zeros(UInt64, 1)),
-            )
+            try
+                grpc_async_request(bad_client, TestRequest(1, zeros(UInt64, 1)))
+                @test false
+            catch ex
+                @test isa(ex, gRPCServiceCallException)
+                @test ex.grpc_status == GRPC_INVALID_ARGUMENT
+            end
         end
 
         close(silent_server)
@@ -1042,6 +1051,8 @@ include("gen/test/test_pb.jl")
         # Hold the only slot, then queue a second request behind it
         grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
         queued = @spawn try
+            # A shutdown while queued propagates FAILED_PRECONDITION from submission
+            # (the caller is still blocked inside grpc_async_request at that point)
             req = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
             grpc_async_await(client, req)
             nothing
@@ -1057,6 +1068,7 @@ include("gen/test/test_pb.jl")
         # The queued request was unblocked by the shutdown, well before its deadline
         @test time() - t0 < 2.0
         @test isa(ex, gRPCServiceCallException)
+        @test ex.grpc_status == GRPC_FAILED_PRECONDITION
 
         close(silent_server)
         foreach(close, accepted)
