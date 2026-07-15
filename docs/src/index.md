@@ -106,7 +106,7 @@ TestService_TestRPC_Client(
 - **`port`**: The port number the gRPC server is listening on (e.g., `50051`)
 - **`secure`**: A `Bool` that controls whether HTTPS/gRPCS (when `true`) or HTTP/gRPC (when `false`) is used for the connection. Default: `false`
 - **`grpc`**: The global gRPC handle obtained from `grpc_global_handle()`. This manages the underlying libcurl multi-handle for HTTP/2 multiplexing. Default: `grpc_global_handle()`
-- **`deadline`**: The gRPC deadline in seconds, covering the entire call from submission: time spent queued client-side waiting for one of the handle's `max_streams` slots counts against it, and the transfer (and the `grpc-timeout` header sent to the server) gets only the remaining budget. If the call takes longer than this limit it is cancelled and raises an exception. Default: `10`
+- **`deadline`**: The gRPC deadline in seconds, covering the entire call from submission: time spent queued client-side waiting for one of the handle's `max_streams` slots counts against it, and the transfer (and the `grpc-timeout` header sent to the server) gets only the remaining budget. If the call takes longer than this limit it is cancelled and raises an exception. Pass `Inf` for no deadline: no timeout is enforced client-side and no `grpc-timeout` header is sent, so the call runs until it completes or `grpc_cancel` ends it. Default: `10`
 - **`keepalive`**: The TCP keepalive interval in seconds. This sets both `CURLOPT_TCP_KEEPINTVL` (interval between keepalive probes) and `CURLOPT_TCP_KEEPIDLE` (time before first keepalive probe) to help detect broken connections. Default: `60`
 - **`max_send_message_length`**: The maximum size in bytes for messages sent to the server. Attempting to send messages larger than this will raise an exception. Default: `4*1024*1024` (4 MiB)
 - **`max_recieve_message_length`**: The maximum size in bytes for messages received from the server. Receiving messages larger than this will raise an exception. Default: `4*1024*1024` (4 MiB)
@@ -166,6 +166,16 @@ An in-flight request can also be cancelled explicitly at any time:
 ```@docs
 grpc_cancel
 ```
+
+For a long-lived stream you can combine `deadline = Inf` with `grpc_cancel` to
+manage the stream's lifetime yourself: with no deadline the call never times
+out (client-side or server-side, since the `grpc-timeout` header is omitted),
+and cancellation ends it on demand. After cancelling a client or bidirectional
+stream, close your request channel as usual to release its pump task. Note
+that with no deadline a request stuck behind a connection that never becomes
+ready will wait forever; `grpc_cancel` (or `grpc_shutdown`) is the only way
+out, so prefer a finite deadline unless you have an explicit lifecycle for
+the call.
 
 ### Raw Encoded Buffers (Partial Decoding)
 

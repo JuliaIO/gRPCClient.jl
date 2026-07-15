@@ -297,6 +297,15 @@ mutable struct gRPCRequest
             max_recieve_message_length,
         )
 
+        # A deadline of Inf means no deadline: no watchdog, no curl timeouts, and no
+        # grpc-timeout header (per the gRPC spec an absent header means no deadline).
+        # Such a request runs until it completes, grpc_cancel is called, or the handle
+        # is shut down. NaN and -Inf are programming errors, not request failures, so
+        # they throw here rather than in await.
+        deadline == Inf || isfinite(deadline) || throw(
+            ArgumentError("deadline must be a finite number of seconds or Inf, got $(deadline)"),
+        )
+
         # The deadline covers the entire call starting now: time spent queued waiting for
         # one of the max_streams slots counts against it, and the transfer only gets
         # whatever budget remains after the wait.
@@ -318,23 +327,31 @@ mutable struct gRPCRequest
         # client-side backstop for that: if libcurl has not completed the request
         # shortly after the deadline, cancel it with DEADLINE_EXCEEDED.
         local req = nothing
-        watchdog = Timer(deadline + GRPC_DEADLINE_GRACE) do _
-            try
-                # Wake all queue waiters so any expired one can bail out. Cheap: this
-                # only runs when a request actually times out, and waiters that are not
-                # expired just go back to sleep. Taking the condition lock also fences
-                # the read of `req` below against its assignment in the constructor.
-                lock(grpc.sem_cond) do
-                    notify(grpc.sem_cond; all = true)
-                end
+        watchdog = if deadline == Inf
+            nothing
+        else
+            Timer(deadline + GRPC_DEADLINE_GRACE) do _
+                try
+                    # Wake all queue waiters so any expired one can bail out. Cheap: this
+                    # only runs when a request actually times out, and waiters that are
+                    # not expired just go back to sleep. Taking the condition lock also
+                    # fences the read of `req` below against its assignment in the
+                    # constructor.
+                    lock(grpc.sem_cond) do
+                        notify(grpc.sem_cond; all = true)
+                    end
 
-                r = req
-                r isa gRPCRequest && grpc_cancel(
-                    r,
-                    gRPCServiceCallException(GRPC_DEADLINE_EXCEEDED, "Deadline exceeded."),
-                )
-            catch err
-                @error("deadline watchdog: unexpected error", err, maxlog = 1_000)
+                    r = req
+                    r isa gRPCRequest && grpc_cancel(
+                        r,
+                        gRPCServiceCallException(
+                            GRPC_DEADLINE_EXCEEDED,
+                            "Deadline exceeded.",
+                        ),
+                    )
+                catch err
+                    @error("deadline watchdog: unexpected error", err, maxlog = 1_000)
+                end
             end
         end
 
@@ -344,7 +361,7 @@ mutable struct gRPCRequest
         curl_done_reading = try
             max_reqs_dec(grpc, expiry)
         catch ex
-            close(watchdog)
+            isnothing(watchdog) || close(watchdog)
             ex isa gRPCServiceCallException || rethrow()
             # Deadline expired / handle shut down while queued: raised in await
             return gRPCRequest(
@@ -364,7 +381,7 @@ mutable struct gRPCRequest
         # checks expiry while the queue is non-empty, so re-check here.
         remaining = expiry - time()
         if remaining <= 0
-            close(watchdog)
+            isnothing(watchdog) || close(watchdog)
             max_reqs_inc(grpc, curl_done_reading)
             return gRPCRequest(
                 grpc,
@@ -389,12 +406,13 @@ mutable struct gRPCRequest
             curl_easy_setopt(easy_handle, CURLOPT_VERBOSE, UInt32(1))
 
         curl_easy_setopt(easy_handle, CURLOPT_URL, url)
-        curl_easy_setopt(easy_handle, CURLOPT_TIMEOUT_MS, Clong(ceil(1000 * remaining)))
-        curl_easy_setopt(
-            easy_handle,
-            CURLOPT_CONNECTTIMEOUT_MS,
-            Clong(ceil(1000 * remaining)),
-        )
+        # With no deadline (remaining == Inf) pass 0: for CURLOPT_TIMEOUT_MS that
+        # disables curl's overall timeout, and for CURLOPT_CONNECTTIMEOUT_MS it falls
+        # back to curl's default connect timeout (300s), a sane floor to keep even for
+        # a request with no deadline
+        timeout_ms = isfinite(remaining) ? Clong(ceil(1000 * remaining)) : Clong(0)
+        curl_easy_setopt(easy_handle, CURLOPT_TIMEOUT_MS, timeout_ms)
+        curl_easy_setopt(easy_handle, CURLOPT_CONNECTTIMEOUT_MS, timeout_ms)
         curl_easy_setopt(easy_handle, CURLOPT_PIPEWAIT, Clong(1))
         curl_easy_setopt(easy_handle, CURLOPT_POST, Clong(1))
         curl_easy_setopt(easy_handle, CURLOPT_CUSTOMREQUEST, "POST")
@@ -415,11 +433,14 @@ mutable struct gRPCRequest
         headers = curl_slist_append(headers, "Content-Length:")
         headers = curl_slist_append(headers, "te: trailers")
         # The server is told the remaining budget, not the original deadline: any time
-        # this request already spent queued client-side is gone
-        headers = curl_slist_append(
-            headers,
-            "grpc-timeout: $(grpc_timeout_header_val(remaining))",
-        )
+        # this request already spent queued client-side is gone. With no deadline the
+        # header is omitted entirely, which the gRPC spec defines as "no deadline".
+        if isfinite(remaining)
+            headers = curl_slist_append(
+                headers,
+                "grpc-timeout: $(grpc_timeout_header_val(remaining))",
+            )
+        end
         if !isnothing(token)
             headers = curl_slist_append(headers, "authorization: Bearer $(token)")
         end
@@ -488,7 +509,7 @@ mutable struct gRPCRequest
                 # failure is raised in await like any other, so mark the request
                 # completed (making cleanup_request / grpc_cancel no-ops on it, since
                 # the easy handle is gone) and unblock everything waiting on it.
-                close(watchdog)
+                isnothing(watchdog) || close(watchdog)
                 curl_easy_cleanup(easy_handle)
                 curl_slist_free_all(headers)
                 unpreserve_handle(req)
@@ -514,10 +535,15 @@ mutable struct gRPCRequest
                 # registration it saw `req` unset and cancelled nothing; a fired one-shot
                 # Timer is no longer open, so catch that case here (grpc_cancel is a
                 # no-op if it raced a concurrent completion)
-                isopen(watchdog) || grpc_cancel(
-                    req,
-                    gRPCServiceCallException(GRPC_DEADLINE_EXCEEDED, "Deadline exceeded."),
-                )
+                if !isnothing(watchdog) && !isopen(watchdog)
+                    grpc_cancel(
+                        req,
+                        gRPCServiceCallException(
+                            GRPC_DEADLINE_EXCEEDED,
+                            "Deadline exceeded.",
+                        ),
+                    )
+                end
             end
         end
 
@@ -1066,9 +1092,18 @@ function max_reqs_inc(grpc::gRPCCURL, event::Event)
 end
 
 function max_reqs_inc(grpc::gRPCCURL, req::gRPCRequest)
-    # Reset before we recycle
-    reset(req.curl_done_reading)
-    max_reqs_inc(grpc, req.curl_done_reading)
+    if isstreaming_request(req)
+        # The request-stream pump may still be waiting on (or about to wait on) this
+        # request's curl_done_reading Event. Notify it so the pump wakes and observes
+        # req.completed, and hand the freelist a fresh Event so a lingering pump can
+        # never interfere with the next request that takes this slot.
+        notify(req.curl_done_reading)
+        max_reqs_inc(grpc, Event())
+    else
+        # Reset before we recycle
+        reset(req.curl_done_reading)
+        max_reqs_inc(grpc, req.curl_done_reading)
+    end
 end
 
 function cleanup_request(grpc::gRPCCURL, req::gRPCRequest)

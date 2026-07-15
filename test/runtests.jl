@@ -520,6 +520,117 @@ include("gen/test/test_pb.jl")
                 @test isa(ex, gRPCServiceCallException)
             end
         end
+
+        @testset "No deadline (Inf) ended by grpc_cancel" begin
+            # A bidirectional stream with no deadline stays open indefinitely and is
+            # ended by explicit cancellation
+            client = TestService_TestBidirectionalStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = Inf,
+            )
+            request_c = Channel{TestRequest}(16)
+            response_c = Channel{TestResponse}(16)
+            req = grpc_async_request(client, request_c, response_c)
+
+            # Stream is live: request/response round trips work
+            for i = 1:3
+                put!(request_c, TestRequest(i, zeros(UInt64, i)))
+                r = take!(response_c)
+                @test length(r.data) == i
+            end
+
+            @test grpc_cancel(req)
+            # Response iteration ends promptly after cancellation
+            for _ in response_c
+            end
+            @test !isopen(response_c)
+            try
+                grpc_async_await(req)
+                @test false
+            catch ex
+                @test isa(ex, gRPCServiceCallException)
+                @test ex.grpc_status == GRPC_CANCELLED
+            end
+            # Cancel does not close the caller's request channel; that stays the
+            # caller's job
+            @test isopen(request_c)
+            close(request_c)
+
+            # Regression for the recycled curl_done_reading Event: the slot freed by
+            # the cancelled stream (LIFO freelist, so the next request reuses it) must
+            # be clean. Run follow-up streams and unary requests on the same handle.
+            for _ = 1:3
+                cs_client = TestService_TestClientStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+                cs_c = Channel{TestRequest}(4)
+                cs_req = grpc_async_request(cs_client, cs_c)
+                put!(cs_c, TestRequest(1, zeros(UInt64, 1)))
+                put!(cs_c, TestRequest(1, zeros(UInt64, 1)))
+                close(cs_c)
+                r = grpc_async_await(cs_client, cs_req)
+                @test length(r.data) == 2
+            end
+            u_client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
+            @test length(grpc_sync_request(u_client, TestRequest(4, zeros(UInt64, 1))).data) == 4
+        end
+    end
+
+    @testset "No deadline (Inf) on a never-ready connection" begin
+        # With no deadline there is no watchdog: a request parked behind a connection
+        # that never becomes ready waits indefinitely, and grpc_cancel is the way out
+        grpc_handle = gRPCCURL()
+
+        silent_server = listen(Sockets.localhost, 0)
+        silent_port = Int(getsockname(silent_server)[2])
+        accepted = Sockets.TCPSocket[]
+        @async while true
+            try
+                push!(accepted, accept(silent_server))
+            catch
+                break
+            end
+        end
+
+        client = TestService_TestRPC_Client(
+            "127.0.0.1",
+            silent_port;
+            grpc = grpc_handle,
+            deadline = Inf,
+        )
+        req = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+        sleep(1.0)
+        # Still in flight: nothing timed it out
+        @test !req.completed
+        @test isnothing(req.ex)
+
+        t0 = time()
+        @test grpc_cancel(req)
+        try
+            grpc_async_await(client, req)
+            @test false
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+            @test ex.grpc_status == GRPC_CANCELLED
+        end
+        @test time() - t0 < 1.0
+
+        # NaN and -Inf deadlines are programming errors and throw at submission
+        for bad in (NaN, -Inf)
+            bad_client = TestService_TestRPC_Client(
+                "127.0.0.1",
+                silent_port;
+                grpc = grpc_handle,
+                deadline = bad,
+            )
+            @test_throws ArgumentError grpc_async_request(
+                bad_client,
+                TestRequest(1, zeros(UInt64, 1)),
+            )
+        end
+
+        close(silent_server)
+        foreach(close, accepted)
+        grpc_shutdown(grpc_handle)
     end
 
     @testset "grpc-timeout header value formatting" begin
