@@ -228,9 +228,11 @@ watchdog, so requests resolve with `GRPC_DEADLINE_EXCEEDED` even when libcurl
 stalls them (e.g. handles parked on `CURLOPT_PIPEWAIT` behind a connection
 that never finishes the HTTP/2 handshake never have their timeouts driven by
 libcurl). The deadline covers client-side queueing for a `max_streams` slot
-too. `grpc_async_request` never raises for request failures: a request that
-expires while queued (or hits a shut-down handle) is returned as an
-already-completed `gRPCRequest` and the exception is thrown by
+too. Exception contract: `grpc_async_request` throws only for synchronously
+detectable programming errors (uninitialized/shut-down handle =
+FAILED_PRECONDITION, invalid deadline = INVALID_ARGUMENT, oversized message =
+RESOURCE_EXHAUSTED); time/concurrency-dependent failures (deadline exceeded,
+including expiry while queued, cancellation, transport errors) are raised by
 `grpc_async_await`.
 
 For explicitly-managed lifetimes (e.g. long-lived streams), `deadline = Inf`
