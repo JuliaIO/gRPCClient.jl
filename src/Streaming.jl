@@ -142,7 +142,7 @@ test_response = grpc_async_await(client, req)
 function grpc_async_request(
     client::gRPCServiceClient{TRequest,true,TResponse,false},
     request::Channel{TRequest};
-    kws...
+    options...
 ) where {TRequest<:Any,TResponse<:Any}
 
     req = gRPCRequest(
@@ -152,7 +152,7 @@ function grpc_async_request(
         IOBuffer(),
         Channel{IOBuffer}(16),
         NOCHANNEL,
-        _merge_options(client.options, kws)
+        _merge_options(client.options, options)
     )
 
     request_task = _spawn(() -> grpc_async_stream_request(req, request), client)
@@ -197,7 +197,7 @@ function grpc_async_request(
     client::gRPCServiceClient{TRequest,false,TResponse,true},
     request::TRequest,
     response::Channel{TResponse};
-    kws...
+    options...
 ) where {TRequest<:Any,TResponse<:Any}
     request_buf = grpc_encode_request_iobuffer(
         request;
@@ -212,7 +212,7 @@ function grpc_async_request(
         IOBuffer(),
         NOCHANNEL,
         Channel{IOBuffer}(16),
-        _merge_options(client.options, kws)
+        _merge_options(client.options, options)
     )
 
     response_task = _spawn(() -> grpc_async_stream_response(req, response), client)
@@ -263,7 +263,7 @@ function grpc_async_request(
     client::gRPCServiceClient{TRequest,true,TResponse,true},
     request::Channel{TRequest},
     response::Channel{TResponse};
-    kws...
+    options...
 ) where {TRequest<:Any,TResponse<:Any}
 
     req = gRPCRequest(
@@ -273,7 +273,7 @@ function grpc_async_request(
         IOBuffer(),
         Channel{IOBuffer}(16),
         Channel{IOBuffer}(16),
-        _merge_options(client.options, kws)
+        _merge_options(client.options, options)
     )
 
     request_task = _spawn(() -> grpc_async_stream_request(req, request), client)

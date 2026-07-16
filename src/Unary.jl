@@ -32,7 +32,7 @@ end
 function grpc_async_request(
     client::gRPCServiceClient{TRequest,false,TResponse,false},
     request::TRequest;
-    kws...
+    options...
 ) where {TRequest<:Any,TResponse<:Any}
 
     request_buf = grpc_encode_request_iobuffer(
@@ -48,7 +48,7 @@ function grpc_async_request(
         IOBuffer(),
         NOCHANNEL,
         NOCHANNEL,
-        _merge_options(client.options, kws)
+        _merge_options(client.options, options)
     )
 
     req
@@ -101,7 +101,7 @@ function grpc_async_request(
     request::TRequest,
     channel::Channel{gRPCAsyncChannelResponse{TResponse}},
     index::Int64;
-    kws...
+    options...
 ) where {TRequest<:Any,TResponse<:Any}
 
     request_buf = grpc_encode_request_iobuffer(
@@ -117,7 +117,7 @@ function grpc_async_request(
         IOBuffer(),
         NOCHANNEL,
         NOCHANNEL,
-        _merge_options(client.options, kws)
+        _merge_options(client.options, options)
     )
 
     _spawn(client) do
