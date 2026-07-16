@@ -108,9 +108,12 @@ function grpc_async_stream_response(
 end
 
 """
-    grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,false}, request::Channel{TRequest}) where {TRequest<:Any,TResponse<:Any}
+    grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,false}, request::Channel{TRequest}; options...) where {TRequest<:Any,TResponse<:Any}
 
 Start a client streaming gRPC request (multiple requests, single response).
+
+The connection may be configured further by providing a set of options as keyword arguments. 
+Available options are listed in the docstring of `gRPCServiceClient`. 
 
 ```julia
 using gRPCClient
@@ -159,9 +162,12 @@ function grpc_async_request(
 end
 
 """
-    grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,true},request::TRequest,response::Channel{TResponse}) where {TRequest<:Any,TResponse<:Any}
+    grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,true},request::TRequest,response::Channel{TResponse}; options...) where {TRequest<:Any,TResponse<:Any}
 
 Start a server streaming gRPC request (single request, multiple responses).
+
+The connection may be configured further by providing a set of options as keyword arguments. 
+Available options are listed in the docstring of `gRPCServiceClient`. 
 
 ```julia
 using gRPCClient
@@ -216,9 +222,12 @@ function grpc_async_request(
 end
 
 """
-    grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,true},request::Channel{TRequest},response::Channel{TResponse}) where {TRequest<:Any,TResponse<:Any}
+    grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,true},request::Channel{TRequest},response::Channel{TResponse}; options...) where {TRequest<:Any,TResponse<:Any}
 
 Start a bidirectional streaming gRPC request (multiple requests, multiple responses).
+
+The connection may be configured further by providing a set of keyword arguments. 
+Available options are listed in the docstring of `gRPCServiceClient`. 
 
 ```julia
 using gRPCClient

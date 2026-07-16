@@ -93,10 +93,7 @@ TestService_TestRPC_Client(
     host, port;
     secure=false,
     grpc=grpc_global_handle(),
-    deadline=10,
-    keepalive=60,
-    max_send_message_length = 4*1024*1024,
-    max_recieve_message_length = 4*1024*1024,
+    options...
 )
 ```
 
@@ -104,12 +101,17 @@ TestService_TestRPC_Client(
 
 - **`host`**: The hostname or IP address of the gRPC server (e.g., `"localhost"`, `"api.example.com"`)
 - **`port`**: The port number the gRPC server is listening on (e.g., `50051`)
-- **`secure`**: A `Bool` that controls whether HTTPS/gRPCS (when `true`) or HTTP/gRPC (when `false`) is used for the connection. Default: `false`
 - **`grpc`**: The global gRPC handle obtained from `grpc_global_handle()`. This manages the underlying libcurl multi-handle for HTTP/2 multiplexing. Default: `grpc_global_handle()`
-- **`deadline`**: The gRPC deadline in seconds. If a request takes longer than this time limit, it will be cancelled and raise an exception. Default: `10`
-- **`keepalive`**: The TCP keepalive interval in seconds. This sets both `CURLOPT_TCP_KEEPINTVL` (interval between keepalive probes) and `CURLOPT_TCP_KEEPIDLE` (time before first keepalive probe) to help detect broken connections. Default: `60`
-- **`max_send_message_length`**: The maximum size in bytes for messages sent to the server. Attempting to send messages larger than this will raise an exception. Default: `4*1024*1024` (4 MiB)
-- **`max_recieve_message_length`**: The maximum size in bytes for messages received from the server. Receiving messages larger than this will raise an exception. Default: `4*1024*1024` (4 MiB)
+- **`options...**: Any set of keyword arguments related to the connection:
+  - **`secure`**: A `Bool` that controls whether HTTPS/gRPCS (when `true`) or HTTP/gRPC (when `false`) is used for the connection. Default: `false`
+  - **`deadline`**: The gRPC deadline in seconds. If a request takes longer than this time limit, it will be cancelled and raise an exception. Default: `10`
+  - **`keepalive`**: The TCP keepalive interval in seconds. This sets both `CURLOPT_TCP_KEEPINTVL` (interval between keepalive probes) and `CURLOPT_TCP_KEEPIDLE` (time before first keepalive probe) to help detect broken connections. Default: `60`
+  - **`max_send_message_length`**: The maximum size in bytes for messages sent to the server. Attempting to send messages larger than this will raise an exception. Default: `4*1024*1024` (4 MiB)
+  - **`max_recieve_message_length`**: The maximum size in bytes for messages received from the server. Receiving messages larger than this will raise an exception. Default: `4*1024*1024` (4 MiB)
+  - **`token`**: Optional bearer token attached to every request as an `authorization: Bearer <token>` header. 
+  - **`metadata`**: A `Dict{String, String}` for adding arbitrary fields to the header. For example, a token can be added by setting `metadata = Dict("authorization" => "Bearer <token>"`. 
+
+Any of the options mentioned above may also be provided as keyword arguments to `grpc_async_request` or `grpc_async_request`, taking priority over options set for the client.  
 
 #### Example
 

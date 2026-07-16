@@ -62,10 +62,13 @@ mutable struct gRPCAsyncChannelResponse{TResponse}
 end
 
 """
-    grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::TRequest, channel::Channel{gRPCAsyncChannelResponse{TResponse}}, index::Int64) where {TRequest<:Any,TResponse<:Any}
+    grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::TRequest, channel::Channel{gRPCAsyncChannelResponse{TResponse}}, index::Int64; options...) where {TRequest<:Any,TResponse<:Any}
 
 Initiate an asynchronous gRPC request: send the request to the server and then immediately return. When the request is complete a background task will put the response in the provided channel.
 This has the advantage over the request / await patern in that you can handle responses immediately after they are recieved in any order.
+
+The connection may be configured further by providing a set of keyword arguments. 
+Available options are listed in the docstring of `gRPCServiceClient`. 
 
 ```julia
 using gRPCClient
@@ -142,11 +145,14 @@ grpc_async_await(
 
 
 """
-    grpc_sync_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::TRequest) where {TRequest<:Any,TResponse<:Any}
+    grpc_sync_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::TRequest; options...) where {TRequest<:Any,TResponse<:Any}
 
 Do a synchronous gRPC request: send the request and wait for the response before returning it.
 Under the hood this just calls `grpc_async_request` and `grpc_async_await`.
 Use this when you want the simplest possible interface for a single request.
+
+The connection may be configured further by providing a set of keyword arguments. 
+Available options are listed in the docstring of `gRPCServiceClient`. 
 
 ```julia
 using gRPCClient
