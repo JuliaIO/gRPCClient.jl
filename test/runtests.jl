@@ -681,6 +681,38 @@ include("gen/test/test_pb.jl")
         @test length(response.data) == 1
     end
 
+    @testset "Metadata" begin
+        # The token can also be implemented through metadata, so we use the
+        # same server capabilities as in the token test to verify metadata
+        md = Dict("authorization" => "Bearer $(_TEST_BEARER_TOKEN)")
+        client = TestService_TestRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            metadata = md
+        )
+        @assert isnothing(client.options.token)
+        @test client.options.metadata == md
+        
+        response = grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
+        @test length(response.data) == 1
+        @test response.data[1] == 1
+
+        # A wrong token is rejected by the server with UNAUTHENTICATED, proving
+        # the supplied token value is transmitted faithfully (not dropped).
+        bad_client = TestService_TestRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            metadata = Dict("authorization" => "wrong_auth"),
+        )
+        try
+            grpc_sync_request(bad_client, TestRequest(1, zeros(UInt64, 1)))
+            @test false  # Should not reach here
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+            @test ex.grpc_status == GRPC_UNAUTHENTICATED
+        end
+    end
+
     @testset "Graceful shutdown during concurrent requests" begin
         # Create a separate gRPCCURL handle for this test to avoid interfering with other tests
         grpc_handle = gRPCCURL()
