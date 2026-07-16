@@ -224,13 +224,25 @@ end
             end
         end
         gRPCConnectionOptions(
-            # Generate 
-            # get(overrides, :field1, options.field1)
-            # get(overrides, :field2, options.field2)
-            # ...
-            # for each fieldname of gRPCConnectionOptions
-            $([:(get(overrides, $(QuoteNode(fn)), options.$fn)) 
-                for fn in fieldnames(gRPCConnectionOptions)]...)
+            $([
+                # Generate 
+                # get(overrides, :field1, options.field1)
+                # get(overrides, :field2, options.field2)
+                # ...
+                # for each fieldname of gRPCConnectionOptions
+                :(get(overrides, $(QuoteNode(fn)), options.$fn)) 
+                    for fn in fieldnames(gRPCConnectionOptions) if fn != :metadata]...
+            ),
+            # For metadata, we override on a per-field basis instead
+            if :metadata in keys(overrides)
+                if !isnothing(options.metadata) && !isnothing(overrides[:metadata])
+                    merge(options.metadata, overrides[:metadata])
+                else
+                    overrides.metadata
+                end
+            else
+                options.metadata
+            end
         )
     end
 end

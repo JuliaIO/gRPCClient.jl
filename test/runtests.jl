@@ -706,8 +706,28 @@ include("gen/test/test_pb.jl")
         )
         @test client_fails_authorization(bad_client)
     end
+    
+    @testset "_merge_options" begin
+        # Most options should be plainly overridden
+        options = gRPCClient.gRPCConnectionOptions()
+        options = gRPCClient._merge_options(options, Dict(:token => "123"))
+        @test options.token == "123"
+
+        # metadata Dicts are merged
+        options = gRPCClient.gRPCConnectionOptions(metadata = Dict("A" => "foo"))
+        options = gRPCClient._merge_options(options, Dict(:metadata => Dict("B" => "bar")))
+        @test options.metadata["A"] == "foo"
+        @test options.metadata["B"] == "bar"
+
+        # if two metadata dicts contain the same key, override
+        options = gRPCClient.gRPCConnectionOptions(metadata = Dict("A" => "foo"))
+        options = gRPCClient._merge_options(options, Dict(:metadata => Dict("A" => "bar")))
+        @test options.metadata["A"] == "bar"
+    end
 
     @testset "Connection options priority" begin
+        # Tests _merge_options in action
+
         # We test options priority by declaring tokens both
         # at client creation and as keyword arguments to grpc_sync_request.
         # The latter should take priority
