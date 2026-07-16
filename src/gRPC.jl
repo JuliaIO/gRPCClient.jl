@@ -75,7 +75,7 @@ struct gRPCServiceClient{TRequest,SRequest,TResponse,SResponse}
             host,
             port,
             path,
-            gRPCConnectionOptions(; kws...)
+            gRPCConnectionOptions(; options...)
         )
     end
 
