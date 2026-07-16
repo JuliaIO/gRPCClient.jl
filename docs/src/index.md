@@ -126,6 +126,10 @@ client = TestService_TestRPC_Client(
 )
 ```
 
+```@docs
+gRPCServiceClient{TRequest,SRequest,TResponse,SResponse}(host, port, path; grpc = grpc_global_handle(), options...)
+```
+
 ### RPC
 
 #### Unary
