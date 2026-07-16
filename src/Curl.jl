@@ -212,24 +212,25 @@ end
 
 # Creates a new options object (if necessary) where some fields are overridden 
 # based on overrides
-@generated function _merge_options(options::gRPCConnectionOptions, overrides::AbstractDict)
-    exprs = []
-    for fn in fieldnames(gRPCConnectionOptions)
-        push!(exprs, quote
-            get(overrides, $(QuoteNode(fn)), options.$fn) 
-        end)
-    end
-
+@generated function _merge_options(options::gRPCConnectionOptions, overrides::AbstractDict)::gRPCConnectionOptions
     # if no argument is overriden, just return options. 
     # Otherwise, create a new object with some fields overridden
     return quote
+        $(Expr(:meta, :inline)) # Equivalent of @inline for generated functions
         isempty(overrides) && return options
-        bad = setdiff(keys(overrides), fieldnames(gRPCConnectionOptions))
-        if !isempty(bad)
-            throw(ArgumentError("The following are not valid fields of gRPCConnectionOptions: $(join(string.(bad), ", "))"))
+        for k in keys(overrides)
+            if !(k in fieldnames(gRPCConnectionOptions))
+                throw(ArgumentError("Invalid field of gRPCConnectionOptions: $k"))
+            end
         end
         gRPCConnectionOptions(
-            $(exprs...)
+            # Generate 
+            # get(overrides, :field1, options.field1)
+            # get(overrides, :field2, options.field2)
+            # ...
+            # for each fieldname of gRPCConnectionOptions
+            $([:(get(overrides, $(QuoteNode(fn)), options.$fn)) 
+                for fn in fieldnames(gRPCConnectionOptions)]...)
         )
     end
 end
