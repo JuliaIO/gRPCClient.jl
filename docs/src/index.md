@@ -109,7 +109,7 @@ TestService_TestRPC_Client(
   - **`max_send_message_length`**: The maximum size in bytes for messages sent to the server. Attempting to send messages larger than this will raise an exception. Default: `4*1024*1024` (4 MiB)
   - **`max_recieve_message_length`**: The maximum size in bytes for messages received from the server. Receiving messages larger than this will raise an exception. Default: `4*1024*1024` (4 MiB)
   - **`token`**: Optional bearer token attached to every request as an `authorization: Bearer <token>` header. 
-  - **`metadata`**: A `Dict{String, String}` for adding arbitrary fields to the header. For example, a token can be added by setting `metadata = Dict("authorization" => "Bearer <token>"`. 
+  - **`metadata`**: A `Dict{String, String}` for adding arbitrary fields to the header. For example, a token can also be attached by setting `metadata = Dict("authorization" => "Bearer <token>")` instead of using the `token` keyword. 
 
 Any of the options mentioned above may also be provided as keyword arguments to `grpc_async_request` or `grpc_async_request`, taking priority over options set for the client.  
 
