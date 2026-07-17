@@ -24,26 +24,15 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
         # raw, already-encoded protobuf payload (partial decoding).
         println(io, "\tTRequest=$request_type,")
         println(io, "\tTResponse=$response_type,")
-        println(io, "\tsecure=false,")
         println(io, "\tgrpc=gRPCClient.grpc_global_handle(),")
-        println(io, "\tdeadline=10,")
-        println(io, "\tkeepalive=60,")
-        println(io, "\tmax_send_message_length = 4*1024*1024,")
-        println(io, "\tmax_recieve_message_length = 4*1024*1024,")
-        # Optional bearer token sent as an `authorization: Bearer <token>` header.
-        println(io, "\ttoken=nothing,")
+        println(io, "\toptions...")
         println(
             io,
             ") = gRPCClient.gRPCServiceClient{TRequest, $(rpc.request_stream), TResponse, $(rpc.response_stream)}(",
         )
         println(io, "\thost, port, \"$rpc_path\";")
-        println(io, "\tsecure=secure,")
         println(io, "\tgrpc=grpc,")
-        println(io, "\tdeadline=deadline,")
-        println(io, "\tkeepalive=keepalive,")
-        println(io, "\tmax_send_message_length=max_send_message_length,")
-        println(io, "\tmax_recieve_message_length=max_recieve_message_length,")
-        println(io, "\ttoken=token,")
+        println(io, "\toptions...")
         println(io, ")")
 
         # TODO: define a standard way to check whether we should export that is used in both ProtoBuf.jl and gRPCClient.jl

@@ -95,10 +95,6 @@ include("gen/test/test_pb.jl")
             # so the construction uses the type-parameter names (raw-buffer support).
             @test contains(generated, "TRequest=TestRequest,")
             @test contains(generated, "TResponse=TestResponse,")
-            # Bearer token kwarg is generated (defaults to nothing) and threaded
-            # through to the underlying gRPCServiceClient constructor.
-            @test contains(generated, "token=nothing,")
-            @test contains(generated, "token=token,")
             # Correct streaming type parameters for each RPC variant
             @test contains(
                 generated,
@@ -646,43 +642,113 @@ include("gen/test/test_pb.jl")
             TestRequest(1024, zeros(UInt64, 1)),
         )
     end
-
-    @testset "Bearer Authentication" begin
+    
+    function client_authorizes(client; kws...)
         # A client configured with the correct bearer token sends
         # `authorization: Bearer <token>`, which the test server validates.
         # A successful response proves the header reached the server intact.
+        response = grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)); kws...)
+        return (length(response.data) == 1) && (response.data[1] == 1)
+    end
+
+    function client_fails_authorization(client; kws...)
+        try
+            grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)); kws...)
+            return false
+        catch ex
+            # A wrong token is rejected by the server with UNAUTHENTICATED, proving
+            # the supplied token value is transmitted faithfully (not dropped).
+            return isa(ex, gRPCServiceCallException) && (ex.grpc_status == GRPC_UNAUTHENTICATED)
+        end
+    end
+
+    @testset "Bearer Authentication" begin
         client = TestService_TestRPC_Client(
             _TEST_HOST,
             _TEST_PORT;
             token = _TEST_BEARER_TOKEN,
         )
-        @test client.token == _TEST_BEARER_TOKEN
+        @test client.options.token == _TEST_BEARER_TOKEN
+        @test client_authorizes(client)
 
-        response = grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
-        @test length(response.data) == 1
-        @test response.data[1] == 1
-
-        # A wrong token is rejected by the server with UNAUTHENTICATED, proving
-        # the supplied token value is transmitted faithfully (not dropped).
         bad_client = TestService_TestRPC_Client(
             _TEST_HOST,
             _TEST_PORT;
             token = "wrong-token",
         )
-        try
-            grpc_sync_request(bad_client, TestRequest(1, zeros(UInt64, 1)))
-            @test false  # Should not reach here
-        catch ex
-            @test isa(ex, gRPCServiceCallException)
-            @test ex.grpc_status == GRPC_UNAUTHENTICATED
-        end
+        @test client_fails_authorization(bad_client)
 
         # The default client sends no `authorization` header, so the server's
         # auth check is bypassed and the request succeeds as before.
         default_client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
-        @test isnothing(default_client.token)
+        @test isnothing(default_client.options.token)
         response = grpc_sync_request(default_client, TestRequest(1, zeros(UInt64, 1)))
         @test length(response.data) == 1
+    end
+
+    @testset "Metadata" begin
+        # The token can also be implemented through metadata, so we use the
+        # same server capabilities as in the token test to verify metadata
+        md = Dict("authorization" => "Bearer $(_TEST_BEARER_TOKEN)")
+        client = TestService_TestRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            metadata = md
+        )
+        @assert isnothing(client.options.token)
+        @test client.options.metadata == md
+        @test client_authorizes(client)
+
+        bad_client = TestService_TestRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            metadata = Dict("authorization" => "wrong_auth"),
+        )
+        @test client_fails_authorization(bad_client)
+    end
+    
+    @testset "_merge_options" begin
+        # Most options should be plainly overridden
+        options = gRPCClient.gRPCConnectionOptions()
+        options = gRPCClient._merge_options(options, Dict(:token => "123"))
+        @test options.token == "123"
+
+        # metadata Dicts are merged
+        options = gRPCClient.gRPCConnectionOptions(metadata = Dict("A" => "foo"))
+        options = gRPCClient._merge_options(options, Dict(:metadata => Dict("B" => "bar")))
+        @test options.metadata["A"] == "foo"
+        @test options.metadata["B"] == "bar"
+
+        # if two metadata dicts contain the same key, override
+        options = gRPCClient.gRPCConnectionOptions(metadata = Dict("A" => "foo"))
+        options = gRPCClient._merge_options(options, Dict(:metadata => Dict("A" => "bar")))
+        @test options.metadata["A"] == "bar"
+    end
+
+    @testset "Connection options priority" begin
+        # Tests _merge_options in action
+
+        # We test options priority by declaring tokens both
+        # at client creation and as keyword arguments to grpc_sync_request.
+        # The latter should take priority
+
+        # Client has good token
+        good_client = TestService_TestRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            token = _TEST_BEARER_TOKEN,
+        )
+        # Bad token provided to grpc_sync_request should override
+        @test client_fails_authorization(good_client; token = "bad token")
+ 
+        # Client has bad token
+        bad_client = TestService_TestRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            token = "bad token",
+        )
+        # Good token provided to grpc_sync_request should override
+        @test client_authorizes(bad_client; token = _TEST_BEARER_TOKEN)
     end
 
     @testset "Graceful shutdown during concurrent requests" begin
