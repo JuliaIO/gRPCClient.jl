@@ -204,7 +204,7 @@ end
     max_recieve_message_length::Int = 4 * 1024 * 1024
     # Optional bearer token attached to every request as an
     # `authorization: Bearer <token>` header. `nothing` sends no header.
-	# Note that this this is equivalent to adding "authorization" => "Bearer $token"
+	# Note that this is equivalent to adding "authorization" => "Bearer $token"
 	# to metadata
     token::Union{Nothing, String} = nothing
     metadata::Union{Nothing, Dict{String, String}} = nothing
