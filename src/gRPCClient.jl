@@ -102,6 +102,7 @@ export grpc_register_service_codegen
 export grpc_async_request
 export grpc_async_await
 export grpc_sync_request
+export grpc_cancel
 
 export gRPCCURL
 export gRPCRequest
