@@ -1016,6 +1016,13 @@ function Base.close(grpc::gRPCCURL)
             curl_multi_cleanup(grpc.multi)
             grpc.multi = Ptr{Cvoid}(0)
 
+            # Close any pending libcurl timeout Timer. Without this the last scheduled Timer stays
+            # open after shutdown, which leaks a libuv handle: `grpc.running` and the multi handle
+            # are gone, but the Timer keeps the event loop alive. That makes precompilation of any
+            # package that issues a gRPC call in its workload hang ("waiting for IO to finish").
+            # Done under grpc.lock, matching how timer_callback assigns grpc.timer.
+            stoptimer!(grpc)
+
             false
         end
     end
