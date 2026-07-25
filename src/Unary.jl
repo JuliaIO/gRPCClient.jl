@@ -32,12 +32,14 @@ end
 function grpc_async_request(
     client::gRPCServiceClient{TRequest,false,TResponse,false},
     request::TRequest;
-    options...
+    kws...
 ) where {TRequest<:Any,TResponse<:Any}
+
+    options = _merge_options(client.options, kws)
 
     request_buf = grpc_encode_request_iobuffer(
         request;
-        max_send_message_length = client.options.max_send_message_length,
+        max_send_message_length = options.max_send_message_length,
     )
     seekstart(request_buf)
 
@@ -48,7 +50,7 @@ function grpc_async_request(
         IOBuffer(),
         NOCHANNEL,
         NOCHANNEL,
-        _merge_options(client.options, options)
+        options
     )
 
     req
@@ -101,12 +103,14 @@ function grpc_async_request(
     request::TRequest,
     channel::Channel{gRPCAsyncChannelResponse{TResponse}},
     index::Int64;
-    options...
+    kws...
 ) where {TRequest<:Any,TResponse<:Any}
+
+    options = _merge_options(client.options, kws)
 
     request_buf = grpc_encode_request_iobuffer(
         request;
-        max_send_message_length = client.options.max_send_message_length,
+        max_send_message_length = options.max_send_message_length,
     )
     seekstart(request_buf)
 
@@ -117,7 +121,7 @@ function grpc_async_request(
         IOBuffer(),
         NOCHANNEL,
         NOCHANNEL,
-        _merge_options(client.options, options)
+        options
     )
 
     _spawn(client) do
