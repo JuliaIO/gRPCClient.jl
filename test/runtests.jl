@@ -723,6 +723,10 @@ include("gen/test/test_pb.jl")
         options = gRPCClient.gRPCConnectionOptions(metadata = Dict("A" => "foo"))
         options = gRPCClient._merge_options(options, Dict(:metadata => Dict("A" => "bar")))
         @test options.metadata["A"] == "bar"
+
+        # set metadata = nothing in gRPCConnectionOptions
+        opts = gRPCClient.gRPCConnectionOptions(metadata = nothing)
+        gRPCClient._merge_options(opts, Dict{Symbol,Any}(:metadata => Dict("x" => "1")))
     end
 
     @testset "Connection options priority" begin

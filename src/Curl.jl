@@ -234,11 +234,11 @@ end
                     for fn in fieldnames(gRPCConnectionOptions) if fn != :metadata]...
             ),
             # For metadata, we override on a per-field basis instead
-            if :metadata in keys(overrides)
-                if !isnothing(options.metadata) && !isnothing(overrides[:metadata])
+            if :metadata in keys(overrides) && !isnothing(overrides[:metadata])
+                if !isnothing(options.metadata)
                     merge(options.metadata, overrides[:metadata])
                 else
-                    overrides.metadata
+                    overrides[:metadata]
                 end
             else
                 options.metadata
