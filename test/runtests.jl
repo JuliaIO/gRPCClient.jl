@@ -2,9 +2,16 @@ using Test
 using ProtoBuf
 using gRPCClient
 using Base.Threads
+using Sockets
 
 # Import the timeout header formatting function for testing
-import gRPCClient: grpc_timeout_header_val, GRPC_DEADLINE_EXCEEDED, GRPC_UNAUTHENTICATED
+import gRPCClient:
+    grpc_timeout_header_val,
+    GRPC_DEADLINE_EXCEEDED,
+    GRPC_UNAUTHENTICATED,
+    GRPC_CANCELLED,
+    GRPC_INVALID_ARGUMENT,
+    GRPC_FAILED_PRECONDITION
 
 # The bearer token the test Go server accepts (mirrors expectedBearerToken in
 # test/go/server.go). A request carrying an `authorization` header must present
@@ -257,10 +264,30 @@ include("gen/test/test_pb.jl")
 
     @static if VERSION >= v"1.12"
 
+        # The streaming stress tests move ~1000 messages (or ~160MB) through a single
+        # call. On a slow CI runner that can take longer than the default 10s deadline,
+        # and the call's own DEADLINE_EXCEEDED then closes the stream mid-test, so give
+        # them a deadline generous enough to only trip when something is truly wedged.
+        stream_test_deadline = 300.0
+
+        # take! that, when the stream has died and closed the channel, surfaces the
+        # request's real failure (DEADLINE_EXCEEDED, a server error, ...) through
+        # grpc_async_await instead of erroring with a bare InvalidStateException.
+        take_or_diagnose = (req, channel) -> try
+            take!(channel)
+        catch
+            grpc_async_await(req)
+            rethrow()
+        end
+
         @testset "Response Streaming" begin
             N = 1000
 
-            client = TestService_TestServerStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+            client = TestService_TestServerStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = stream_test_deadline,
+            )
 
             response_c = Channel{TestResponse}(N)
 
@@ -268,7 +295,7 @@ include("gen/test/test_pb.jl")
 
             # We should get back N messages that end with their length
             for i = 1:N
-                response = take!(response_c)
+                response = take_or_diagnose(req, response_c)
                 @test length(response.data) == i
                 @test last(response.data) == i
             end
@@ -278,7 +305,11 @@ include("gen/test/test_pb.jl")
 
         @testset "Request Streaming" begin
             N = 1000
-            client = TestService_TestClientStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+            client = TestService_TestClientStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = stream_test_deadline,
+            )
             request_c = Channel{TestRequest}(N)
 
             request = grpc_async_request(client, request_c)
@@ -298,7 +329,11 @@ include("gen/test/test_pb.jl")
 
         @testset "Bidirectional Streaming" begin
             N = 1000
-            client = TestService_TestBidirectionalStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+            client = TestService_TestBidirectionalStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = stream_test_deadline,
+            )
 
             request_c = Channel{TestRequest}(N)
             response_c = Channel{TestResponse}(N)
@@ -310,7 +345,7 @@ include("gen/test/test_pb.jl")
             end
 
             for i = 1:N
-                response = take!(response_c)
+                response = take_or_diagnose(req, response_c)
                 @test length(response.data) == i
                 @test last(response.data) == i
             end
@@ -320,10 +355,50 @@ include("gen/test/test_pb.jl")
             grpc_async_await(req)
         end
 
+        # An all-default protobuf encodes to zero bytes, so its 5-byte length-prefix
+        # is the entire frame. Such a message used to fail the response parser: it
+        # completed without consuming any of the current chunk, which the write
+        # callback read as a stall and reported as INTERNAL "only handled N bytes",
+        # and a zero-length message whose prefix was the last thing on the wire was
+        # dropped instead of delivered. Interleaving empty and non-empty responses
+        # covers both, ending on an empty one.
+        @testset "Response Streaming zero-length messages" begin
+            N = 200
+
+            client = TestService_TestBidirectionalStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = stream_test_deadline,
+            )
+
+            request_c = Channel{TestRequest}(N)
+            response_c = Channel{TestResponse}(N)
+
+            req = grpc_async_request(client, request_c, response_c)
+
+            # Every other response is empty, including the last one
+            sizes = [iseven(i) ? 0 : i for i = 1:N]
+            for sz in sizes
+                put!(request_c, TestRequest(sz, UInt64[]))
+            end
+            close(request_c)
+
+            for sz in sizes
+                response = take_or_diagnose(req, response_c)
+                @test length(response.data) == sz
+            end
+
+            grpc_async_await(req)
+        end
+
         @testset "Response Streaming hang after END_STREAM" begin
             N = 10
 
-            client = TestService_TestServerStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+            client = TestService_TestServerStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = stream_test_deadline,
+            )
 
             response_c = Channel{TestResponse}(N)
 
@@ -351,6 +426,8 @@ include("gen/test/test_pb.jl")
             )
             request_c = Channel{TestRequest}(1)
 
+            # Even with a 1ms deadline submission never throws; the failure is
+            # raised by the await
             request = grpc_async_request(client, request_c)
             sleep(1.0)
 
@@ -366,7 +443,11 @@ include("gen/test/test_pb.jl")
 
         @testset "Response Streaming - Small Messages" begin
             N = 1000
-            client = TestService_TestServerStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+            client = TestService_TestServerStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = stream_test_deadline,
+            )
 
             response_c = Channel{TestResponse}(N)
 
@@ -374,7 +455,7 @@ include("gen/test/test_pb.jl")
 
             # We should get back N small messages
             for i = 1:N
-                response = take!(response_c)
+                response = take_or_diagnose(req, response_c)
                 @test length(response.data) >= 1
             end
 
@@ -383,7 +464,11 @@ include("gen/test/test_pb.jl")
 
         @testset "Request Streaming - Large Payloads" begin
             N = 100
-            client = TestService_TestClientStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+            client = TestService_TestClientStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = stream_test_deadline,
+            )
             request_c = Channel{TestRequest}(N)
 
             request = grpc_async_request(client, request_c)
@@ -512,6 +597,158 @@ include("gen/test/test_pb.jl")
                 @test isa(ex, gRPCServiceCallException)
             end
         end
+
+        @testset "No deadline (Inf) ended by grpc_cancel" begin
+            # A bidirectional stream with no deadline stays open indefinitely and is
+            # ended by explicit cancellation
+            client = TestService_TestBidirectionalStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = Inf,
+            )
+            request_c = Channel{TestRequest}(16)
+            response_c = Channel{TestResponse}(16)
+            req = grpc_async_request(client, request_c, response_c)
+
+            # Stream is live: request/response round trips work
+            for i = 1:3
+                put!(request_c, TestRequest(i, zeros(UInt64, i)))
+                r = take!(response_c)
+                @test length(r.data) == i
+            end
+
+            @test grpc_cancel(req)
+            # Response iteration ends promptly after cancellation
+            for _ in response_c
+            end
+            @test !isopen(response_c)
+            try
+                grpc_async_await(req)
+                @test false
+            catch ex
+                @test isa(ex, gRPCServiceCallException)
+                @test ex.grpc_status == GRPC_CANCELLED
+            end
+            # Cancel does not close the caller's request channel; that stays the
+            # caller's job
+            @test isopen(request_c)
+            close(request_c)
+
+            # Regression for the recycled curl_done_reading Event: the slot freed by
+            # the cancelled stream (LIFO freelist, so the next request reuses it) must
+            # be clean. Run follow-up streams and unary requests on the same handle.
+            for _ = 1:3
+                cs_client = TestService_TestClientStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+                cs_c = Channel{TestRequest}(4)
+                cs_req = grpc_async_request(cs_client, cs_c)
+                put!(cs_c, TestRequest(1, zeros(UInt64, 1)))
+                put!(cs_c, TestRequest(1, zeros(UInt64, 1)))
+                close(cs_c)
+                r = grpc_async_await(cs_client, cs_req)
+                @test length(r.data) == 2
+            end
+            u_client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
+            @test length(grpc_sync_request(u_client, TestRequest(4, zeros(UInt64, 1))).data) == 4
+        end
+    end
+
+    @testset "No deadline (Inf) on a never-ready connection" begin
+        # With no deadline there is no watchdog: a request parked behind a connection
+        # that never becomes ready waits indefinitely, and grpc_cancel is the way out
+        grpc_handle = gRPCCURL()
+
+        silent_server = listen(Sockets.localhost, 0)
+        silent_port = Int(getsockname(silent_server)[2])
+        accepted = Sockets.TCPSocket[]
+        @async while true
+            try
+                push!(accepted, accept(silent_server))
+            catch
+                break
+            end
+        end
+
+        client = TestService_TestRPC_Client(
+            "127.0.0.1",
+            silent_port;
+            grpc = grpc_handle,
+            deadline = Inf,
+        )
+        req = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+        sleep(1.0)
+        # Still in flight: nothing timed it out
+        @test !req.completed
+        @test isnothing(req.ex)
+
+        t0 = time()
+        @test grpc_cancel(req)
+        try
+            grpc_async_await(client, req)
+            @test false
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+            @test ex.grpc_status == GRPC_CANCELLED
+        end
+        @test time() - t0 < 1.0
+
+        # NaN, -Inf, and negative deadlines are programming errors and throw
+        # INVALID_ARGUMENT at submission (part of the submission exception contract).
+        # Negative values are rejected before the watchdog Timer is armed, which would
+        # otherwise surface a bare ArgumentError on a negative interval.
+        for bad in (NaN, -Inf, -1.0, -0.001)
+            bad_client = TestService_TestRPC_Client(
+                "127.0.0.1",
+                silent_port;
+                grpc = grpc_handle,
+                deadline = bad,
+            )
+            try
+                grpc_async_request(bad_client, TestRequest(1, zeros(UInt64, 1)))
+                @test false
+            catch ex
+                @test isa(ex, gRPCServiceCallException)
+                @test ex.grpc_status == GRPC_INVALID_ARGUMENT
+            end
+
+            # Also rejected when supplied as a per-request override on a good client
+            ok_client = TestService_TestRPC_Client(
+                "127.0.0.1",
+                silent_port;
+                grpc = grpc_handle,
+            )
+            try
+                grpc_async_request(
+                    ok_client,
+                    TestRequest(1, zeros(UInt64, 1));
+                    deadline = bad,
+                )
+                @test false
+            catch ex
+                @test isa(ex, gRPCServiceCallException)
+                @test ex.grpc_status == GRPC_INVALID_ARGUMENT
+            end
+        end
+
+        # A deadline of exactly 0 is legal: it expires immediately, so the failure is
+        # DEADLINE_EXCEEDED raised from await rather than INVALID_ARGUMENT at submission
+        zero_client = TestService_TestRPC_Client(
+            "127.0.0.1",
+            silent_port;
+            grpc = grpc_handle,
+            deadline = 0,
+        )
+        req = grpc_async_request(zero_client, TestRequest(1, zeros(UInt64, 1)))
+        try
+            grpc_async_await(req, TestResponse)
+            @test false
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+            @test ex.grpc_status == GRPC_DEADLINE_EXCEEDED
+        end
+
+        close(silent_server)
+        foreach(close, accepted)
+        grpc_shutdown(grpc_handle)
     end
 
     @testset "grpc-timeout header value formatting" begin
@@ -733,6 +970,80 @@ include("gen/test/test_pb.jl")
         @test_throws ArgumentError gRPCClient._merge_options(opts, Dict{Symbol,Any}(:not_a_key => Dict("x" => "1")))
     end
 
+    @testset "token and authorization metadata conflict" begin
+        # `token` and an `authorization` metadata entry are two spellings of the same
+        # header. Setting both would put two `authorization` headers on the wire and
+        # leave the choice to the server, so it is rejected as INVALID_ARGUMENT rather
+        # than silently sending both.
+        function conflicts(; kws...)
+            try
+                gRPCClient.gRPCConnectionOptions(; kws...)
+                return false
+            catch ex
+                return isa(ex, gRPCServiceCallException) &&
+                       ex.grpc_status == GRPC_INVALID_ARGUMENT
+            end
+        end
+
+        @test conflicts(token = "t", metadata = Dict("authorization" => "Bearer x"))
+        # Header names are case-insensitive and libcurl lowercases them for HTTP/2, so
+        # any capitalization collides with `token`.
+        @test conflicts(token = "t", metadata = Dict("Authorization" => "Bearer x"))
+        @test conflicts(token = "t", metadata = Dict("AUTHORIZATION" => "Bearer x"))
+        @test conflicts(
+            token = "t",
+            metadata = Dict("x-req-id" => "1", "authoriZATION" => "Bearer x"),
+        )
+
+        # Either mechanism alone is fine, as is metadata that merely looks similar.
+        @test !conflicts(token = "t")
+        @test !conflicts(metadata = Dict("authorization" => "Bearer x"))
+        @test !conflicts(token = "t", metadata = Dict("x-api-key" => "k"))
+        @test !conflicts(token = "t", metadata = Dict("authorizatio" => "x"))
+        @test !conflicts(token = "t", metadata = Dict("authorizationx" => "x"))
+        @test !conflicts(token = "t", metadata = Dict("x-authorization" => "x"))
+
+        # The conflict is also caught when a per-request override introduces it, in
+        # either direction.
+        with_token = gRPCClient.gRPCConnectionOptions(token = "t")
+        @test_throws gRPCServiceCallException gRPCClient._merge_options(
+            with_token,
+            Dict(:metadata => Dict("authorization" => "Bearer x")),
+        )
+        with_md = gRPCClient.gRPCConnectionOptions(
+            metadata = Dict("authorization" => "Bearer x"),
+        )
+        @test_throws gRPCServiceCallException gRPCClient._merge_options(
+            with_md,
+            Dict(:token => "t"),
+        )
+
+        # Passing `token = nothing` is the documented way to hand a client-level token
+        # over to per-request metadata.
+        swapped = gRPCClient._merge_options(
+            with_token,
+            Dict(:token => nothing, :metadata => Dict("authorization" => "Bearer x")),
+        )
+        @test isnothing(swapped.token)
+        @test swapped.metadata["authorization"] == "Bearer x"
+
+        # The conflict check must not allocate: it runs whenever options are built.
+        md = Dict("x-req-id" => "1", "authorization" => "Bearer x")
+        gRPCClient._has_authorization_key(md)  # warm up
+        @test (@allocated gRPCClient._has_authorization_key(md)) == 0
+        md_miss = Dict("x-req-id" => "1", "x-trace" => "abc")
+        gRPCClient._has_authorization_key(md_miss)
+        @test (@allocated gRPCClient._has_authorization_key(md_miss)) == 0
+
+        # A client rejects the conflicting pair end to end.
+        @test_throws gRPCServiceCallException TestService_TestRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            token = _TEST_BEARER_TOKEN,
+            metadata = Dict("authorization" => "Bearer $(_TEST_BEARER_TOKEN)"),
+        )
+    end
+
     @testset "Connection options priority" begin
         # Tests _merge_options in action
 
@@ -801,6 +1112,187 @@ include("gen/test/test_pb.jl")
         @test !grpc_handle.running
         @test isempty(grpc_handle.requests)
         @test isempty(grpc_handle.watchers)
+    end
+
+    @testset "Deadline watchdog and grpc_cancel on a never-ready connection" begin
+        # A server that accepts TCP but never completes the HTTP/2 handshake. libcurl
+        # parks every handle after the first behind CURLOPT_PIPEWAIT waiting for the
+        # connection to become multiplexable, and parked handles never have their
+        # CURLOPT_TIMEOUT_MS processed, so without the client-side deadline watchdog
+        # these requests wedge forever and leak all max_streams slots.
+        grpc_handle = gRPCCURL()
+        grpc_init(grpc_handle)
+
+        silent_server = listen(Sockets.localhost, 0)
+        silent_port = Int(getsockname(silent_server)[2])
+        accepted = Sockets.TCPSocket[]
+        accept_task = @async while true
+            try
+                push!(accepted, accept(silent_server))
+            catch
+                break
+            end
+        end
+
+        deadline = 1.0
+        client = TestService_TestRPC_Client(
+            "127.0.0.1",
+            silent_port;
+            grpc = grpc_handle,
+            deadline = deadline,
+        )
+
+        # Exceed max_streams so later requests also exercise semaphore hand-off
+        N = gRPCClient.GRPC_MAX_STREAMS + 4
+
+        t0 = time()
+        tasks = [
+            @spawn begin
+                try
+                    request = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+                    grpc_async_await(client, request)
+                    nothing
+                catch ex
+                    ex
+                end
+            end for _ = 1:N
+        ]
+        results = fetch.(tasks)
+        elapsed = time() - t0
+
+        # Every request resolved (no wedge) with DEADLINE_EXCEEDED at ~deadline per batch
+        @test all(
+            ex ->
+                isa(ex, gRPCServiceCallException) &&
+                    ex.grpc_status == GRPC_DEADLINE_EXCEEDED,
+            results,
+        )
+        # Two semaphore batches, each bounded by deadline + watchdog grace; generous margin
+        @test elapsed < 6 * deadline
+
+        # Explicit cancellation of an in-flight (parked) request
+        request = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+        @test grpc_cancel(request)
+        try
+            grpc_async_await(client, request)
+            @test false
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+            @test ex.grpc_status == GRPC_CANCELLED
+        end
+        # Cancelling an already-completed request is a no-op
+        @test !grpc_cancel(request)
+
+        close(silent_server)
+        foreach(close, accepted)
+        grpc_shutdown(grpc_handle)
+        @test isempty(grpc_handle.requests)
+    end
+
+    @testset "Deadline covers the max_streams queue wait" begin
+        # One slot, held by a request against a never-ready connection. A second request
+        # with a shorter deadline never gets the slot and must fail at ITS deadline,
+        # not once the occupier finally releases the slot.
+        grpc_handle = gRPCCURL(max_streams = 1)
+
+        silent_server = listen(Sockets.localhost, 0)
+        silent_port = Int(getsockname(silent_server)[2])
+        accepted = Sockets.TCPSocket[]
+        @async while true
+            try
+                push!(accepted, accept(silent_server))
+            catch
+                break
+            end
+        end
+
+        occupier_client = TestService_TestRPC_Client(
+            "127.0.0.1",
+            silent_port;
+            grpc = grpc_handle,
+            deadline = 3.0,
+        )
+        occupier = grpc_async_request(occupier_client, TestRequest(1, zeros(UInt64, 1)))
+
+        queued_client = TestService_TestRPC_Client(
+            "127.0.0.1",
+            silent_port;
+            grpc = grpc_handle,
+            deadline = 0.5,
+        )
+        t0 = time()
+        # Submission never throws, even for a request that expires while queued; the
+        # failure is raised by the await
+        queued = grpc_async_request(queued_client, TestRequest(1, zeros(UInt64, 1)))
+        try
+            grpc_async_await(queued_client, queued)
+            @test false
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+            @test ex.grpc_status == GRPC_DEADLINE_EXCEEDED
+        end
+        # Resolved around its own deadline (plus watchdog grace), well before the
+        # occupier frees the slot at ~3s
+        @test time() - t0 < 2.0
+
+        # The occupier still resolves at its own deadline
+        try
+            grpc_async_await(occupier_client, occupier)
+            @test false
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+            @test ex.grpc_status == GRPC_DEADLINE_EXCEEDED
+        end
+
+        close(silent_server)
+        foreach(close, accepted)
+        grpc_shutdown(grpc_handle)
+    end
+
+    @testset "Shutdown unblocks queued requests" begin
+        grpc_handle = gRPCCURL(max_streams = 1)
+
+        silent_server = listen(Sockets.localhost, 0)
+        silent_port = Int(getsockname(silent_server)[2])
+        accepted = Sockets.TCPSocket[]
+        @async while true
+            try
+                push!(accepted, accept(silent_server))
+            catch
+                break
+            end
+        end
+
+        client = TestService_TestRPC_Client(
+            "127.0.0.1",
+            silent_port;
+            grpc = grpc_handle,
+            deadline = 10.0,
+        )
+        # Hold the only slot, then queue a second request behind it
+        grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+        queued = @spawn try
+            # A shutdown while queued propagates FAILED_PRECONDITION from submission
+            # (the caller is still blocked inside grpc_async_request at that point)
+            req = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+            grpc_async_await(client, req)
+            nothing
+        catch ex
+            ex
+        end
+        sleep(0.5)
+        @test !istaskdone(queued)
+
+        t0 = time()
+        grpc_shutdown(grpc_handle)
+        ex = fetch(queued)
+        # The queued request was unblocked by the shutdown, well before its deadline
+        @test time() - t0 < 2.0
+        @test isa(ex, gRPCServiceCallException)
+        @test ex.grpc_status == GRPC_FAILED_PRECONDITION
+
+        close(silent_server)
+        foreach(close, accepted)
     end
 
     grpc_shutdown()

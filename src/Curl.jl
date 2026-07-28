@@ -36,10 +36,18 @@ function write_callback(
 
         handled_n_bytes_total = 0
         try
+            # A zero-byte return with data still left over means handle_write made no
+            # progress and looping again would spin forever inside a curl callback,
+            # so break and let the byte-count check below report it. Zero bytes with
+            # no leftover data is normal (a chunk that only partially fills the
+            # current header or message ends the loop through `buf`), and must not
+            # be treated as a stall: a zero-length message used to reach here and
+            # fail the byte-count check, which is why it is now completed as soon as
+            # its length-prefix is parsed. See handle_write.
             while !isnothing(buf) && handled_n_bytes_total < n
                 handled_n_bytes, buf = handle_write(req, buf)
                 handled_n_bytes_total += handled_n_bytes
-                handled_n_bytes == 0 && break
+                handled_n_bytes == 0 && !isnothing(buf) && break
             end
         catch ex
             # Eat InvalidStateException raised on put! to closed channel
@@ -196,6 +204,31 @@ function grpc_timeout_header_val(timeout::Real)
         "grpc-timeout $(timeout)s could not be encoded within the 8-digit gRPC limit"))
 end
 
+const _AUTHORIZATION_HEADER = "authorization"
+
+# ASCII case-fold a single byte. Header names are ASCII per the HTTP/2 spec, so folding
+# bytes is sufficient and, unlike lowercase(), needs no temporary String.
+@inline _ascii_lower(b::UInt8) = ifelse(UInt8('A') <= b <= UInt8('Z'), b | 0x20, b)
+
+# Does `metadata` carry an `authorization` entry under any capitalization? Header names
+# are case-insensitive and libcurl lowercases them for HTTP/2, so "Authorization"
+# collides with `token` exactly as "authorization" does.
+#
+# Allocation-free by construction: `keys` on a Dict is a lazy KeySet, and comparing with
+# `codeunit` reads bytes in place rather than building a lowercased copy of each key.
+function _has_authorization_key(metadata::Dict{String,String})
+    n = ncodeunits(_AUTHORIZATION_HEADER)
+    for k in keys(metadata)
+        ncodeunits(k) == n || continue
+        i = 1
+        while i <= n && _ascii_lower(codeunit(k, i)) == codeunit(_AUTHORIZATION_HEADER, i)
+            i += 1
+        end
+        i > n && return true
+    end
+    return false
+end
+
 @kwdef struct gRPCConnectionOptions
     secure::Bool = false
     deadline::Float64 = 10
@@ -208,6 +241,47 @@ end
 	# to metadata
     token::Union{Nothing, String} = nothing
     metadata::Union{Nothing, Dict{String, String}} = nothing
+
+    # `token` and an `authorization` metadata entry are two spellings of the same
+    # header, so setting both would append two `authorization` headers and leave which
+    # one applies up to the server. Reject that ambiguity at construction rather than
+    # silently sending both. Validating here covers every path that builds options: the
+    # client constructor and _merge_options, which reaches this via the positional
+    # constructor. The check runs once per options object, not once per request, since
+    # _merge_options returns the existing object untouched when nothing is overridden.
+    #
+    # To swap a client-level token for per-request metadata, pass `token = nothing`
+    # alongside the metadata override.
+    function gRPCConnectionOptions(
+        secure,
+        deadline,
+        keepalive,
+        max_send_message_length,
+        max_recieve_message_length,
+        token,
+        metadata,
+    )
+        if !isnothing(token) &&
+           !isnothing(metadata) &&
+           _has_authorization_key(metadata)
+            throw(
+                gRPCServiceCallException(
+                    GRPC_INVALID_ARGUMENT,
+                    "token and an \"authorization\" metadata entry both set the authorization header; " *
+                    "use one or the other (pass token = nothing to override a client-level token with metadata)",
+                ),
+            )
+        end
+        new(
+            secure,
+            deadline,
+            keepalive,
+            max_send_message_length,
+            max_recieve_message_length,
+            token,
+            metadata,
+        )
+    end
 end
 
 # Creates a new options object (if necessary) where some fields are overridden 
@@ -246,6 +320,12 @@ end
         )
     end
 end
+
+# How long (seconds) past the request deadline the client-side watchdog waits before
+# cancelling a request libcurl has failed to complete. The grace period keeps libcurl's own
+# (more specific) timeout errors primary when it is driving the handle properly; the
+# watchdog only wins when libcurl has wedged (see the watchdog comment in gRPCRequest).
+const GRPC_DEADLINE_GRACE = 0.25
 
 mutable struct gRPCRequest
     # CURL multi lock for exclusive access to the easy handle after its added to the multi
@@ -300,6 +380,17 @@ mutable struct gRPCRequest
     grpc_status::Int64
     grpc_message::String
 
+    # The gRPCCURL handle this request was made on, needed by grpc_cancel and the deadline
+    # watchdog. Typed Any because gRPCCURL is defined later in this file.
+    grpc::Any
+
+    # Set (under grpc.lock) once cleanup_request has run, making completion, cancellation,
+    # and shutdown mutually idempotent
+    completed::Bool
+
+    # Client-side deadline watchdog, see the comment in the constructor
+    timer::Union{Nothing,Timer}
+
     function gRPCRequest(
         grpc,
         url::String,
@@ -313,6 +404,13 @@ mutable struct gRPCRequest
 
         options = _merge_options(options, kws)
 
+        # Exception contract: grpc_async_request throws only for programming errors it
+        # can detect synchronously at submission (an uninitialized or shut-down handle
+        # as FAILED_PRECONDITION, an invalid deadline as INVALID_ARGUMENT, an oversized
+        # message as RESOURCE_EXHAUSTED at encode). Failures that depend on time or
+        # concurrency (deadline exceeded, cancellation, transport errors, server
+        # statuses) are raised by grpc_async_await instead, keeping each exception type
+        # in the location callers have always handled it.
         !grpc.running && throw(
             gRPCServiceCallException(
                 GRPC_FAILED_PRECONDITION,
@@ -320,23 +418,132 @@ mutable struct gRPCRequest
             ),
         )
 
-        # Reduce number of available requests by one or block if its currently zero
-        # Also reduces the need to allocate the curl_done_reading Event for every request
-        # This is a 7% reduction in allocations overall
-        curl_done_reading = max_reqs_dec(grpc)
+        deadline = options.deadline
+
+        # A deadline of Inf means no deadline: no watchdog, no curl timeouts, and no
+        # grpc-timeout header (per the gRPC spec an absent header means no deadline).
+        # Such a request runs until it completes, grpc_cancel is called, or the handle
+        # is shut down. NaN, -Inf, and any negative deadline are programming errors, so
+        # they throw here rather than in await. Negative values must be rejected before
+        # the watchdog Timer below, which would otherwise raise a bare ArgumentError on
+        # a negative interval instead of the INVALID_ARGUMENT the contract promises. A
+        # deadline of exactly 0 is legal and expires immediately, surfacing as
+        # DEADLINE_EXCEEDED from await like any other expiry.
+        deadline == Inf || (isfinite(deadline) && deadline >= 0) || throw(
+            gRPCServiceCallException(
+                GRPC_INVALID_ARGUMENT,
+                "deadline must be a non-negative finite number of seconds or Inf, got $(deadline)",
+            ),
+        )
+
+        # The deadline covers the entire call starting now: time spent queued waiting for
+        # one of the max_streams slots counts against it, and the transfer only gets
+        # whatever budget remains after the wait.
+        expiry = time() + deadline
+
+        # One watchdog covers both phases of the call, and is armed before the queue wait
+        # so a request can never block past its deadline. While the request is queued
+        # (req not yet assigned below) firing wakes the semaphore waiters so an expired
+        # waiter can give up; once the request is in flight it cancels the transfer.
+        #
+        # The in-flight case is the important one: libcurl only enforces
+        # CURLOPT_TIMEOUT_MS / CURLOPT_CONNECTTIMEOUT_MS for handles it is actively
+        # driving. A handle parked while waiting for another handle's connection to
+        # become multiplexable (CURLOPT_PIPEWAIT) does not re-enter libcurl's state
+        # machine until that connection makes progress, so if the connection never
+        # becomes ready (server accepts TCP but never completes the HTTP/2 handshake,
+        # stalled connect, etc.) the parked handle's timeout never fires, the request
+        # wedges forever, and its max_streams slot leaks. This watchdog is the
+        # client-side backstop for that: if libcurl has not completed the request
+        # shortly after the deadline, cancel it with DEADLINE_EXCEEDED.
+        local req = nothing
+        watchdog = if deadline == Inf
+            nothing
+        else
+            Timer(deadline + GRPC_DEADLINE_GRACE) do _
+                try
+                    # Wake all queue waiters so any expired one can bail out. Cheap: this
+                    # only runs when a request actually times out, and waiters that are
+                    # not expired just go back to sleep. Taking the condition lock also
+                    # fences the read of `req` below against its assignment in the
+                    # constructor.
+                    lock(grpc.sem_cond) do
+                        notify(grpc.sem_cond; all = true)
+                    end
+
+                    r = req
+                    r isa gRPCRequest && grpc_cancel(
+                        r,
+                        gRPCServiceCallException(
+                            GRPC_DEADLINE_EXCEEDED,
+                            "Deadline exceeded.",
+                        ),
+                    )
+                catch err
+                    @error("deadline watchdog: unexpected error", err, maxlog = 1_000)
+                end
+            end
+        end
+
+        # Take one of the max_streams slots or block until one frees up, giving up at the
+        # deadline. The slot carries a recycled curl_done_reading Event, which avoids
+        # allocating one per request (a 7% reduction in allocations overall).
+        curl_done_reading = try
+            max_reqs_dec(grpc, expiry)
+        catch ex
+            isnothing(watchdog) || close(watchdog)
+            # Only a deadline expiry while queued becomes an await-raised dead request;
+            # a shutdown while queued propagates as FAILED_PRECONDITION from submission,
+            # matching the contract above
+            (ex isa gRPCServiceCallException && ex.grpc_status == GRPC_DEADLINE_EXCEEDED) ||
+                rethrow()
+            return gRPCRequest(
+                grpc,
+                url,
+                request,
+                response,
+                request_c,
+                response_c,
+                ex,
+                options,
+            )
+        end
+
+        # The transfer gets the budget the queue wait did not use. max_reqs_dec only
+        # checks expiry while the queue is non-empty, so re-check here.
+        remaining = expiry - time()
+        if remaining <= 0
+            isnothing(watchdog) || close(watchdog)
+            max_reqs_inc(grpc, curl_done_reading)
+            return gRPCRequest(
+                grpc,
+                url,
+                request,
+                response,
+                request_c,
+                response_c,
+                gRPCServiceCallException(
+                    GRPC_DEADLINE_EXCEEDED,
+                    "Deadline exceeded while queued waiting for an available stream.",
+                ),
+                options,
+            )
+        end
 
         easy_handle = curl_easy_init()
 
-        # Uncomment this for debugging purposes
-        # curl_easy_setopt(easy_handle, CURLOPT_VERBOSE, UInt32(1))
+        # Set the GRPC_CURL_VERBOSE environment variable to get libcurl debug output
+        haskey(ENV, "GRPC_CURL_VERBOSE") &&
+            curl_easy_setopt(easy_handle, CURLOPT_VERBOSE, UInt32(1))
 
         curl_easy_setopt(easy_handle, CURLOPT_URL, url)
-        curl_easy_setopt(easy_handle, CURLOPT_TIMEOUT_MS, Clong(ceil(1000 * options.deadline)))
-        curl_easy_setopt(
-            easy_handle,
-            CURLOPT_CONNECTTIMEOUT_MS,
-            Clong(ceil(1000 * options.deadline)),
-        )
+        # With no deadline (remaining == Inf) pass 0: for CURLOPT_TIMEOUT_MS that
+        # disables curl's overall timeout, and for CURLOPT_CONNECTTIMEOUT_MS it falls
+        # back to curl's default connect timeout (300s), a sane floor to keep even for
+        # a request with no deadline
+        timeout_ms = isfinite(remaining) ? Clong(ceil(1000 * remaining)) : Clong(0)
+        curl_easy_setopt(easy_handle, CURLOPT_TIMEOUT_MS, timeout_ms)
+        curl_easy_setopt(easy_handle, CURLOPT_CONNECTTIMEOUT_MS, timeout_ms)
         curl_easy_setopt(easy_handle, CURLOPT_PIPEWAIT, Clong(1))
         curl_easy_setopt(easy_handle, CURLOPT_POST, Clong(1))
         curl_easy_setopt(easy_handle, CURLOPT_CUSTOMREQUEST, "POST")
@@ -356,8 +563,15 @@ mutable struct gRPCRequest
         headers = curl_slist_append(headers, "Content-Type: application/grpc+proto")
         headers = curl_slist_append(headers, "Content-Length:")
         headers = curl_slist_append(headers, "te: trailers")
-        headers =
-            curl_slist_append(headers, "grpc-timeout: $(grpc_timeout_header_val(options.deadline))")
+        # The server is told the remaining budget, not the original deadline: any time
+        # this request already spent queued client-side is gone. With no deadline the
+        # header is omitted entirely, which the gRPC spec defines as "no deadline".
+        if isfinite(remaining)
+            headers = curl_slist_append(
+                headers,
+                "grpc-timeout: $(grpc_timeout_header_val(remaining))",
+            )
+        end
         if !isnothing(options.token)
             headers = curl_slist_append(headers, "authorization: Bearer $(options.token)")
         end
@@ -395,6 +609,9 @@ mutable struct gRPCRequest
             curl_done_reading,
             GRPC_OK,
             "",
+            grpc,
+            false,
+            watchdog,
         )
         preserve_handle(req)
 
@@ -424,7 +641,10 @@ mutable struct gRPCRequest
 
         lock(grpc.lock) do
             if !grpc.running
-                # We did all that work for nothing, and now we have to cleanup
+                # We did all that work for nothing, and now we have to cleanup. A
+                # shut-down handle is a submission-time FAILED_PRECONDITION per the
+                # contract at the top of this constructor.
+                isnothing(watchdog) || close(watchdog)
                 curl_easy_cleanup(easy_handle)
                 curl_slist_free_all(headers)
                 unpreserve_handle(req)
@@ -441,7 +661,72 @@ mutable struct gRPCRequest
 
             push!(grpc.requests, req)
             curl_multi_add_handle(grpc.multi, easy_handle)
+
+            # If the watchdog fired in the window between the queue wait and this
+            # registration it saw `req` unset and cancelled nothing; a fired one-shot
+            # Timer is no longer open, so catch that case here (grpc_cancel is a
+            # no-op if it raced a concurrent completion)
+            if !isnothing(watchdog) && !isopen(watchdog)
+                grpc_cancel(
+                    req,
+                    gRPCServiceCallException(GRPC_DEADLINE_EXCEEDED, "Deadline exceeded."),
+                )
+            end
         end
+
+        return req
+    end
+
+    # Build an already-completed request that only carries an exception. Used when the
+    # deadline expires while queued for a max_streams slot, before the request ever
+    # reaches libcurl: submission still returns a gRPCRequest and DEADLINE_EXCEEDED is
+    # raised from grpc_async_await, where callers have always handled it (see the
+    # exception contract in the primary constructor). Holds no easy handle and no
+    # max_streams slot, is never added to grpc.requests, and is already marked
+    # completed so cleanup_request and grpc_cancel are no-ops on it.
+    function gRPCRequest(
+        grpc,
+        url::String,
+        request::IOBuffer,
+        response::IOBuffer,
+        request_c::Union{Channel{IOBuffer},NoChannel},
+        response_c::Union{Channel{IOBuffer},NoChannel},
+        ex::Exception,
+        options::gRPCConnectionOptions,
+    )
+        req = new(
+            grpc.lock,
+            Ptr{Cvoid}(0),
+            grpc.multi,
+            C_NULL,
+            url,
+            request,
+            0,
+            response,
+            request_c,
+            response_c,
+            Event(),
+            UInt32(0),
+            UInt8[],
+            options.max_send_message_length,
+            options.max_recieve_message_length,
+            ex,
+            false,
+            false,
+            0,
+            Event(),
+            GRPC_OK,
+            "",
+            grpc,
+            true,
+            nothing,
+        )
+
+        # Unblock stream pumps and anything already waiting on the request. The pumps
+        # check req.ex before touching the easy handle, so they exit without side effects.
+        close(req.response_c)
+        close(req.request_c)
+        notify(req.ready)
 
         return req
     end
@@ -462,6 +747,24 @@ isstreaming_response(req::gRPCRequest) = !isa(req.response_c, NoChannel)
 
 
 Base.wait(req::gRPCRequest) = wait(req.ready)
+
+# Hand a fully received response message off to the `grpc_async_stream_response` task
+# and reset the parser for the next one. Only valid for a response-streaming request:
+# a unary response is left in `req.response` for `grpc_async_await` to decode.
+function complete_streaming_message!(req::gRPCRequest)
+    # Put the completed response protobuf buffer in the channel so it can be processed
+    # by the `grpc_async_stream_response` task
+    seekstart(req.response)
+    put!(req.response_c, req.response)
+
+    # There might be another response after this one so reset the parser state
+    req.response = IOBuffer()
+    req.response_read_header = false
+    req.response_compressed = false
+    req.response_length = 0
+
+    return nothing
+end
 
 function handle_write(
     req::gRPCRequest,
@@ -513,6 +816,18 @@ function handle_write(
             seekstart(req.response)
             truncate(req.response, 0)
 
+            # A zero-length message is complete the moment its length-prefix is
+            # parsed: an all-default protobuf (`google.protobuf.Empty`, a message
+            # whose every field holds its default) encodes to no bytes at all, so
+            # there is no body to wait for. Emit it here instead of letting it fall
+            # through to the message path below, which would have to complete a
+            # message without consuming any of this chunk. That keeps handle_write
+            # always consuming at least one byte per call, and delivers the message
+            # even when its prefix is the last thing that arrives on the wire.
+            req.response_length == 0 &&
+                isstreaming_response(req) &&
+                complete_streaming_message!(req)
+
             buf_leftover = nothing
 
             if (leftover_bytes = length(buf) - header_bytes_left) > 0
@@ -535,17 +850,7 @@ function handle_write(
         buf_complete = unsafe_wrap(Array, pointer(buf), (message_bytes_left,))
         n = write(req.response, buf_complete)
 
-        # Response is done, put it in the channel so it can be returned back to the user
-        seekstart(req.response)
-
-        # Put the completed response protobuf buffer in the channel so it can be processed by the `grpc_async_stream_response` task
-        put!(req.response_c, req.response)
-
-        # There might be another response after this so reset these
-        req.response = IOBuffer()
-        req.response_read_header = false
-        req.response_compressed = false
-        req.response_length = 0
+        complete_streaming_message!(req)
 
         # Handle the remaining data
         leftover_bytes = length(buf) - n
@@ -785,8 +1090,14 @@ mutable struct gRPCCURL
     watchers_lock::ReentrantLock
     running::Bool
     requests::Vector{gRPCRequest}
-    # Allows for controlling the maximum number of concurrent gRPC requests/streams
-    sem::Channel{Event}
+    # The maximum number of concurrent gRPC requests/streams
+    max_streams::Int64
+    # Semaphore limiting concurrency to max_streams. sem_free holds one recycled
+    # curl_done_reading Event per free slot; sem_cond guards it and queues waiters.
+    # A plain Condition (rather than a Channel) so waiters can be woken to re-check
+    # their own deadline or a shutdown, not only when a slot frees up.
+    sem_cond::Threads.Condition
+    sem_free::Vector{Event}
     # Selects the concurrency model for tasks spawned by this handle. When true,
     # tasks are sticky (`@async`, a coroutine model incompatible with
     # multithreading). When false (the default), tasks are migratable
@@ -806,11 +1117,26 @@ mutable struct gRPCCURL
             ReentrantLock(),
             running,
             Vector{gRPCRequest}(),
-            Channel{Event}(max_streams),
+            max_streams,
+            Threads.Condition(),
+            Event[],
             sticky,
         )
 
-        finalizer((x) -> close(x), grpc)
+        # Finalizers may not block on locks or yield, and close(x) does both (grpc.lock,
+        # watchers_lock, sem_cond, closing channels and timers), so delegate the close
+        # to a freshly spawned task per the Julia manual's finalizer guidance. In
+        # practice this backstop only ever runs for handles that were already closed or
+        # never opened: open(grpc) calls preserve_handle(grpc), so an open handle is
+        # never garbage collected. An unreferenced handle cannot be reopened, so the
+        # already-closed check needs no lock, and it avoids spawning a task from the
+        # finalizer of every already-shutdown handle.
+        finalizer(grpc) do x
+            x.multi == Ptr{Cvoid}(0) && return
+            t = _spawn(() -> close(x); sticky = x.sticky)
+            @isdefined(errormonitor) && errormonitor(t)
+            nothing
+        end
 
         # This is used for the global const gRPCCURL handle
         # grpc_init() is called automatically via __init__() when the package is loaded
@@ -842,6 +1168,13 @@ function Base.close(grpc::gRPCCURL)
             curl_multi_cleanup(grpc.multi)
             grpc.multi = Ptr{Cvoid}(0)
 
+            # Close any pending libcurl timeout Timer. Without this the last scheduled Timer stays
+            # open after shutdown, which leaks a libuv handle: `grpc.running` and the multi handle
+            # are gone, but the Timer keeps the event loop alive. That makes precompilation of any
+            # package that issues a gRPC call in its workload hang ("waiting for IO to finish").
+            # Done under grpc.lock, matching how timer_callback assigns grpc.timer.
+            stoptimer!(grpc)
+
             false
         end
     end
@@ -854,6 +1187,11 @@ function Base.close(grpc::gRPCCURL)
             _, watcher = pop!(grpc.watchers)
             close(watcher)
         end
+    end
+
+    # Wake anything queued on the semaphore so it can observe the shutdown
+    lock(grpc.sem_cond) do
+        notify(grpc.sem_cond; all = true)
     end
 
     unpreserve_handle(grpc)
@@ -869,9 +1207,8 @@ function Base.open(grpc::gRPCCURL)
                 grpc.watchers = Dict{curl_socket_t,CURLWatcher}()
             end
 
-            grpc.sem = Channel{Event}(grpc.sem.sz_max)
-            for _ = 1:grpc.sem.sz_max
-                put!(grpc.sem, Event())
+            lock(grpc.sem_cond) do
+                grpc.sem_free = Event[Event() for _ = 1:grpc.max_streams]
             end
 
             grpc.requests = Vector{gRPCRequest}()
@@ -885,18 +1222,71 @@ function Base.open(grpc::gRPCCURL)
 end
 
 
-max_reqs_dec(grpc::gRPCCURL) = take!(grpc.sem)
+# Take a slot (an Event from the freelist) or block until one frees up, giving up with
+# DEADLINE_EXCEEDED once `expiry` (an absolute time() value) passes. Waiters are woken by
+# max_reqs_inc when a slot frees, by any request's deadline watchdog firing, and by
+# close(grpc), and re-check their own condition on every wake.
+function max_reqs_dec(grpc::gRPCCURL, expiry::Float64)
+    lock(grpc.sem_cond) do
+        while isempty(grpc.sem_free)
+            grpc.running || throw(
+                gRPCServiceCallException(
+                    GRPC_FAILED_PRECONDITION,
+                    "The grpc handle was shutdown while the request was queued",
+                ),
+            )
+            time() >= expiry && throw(
+                gRPCServiceCallException(
+                    GRPC_DEADLINE_EXCEEDED,
+                    "Deadline exceeded while queued waiting for an available stream.",
+                ),
+            )
+            wait(grpc.sem_cond)
+        end
+        return pop!(grpc.sem_free)
+    end
+end
+
+function max_reqs_inc(grpc::gRPCCURL, event::Event)
+    lock(grpc.sem_cond) do
+        push!(grpc.sem_free, event)
+        # Hand the slot to one waiter. If that waiter's deadline expired in the meantime
+        # it takes the slot, notices, and returns it here, passing the wake-up on.
+        notify(grpc.sem_cond; all = false)
+    end
+    nothing
+end
+
 function max_reqs_inc(grpc::gRPCCURL, req::gRPCRequest)
-    # Reset before we recycle
-    reset(req.curl_done_reading)
-    put!(grpc.sem, req.curl_done_reading)
+    if isstreaming_request(req)
+        # The request-stream pump may still be waiting on (or about to wait on) this
+        # request's curl_done_reading Event. Notify it so the pump wakes and observes
+        # req.completed, and hand the freelist a fresh Event so a lingering pump can
+        # never interfere with the next request that takes this slot.
+        notify(req.curl_done_reading)
+        max_reqs_inc(grpc, Event())
+    else
+        # Reset before we recycle
+        reset(req.curl_done_reading)
+        max_reqs_inc(grpc, req.curl_done_reading)
+    end
 end
 
 function cleanup_request(grpc::gRPCCURL, req::gRPCRequest)
+    # Idempotent under grpc.lock: normal completion (check_multi_info), the deadline
+    # watchdog / grpc_cancel, and close(grpc) can all race to clean up the same request
+    req.completed && return
+    req.completed = true
+    # Stop the deadline watchdog
+    isnothing(req.timer) || close(req.timer)
     # First remove from the multi
     curl_multi_remove_handle(grpc.multi, req.easy)
     # Cleanup the easy handle
     curl_easy_cleanup(req.easy)
+    # Defense in depth on top of the completed flag: if any future path reaches the
+    # easy handle after cleanup, libcurl rejects C_NULL with an error code instead of
+    # touching freed memory
+    req.easy = C_NULL
     # Free the request headers
     curl_slist_free_all(req.headers)
     # Allow this to be GC now that there is no risk of use in C callback
@@ -908,6 +1298,43 @@ function cleanup_request(grpc::gRPCCURL, req::gRPCRequest)
     max_reqs_inc(grpc, req)
     # Unblock anything waiting on the request
     notify(req.ready)
+end
+
+"""
+    grpc_cancel(req::gRPCRequest[, ex::Exception])
+
+Gracefully cancel an in-flight request. The easy handle is removed from the libcurl multi,
+aborting the transfer, all tasks waiting on the request (including streaming channels) are
+unblocked, and `grpc_async_await` will throw `ex`, a CANCELLED `gRPCServiceCallException`
+by default.
+
+Safe to call at any time from any task. Returns `true` when this call performed the
+cancellation and `false` when the request had already completed (or the handle was already
+shut down), in which case nothing changes.
+"""
+function grpc_cancel(
+    req::gRPCRequest,
+    ex::Exception = gRPCServiceCallException(
+        GRPC_CANCELLED,
+        "Request was cancelled by the client.",
+    ),
+)
+    grpc = req.grpc::gRPCCURL
+    lock(grpc.lock) do
+        # Already completed, or the whole handle was shut down: nothing to cancel
+        (req.completed || !grpc.running) && return false
+
+        handle_exception(req, ex)
+
+        # cleanup_request removes the easy handle from the multi, which is libcurl's
+        # documented way to abort an in-flight transfer, then unblocks all waiters
+        cleanup_request(grpc, req)
+
+        idx = findfirst(x -> x === req, grpc.requests)
+        !isnothing(idx) && deleteat!(grpc.requests, idx)
+
+        return true
+    end
 end
 
 struct CURLMsg
