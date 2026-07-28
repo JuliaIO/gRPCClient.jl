@@ -36,10 +36,18 @@ function write_callback(
 
         handled_n_bytes_total = 0
         try
+            # A zero-byte return with data still left over means handle_write made no
+            # progress and looping again would spin forever inside a curl callback,
+            # so break and let the byte-count check below report it. Zero bytes with
+            # no leftover data is normal (a chunk that only partially fills the
+            # current header or message ends the loop through `buf`), and must not
+            # be treated as a stall: a zero-length message used to reach here and
+            # fail the byte-count check, which is why it is now completed as soon as
+            # its length-prefix is parsed. See handle_write.
             while !isnothing(buf) && handled_n_bytes_total < n
                 handled_n_bytes, buf = handle_write(req, buf)
                 handled_n_bytes_total += handled_n_bytes
-                handled_n_bytes == 0 && break
+                handled_n_bytes == 0 && !isnothing(buf) && break
             end
         catch ex
             # Eat InvalidStateException raised on put! to closed channel
@@ -740,6 +748,24 @@ isstreaming_response(req::gRPCRequest) = !isa(req.response_c, NoChannel)
 
 Base.wait(req::gRPCRequest) = wait(req.ready)
 
+# Hand a fully received response message off to the `grpc_async_stream_response` task
+# and reset the parser for the next one. Only valid for a response-streaming request:
+# a unary response is left in `req.response` for `grpc_async_await` to decode.
+function complete_streaming_message!(req::gRPCRequest)
+    # Put the completed response protobuf buffer in the channel so it can be processed
+    # by the `grpc_async_stream_response` task
+    seekstart(req.response)
+    put!(req.response_c, req.response)
+
+    # There might be another response after this one so reset the parser state
+    req.response = IOBuffer()
+    req.response_read_header = false
+    req.response_compressed = false
+    req.response_length = 0
+
+    return nothing
+end
+
 function handle_write(
     req::gRPCRequest,
     buf::Vector{UInt8},
@@ -790,6 +816,18 @@ function handle_write(
             seekstart(req.response)
             truncate(req.response, 0)
 
+            # A zero-length message is complete the moment its length-prefix is
+            # parsed: an all-default protobuf (`google.protobuf.Empty`, a message
+            # whose every field holds its default) encodes to no bytes at all, so
+            # there is no body to wait for. Emit it here instead of letting it fall
+            # through to the message path below, which would have to complete a
+            # message without consuming any of this chunk. That keeps handle_write
+            # always consuming at least one byte per call, and delivers the message
+            # even when its prefix is the last thing that arrives on the wire.
+            req.response_length == 0 &&
+                isstreaming_response(req) &&
+                complete_streaming_message!(req)
+
             buf_leftover = nothing
 
             if (leftover_bytes = length(buf) - header_bytes_left) > 0
@@ -812,17 +850,7 @@ function handle_write(
         buf_complete = unsafe_wrap(Array, pointer(buf), (message_bytes_left,))
         n = write(req.response, buf_complete)
 
-        # Response is done, put it in the channel so it can be returned back to the user
-        seekstart(req.response)
-
-        # Put the completed response protobuf buffer in the channel so it can be processed by the `grpc_async_stream_response` task
-        put!(req.response_c, req.response)
-
-        # There might be another response after this so reset these
-        req.response = IOBuffer()
-        req.response_read_header = false
-        req.response_compressed = false
-        req.response_length = 0
+        complete_streaming_message!(req)
 
         # Handle the remaining data
         leftover_bytes = length(buf) - n

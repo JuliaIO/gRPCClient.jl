@@ -355,6 +355,42 @@ include("gen/test/test_pb.jl")
             grpc_async_await(req)
         end
 
+        # An all-default protobuf encodes to zero bytes, so its 5-byte length-prefix
+        # is the entire frame. Such a message used to fail the response parser: it
+        # completed without consuming any of the current chunk, which the write
+        # callback read as a stall and reported as INTERNAL "only handled N bytes",
+        # and a zero-length message whose prefix was the last thing on the wire was
+        # dropped instead of delivered. Interleaving empty and non-empty responses
+        # covers both, ending on an empty one.
+        @testset "Response Streaming zero-length messages" begin
+            N = 200
+
+            client = TestService_TestBidirectionalStreamRPC_Client(
+                _TEST_HOST,
+                _TEST_PORT;
+                deadline = stream_test_deadline,
+            )
+
+            request_c = Channel{TestRequest}(N)
+            response_c = Channel{TestResponse}(N)
+
+            req = grpc_async_request(client, request_c, response_c)
+
+            # Every other response is empty, including the last one
+            sizes = [iseven(i) ? 0 : i for i = 1:N]
+            for sz in sizes
+                put!(request_c, TestRequest(sz, UInt64[]))
+            end
+            close(request_c)
+
+            for sz in sizes
+                response = take_or_diagnose(req, response_c)
+                @test length(response.data) == sz
+            end
+
+            grpc_async_await(req)
+        end
+
         @testset "Response Streaming hang after END_STREAM" begin
             N = 10
 
