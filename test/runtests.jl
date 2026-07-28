@@ -11,7 +11,8 @@ import gRPCClient:
     GRPC_UNAUTHENTICATED,
     GRPC_CANCELLED,
     GRPC_INVALID_ARGUMENT,
-    GRPC_FAILED_PRECONDITION
+    GRPC_FAILED_PRECONDITION,
+    GRPC_INTERNAL
 
 # The bearer token the test Go server accepts (mirrors expectedBearerToken in
 # test/go/server.go). A request carrying an `authorization` header must present
@@ -437,8 +438,48 @@ include("gen/test/test_pb.jl")
             catch ex
                 # Verify the deadline was exceeded
                 @test isa(ex, gRPCServiceCallException)
+                # A mismatch here has historically only reproduced on CI, where the
+                # status number alone says nothing about which transport error the
+                # platform reported, so log the message before asserting
+                ex.grpc_status == GRPC_DEADLINE_EXCEEDED || @error(
+                    "expected DEADLINE_EXCEEDED",
+                    status = ex.grpc_status,
+                    message = ex.grpc_message,
+                )
                 @test ex.grpc_status == GRPC_DEADLINE_EXCEEDED
             end
+        end
+
+        @testset "Deadline Exceeded - non-timeout transport error" begin
+            # Tearing a transfer down at CURLOPT_TIMEOUT_MS does not always surface as
+            # CURLE_OPERATION_TIMEDOUT: on Windows the socket error from the teardown can
+            # arrive first. Whichever curl reports, a call whose deadline has passed must
+            # fail with DEADLINE_EXCEEDED rather than INTERNAL. The platform-specific race
+            # cannot be provoked here, so drive a real request to completion and then
+            # rewrite the three fields await reads.
+            client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
+            req = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+            grpc_async_await(client, req)
+
+            req.code = gRPCClient.CURLE_SEND_ERROR
+
+            awaited_status = function (expiry)
+                req.expiry = expiry
+                return try
+                    grpc_async_await(req)
+                    nothing
+                catch ex
+                    @test isa(ex, gRPCServiceCallException)
+                    ex.grpc_status
+                end
+            end
+
+            @test awaited_status(time() - 1) == GRPC_DEADLINE_EXCEEDED
+
+            # The same error before the deadline, or on a request with no deadline at
+            # all, stays an INTERNAL transport failure
+            @test awaited_status(time() + 60) == GRPC_INTERNAL
+            @test awaited_status(Inf) == GRPC_INTERNAL
         end
 
         @testset "Response Streaming - Small Messages" begin

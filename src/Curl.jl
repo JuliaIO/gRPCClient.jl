@@ -407,6 +407,13 @@ mutable struct gRPCRequest
     # Client-side deadline watchdog, see the comment in the constructor
     timer::Union{Nothing, Timer}
 
+    # Absolute `time()` at which this request's deadline expires, Inf when there is no
+    # deadline. grpc_async_await uses it to attribute a transport error that landed after
+    # the deadline to DEADLINE_EXCEEDED rather than INTERNAL: when libcurl tears a
+    # transfer down at CURLOPT_TIMEOUT_MS it usually reports CURLE_OPERATION_TIMEDOUT,
+    # but on some platforms the socket error from the teardown surfaces first instead.
+    expiry::Float64
+
     function gRPCRequest(
             grpc,
             url::String,
@@ -522,6 +529,7 @@ mutable struct gRPCRequest
                 response_c,
                 ex,
                 options,
+                expiry,
             )
         end
 
@@ -543,6 +551,7 @@ mutable struct gRPCRequest
                     "Deadline exceeded while queued waiting for an available stream.",
                 ),
                 options,
+                expiry,
             )
         end
 
@@ -628,6 +637,7 @@ mutable struct gRPCRequest
             grpc,
             false,
             watchdog,
+            expiry,
         )
         preserve_handle(req)
 
@@ -709,6 +719,7 @@ mutable struct gRPCRequest
             response_c::Union{Channel{IOBuffer}, NoChannel},
             ex::Exception,
             options::gRPCConnectionOptions,
+            expiry::Float64,
         )
         req = new(
             grpc.lock,
@@ -736,6 +747,7 @@ mutable struct gRPCRequest
             grpc,
             true,
             nothing,
+            expiry,
         )
 
         # Unblock stream pumps and anything already waiting on the request. The pumps
