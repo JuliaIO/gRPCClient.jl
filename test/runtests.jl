@@ -655,9 +655,11 @@ include("gen/test/test_pb.jl")
         end
         @test time() - t0 < 1.0
 
-        # NaN and -Inf deadlines are programming errors and throw INVALID_ARGUMENT at
-        # submission (part of the submission exception contract)
-        for bad in (NaN, -Inf)
+        # NaN, -Inf, and negative deadlines are programming errors and throw
+        # INVALID_ARGUMENT at submission (part of the submission exception contract).
+        # Negative values are rejected before the watchdog Timer is armed, which would
+        # otherwise surface a bare ArgumentError on a negative interval.
+        for bad in (NaN, -Inf, -1.0, -0.001)
             bad_client = TestService_TestRPC_Client(
                 "127.0.0.1",
                 silent_port;
@@ -671,6 +673,41 @@ include("gen/test/test_pb.jl")
                 @test isa(ex, gRPCServiceCallException)
                 @test ex.grpc_status == GRPC_INVALID_ARGUMENT
             end
+
+            # Also rejected when supplied as a per-request override on a good client
+            ok_client = TestService_TestRPC_Client(
+                "127.0.0.1",
+                silent_port;
+                grpc = grpc_handle,
+            )
+            try
+                grpc_async_request(
+                    ok_client,
+                    TestRequest(1, zeros(UInt64, 1));
+                    deadline = bad,
+                )
+                @test false
+            catch ex
+                @test isa(ex, gRPCServiceCallException)
+                @test ex.grpc_status == GRPC_INVALID_ARGUMENT
+            end
+        end
+
+        # A deadline of exactly 0 is legal: it expires immediately, so the failure is
+        # DEADLINE_EXCEEDED raised from await rather than INVALID_ARGUMENT at submission
+        zero_client = TestService_TestRPC_Client(
+            "127.0.0.1",
+            silent_port;
+            grpc = grpc_handle,
+            deadline = 0,
+        )
+        req = grpc_async_request(zero_client, TestRequest(1, zeros(UInt64, 1)))
+        try
+            grpc_async_await(req, TestResponse)
+            @test false
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+            @test ex.grpc_status == GRPC_DEADLINE_EXCEEDED
         end
 
         close(silent_server)

@@ -349,12 +349,16 @@ mutable struct gRPCRequest
         # A deadline of Inf means no deadline: no watchdog, no curl timeouts, and no
         # grpc-timeout header (per the gRPC spec an absent header means no deadline).
         # Such a request runs until it completes, grpc_cancel is called, or the handle
-        # is shut down. NaN and -Inf are programming errors, so they throw here rather
-        # than in await.
-        deadline == Inf || isfinite(deadline) || throw(
+        # is shut down. NaN, -Inf, and any negative deadline are programming errors, so
+        # they throw here rather than in await. Negative values must be rejected before
+        # the watchdog Timer below, which would otherwise raise a bare ArgumentError on
+        # a negative interval instead of the INVALID_ARGUMENT the contract promises. A
+        # deadline of exactly 0 is legal and expires immediately, surfacing as
+        # DEADLINE_EXCEEDED from await like any other expiry.
+        deadline == Inf || (isfinite(deadline) && deadline >= 0) || throw(
             gRPCServiceCallException(
                 GRPC_INVALID_ARGUMENT,
-                "deadline must be a finite number of seconds or Inf, got $(deadline)",
+                "deadline must be a non-negative finite number of seconds or Inf, got $(deadline)",
             ),
         )
 
