@@ -6,11 +6,11 @@ function workload_32_224_224_uint8(n = 100)
 
     reqs = Vector{gRPCRequest}()
 
-    send_sz = 32*224*224÷sizeof(UInt64)
+    send_sz = 32 * 224 * 224 ÷ sizeof(UInt64)
     # Pre-allocate this so we are measuring gRPC client performance without external allocations
     test_buf = zeros(UInt64, send_sz)
 
-    for i = 1:n
+    for i in 1:n
         req = grpc_async_request(client, TestRequest(32, test_buf))
         push!(reqs, req)
     end
@@ -18,7 +18,7 @@ function workload_32_224_224_uint8(n = 100)
         grpc_async_await(req)
     end
 
-    n
+    return n
 end
 
 function workload_smol(n = 1_000)
@@ -26,7 +26,7 @@ function workload_smol(n = 1_000)
 
     # Since requests are lightweight, use async / await pattern to avoid creating an extra task per request
     reqs = Vector{gRPCRequest}()
-    for i = 1:n
+    for i in 1:n
         req = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
         push!(reqs, req)
     end
@@ -35,7 +35,7 @@ function workload_smol(n = 1_000)
         grpc_async_await(req)
     end
 
-    n
+    return n
 end
 
 function workload_streaming_request(n = 1_000)
@@ -45,7 +45,7 @@ function workload_streaming_request(n = 1_000)
     @sync begin
         req = grpc_async_request(client, requests_c)
 
-        for i = 1:n
+        for i in 1:n
             put!(requests_c, TestRequest(1, zeros(UInt64, 1)))
         end
 
@@ -54,7 +54,7 @@ function workload_streaming_request(n = 1_000)
         response = grpc_async_await(req)
     end
 
-    n
+    return n
 end
 
 function workload_streaming_response(n = 1_000)
@@ -63,12 +63,12 @@ function workload_streaming_response(n = 1_000)
 
     req = grpc_async_request(client, TestRequest(n, zeros(UInt64, 1)), response_c)
 
-    for i = 1:n
+    for i in 1:n
         take!(response_c)
     end
     close(response_c)
 
-    n
+    return n
 end
 
 
@@ -81,7 +81,7 @@ function workload_streaming_bidirectional(n = 1_000)
         req = grpc_async_request(client, requests_c, response_c)
 
         task_request = Threads.@spawn begin
-            for i = 1:n
+            for i in 1:n
                 put!(requests_c, TestRequest(1, zeros(UInt64, 1)))
             end
             close(requests_c)
@@ -89,7 +89,7 @@ function workload_streaming_bidirectional(n = 1_000)
         errormonitor(task_request)
 
         task_response = Threads.@spawn begin
-            for i = 1:n
+            for i in 1:n
                 take!(response_c)
             end
             close(response_c)
@@ -99,5 +99,5 @@ function workload_streaming_bidirectional(n = 1_000)
         nothing
     end
 
-    n
+    return n
 end

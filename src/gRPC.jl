@@ -56,21 +56,21 @@ The following keyword arguments may be set:
 - **`token`**: Optional bearer token attached to every request as an `authorization: Bearer <token>` header. 
 - **`metadata`**: A `Dict{String, String}` for adding arbitrary fields to the header. For example, the token field can also added by setting `metadata = Dict("authorization" => "Bearer <token>")` instead of using the `token` keyword. Setting `token` and an `authorization` metadata entry at the same time raises `INVALID_ARGUMENT`, since the two are the same header and sending both would leave which one applies up to the server; the check is case-insensitive. To override a client-level `token` with per-request metadata, pass `token = nothing` alongside it.
 """
-struct gRPCServiceClient{TRequest,SRequest,TResponse,SResponse}
+struct gRPCServiceClient{TRequest, SRequest, TResponse, SResponse}
     grpc::gRPCCURL
     host::String
     port::Int64
     path::String
     options::gRPCConnectionOptions
 
-    function gRPCServiceClient{TRequest,SRequest,TResponse,SResponse}(
-        host,
-        port,
-        path;
-        grpc = grpc_global_handle(),
-        options...
-    ) where {TRequest<:Any,SRequest,TResponse<:Any,SResponse}
-        new(
+    function gRPCServiceClient{TRequest, SRequest, TResponse, SResponse}(
+            host,
+            port,
+            path;
+            grpc = grpc_global_handle(),
+            options...
+        ) where {TRequest <: Any, SRequest, TResponse <: Any, SResponse}
+        return new(
             grpc,
             host,
             port,
@@ -95,7 +95,7 @@ function url(client::gRPCServiceClient)
     # "$protocol://$(client.host):$(client.port)$(client.path)"
     buffer = IOBuffer()
     write(buffer, protocol, "://", client.host, ":", string(client.port), client.path)
-    String(take!(buffer))
+    return String(take!(buffer))
 end
 
 
@@ -108,10 +108,10 @@ _encode_body(buf::IOBuffer, request) = UInt32(encode(ProtoEncoder(buf), request)
 _encode_body(buf::IOBuffer, request::AbstractVector{UInt8}) = UInt32(write(buf, request))
 
 function grpc_encode_request_iobuffer(
-    request,
-    req_buf::IOBuffer;
-    max_send_message_length = 4 * 1024 * 1024,
-)
+        request,
+        req_buf::IOBuffer;
+        max_send_message_length = 4 * 1024 * 1024,
+    )
     start_pos = position(req_buf)
 
     # Write compressed flag and length prefix
@@ -136,19 +136,19 @@ function grpc_encode_request_iobuffer(
     seek(req_buf, start_pos + 1)
     write(req_buf, hton(sz))
 
-    # Seek back to the end 
+    # Seek back to the end
     seek(req_buf, end_pos)
 
-    req_buf
+    return req_buf
 end
 
 
 grpc_encode_request_iobuffer(request; max_send_message_length = 4 * 1024 * 1024) =
     grpc_encode_request_iobuffer(
-        request,
-        IOBuffer();
-        max_send_message_length = max_send_message_length,
-    )
+    request,
+    IOBuffer();
+    max_send_message_length = max_send_message_length,
+)
 
 
 function grpc_async_await(req::gRPCRequest)
@@ -163,7 +163,7 @@ function grpc_async_await(req::gRPCRequest)
 
     req.code == CURLE_OPERATION_TIMEDOUT &&
         throw(gRPCServiceCallException(GRPC_DEADLINE_EXCEEDED, "Deadline exceeded."))
-    req.code != CURLE_OK &&
+    return req.code != CURLE_OK &&
         throw(gRPCServiceCallException(GRPC_INTERNAL, nullstring(req.errbuf)))
 end
 

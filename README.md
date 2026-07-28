@@ -24,6 +24,10 @@ This library ships agent skills. In Claude Code:
 
 That installs `grpcclient-jl` for calling gRPC services and `grpcclient-jl-dev` for working on the package itself. Both live in [`skills/`](skills) as plain Markdown and are the authoritative reference for how this library behaves.
 
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to run the test suite and for the formatting requirement: contributed code must be formatted with [Runic.jl](https://github.com/fredrikekre/Runic.jl).
+
 ## Benchmarks
 
 Benchmarking, stress-testing, and profiling utilities live in [`utils/gRPCClientUtils.jl`](utils/gRPCClientUtils.jl). Run `benchmark_table()` against the test server in `test/go` to measure throughput, latency, and allocations per workload on your own hardware.

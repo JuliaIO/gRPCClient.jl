@@ -21,11 +21,11 @@ Base.iterate(req::NoChannel) =
 
 
 function write_callback(
-    data::Ptr{Cchar},
-    size::Csize_t,
-    count::Csize_t,
-    req_p::Ptr{Cvoid},
-)::Csize_t
+        data::Ptr{Cchar},
+        size::Csize_t,
+        count::Csize_t,
+        req_p::Ptr{Cvoid},
+    )::Csize_t
     try
         req = unsafe_pointer_to_objref(req_p)::gRPCRequest
 
@@ -57,7 +57,7 @@ function write_callback(
         !isnothing(req.ex) && return typemax(Csize_t)
 
         # Check that we handled the correct number of bytes
-        # If there was no exception in handle_write this should always match 
+        # If there was no exception in handle_write this should always match
         if handled_n_bytes_total != n
             handle_exception(
                 req,
@@ -80,11 +80,11 @@ function write_callback(
 end
 
 function read_callback(
-    data::Ptr{Cchar},
-    size::Csize_t,
-    count::Csize_t,
-    req_p::Ptr{Cvoid},
-)::Csize_t
+        data::Ptr{Cchar},
+        size::Csize_t,
+        count::Csize_t,
+        req_p::Ptr{Cvoid},
+    )::Csize_t
     try
         req = unsafe_pointer_to_objref(req_p)::gRPCRequest
 
@@ -112,7 +112,7 @@ function read_callback(
             truncate(req.request, 0)
             req.request_ptr = 0
 
-            # Safe to write more data to the request buffer again 
+            # Safe to write more data to the request buffer again
             notify(req.curl_done_reading)
 
             return CURL_READFUNC_PAUSE
@@ -130,11 +130,11 @@ const regex_grpc_message = Regex("grpc-message: (.*)", "s")
 
 
 function header_callback(
-    data::Ptr{Cchar},
-    size::Csize_t,
-    count::Csize_t,
-    req_p::Ptr{Cvoid},
-)::Csize_t
+        data::Ptr{Cchar},
+        size::Csize_t,
+        count::Csize_t,
+        req_p::Ptr{Cvoid},
+    )::Csize_t
     try
         req = unsafe_pointer_to_objref(req_p)::gRPCRequest
         n = size * count
@@ -171,20 +171,28 @@ end
 function grpc_timeout_header_val(timeout::Real)
     # A negative, non-finite, or unrepresentably-large timeout is a caller error: reject it with
     # INVALID_ARGUMENT rather than silently coerce it into a wrong deadline on the wire.
-    (isfinite(timeout) && timeout >= 0) || throw(gRPCServiceCallException(GRPC_INVALID_ARGUMENT,
-        "grpc-timeout must be a finite, non-negative number of seconds, got $(timeout)"))
+    (isfinite(timeout) && timeout >= 0) || throw(
+        gRPCServiceCallException(
+            GRPC_INVALID_ARGUMENT,
+            "grpc-timeout must be a finite, non-negative number of seconds, got $(timeout)"
+        )
+    )
     # Convert to Float64 before scaling to nanoseconds. A narrow Real (e.g. Float16, whose max is
     # 65504) would otherwise promote the 1e9 factor into its own type and overflow to Inf, corrupting
     # the conversion; a too-large finite input (e.g. a huge BigFloat) converts to Inf and is caught
     # by the range check below. Nanoseconds is the finest unit, so a value beyond what fits in Int64
     # ns (~292 years) cannot be represented.
     t = Float64(timeout)
-    t * 1e9 < typemax(Int64) || throw(gRPCServiceCallException(GRPC_INVALID_ARGUMENT,
-        "grpc-timeout $(timeout)s is too large to encode as a grpc-timeout header"))
+    t * 1.0e9 < typemax(Int64) || throw(
+        gRPCServiceCallException(
+            GRPC_INVALID_ARGUMENT,
+            "grpc-timeout $(timeout)s is too large to encode as a grpc-timeout header"
+        )
+    )
     # Round to the nearest nanosecond (absorbs floating-point representation error, so clean inputs
     # stay exact, e.g. 0.001 -> "1m"). A strictly positive timeout must never collapse to "0S", which
     # would encode an already-expired deadline, so floor it at a single nanosecond.
-    ns = round(Int64, t * 1e9)
+    ns = round(Int64, t * 1.0e9)
     ns == 0 && t > 0 && (ns = 1)
     # Coarsest-exact preference: seconds, milliseconds, microseconds, nanoseconds.
     # `string(q) * unit` (String * Char) rather than "$(q)$(unit)": interpolating a Char takes a
@@ -194,14 +202,20 @@ function grpc_timeout_header_val(timeout::Real)
         r == 0 && q <= 99_999_999 && return string(q) * unit
     end
     # No exact unit fits in 8 digits: round up to the finest unit that does (nanoseconds .. hours).
-    for (mult, unit) in ((1, 'n'), (1_000, 'u'), (1_000_000, 'm'), (1_000_000_000, 'S'),
-                         (60_000_000_000, 'M'), (3_600_000_000_000, 'H'))
+    for (mult, unit) in (
+            (1, 'n'), (1_000, 'u'), (1_000_000, 'm'), (1_000_000_000, 'S'),
+            (60_000_000_000, 'M'), (3_600_000_000_000, 'H'),
+        )
         ticks = cld(ns, mult)
         ticks <= 99_999_999 && return string(ticks) * unit
     end
     # A valid Int64 ns always fits in <=8 hour-digits, so reaching here is a logic error, not input.
-    throw(gRPCServiceCallException(GRPC_INVALID_ARGUMENT,
-        "grpc-timeout $(timeout)s could not be encoded within the 8-digit gRPC limit"))
+    throw(
+        gRPCServiceCallException(
+            GRPC_INVALID_ARGUMENT,
+            "grpc-timeout $(timeout)s could not be encoded within the 8-digit gRPC limit"
+        )
+    )
 end
 
 const _AUTHORIZATION_HEADER = "authorization"
@@ -216,7 +230,7 @@ const _AUTHORIZATION_HEADER = "authorization"
 #
 # Allocation-free by construction: `keys` on a Dict is a lazy KeySet, and comparing with
 # `codeunit` reads bytes in place rather than building a lowercased copy of each key.
-function _has_authorization_key(metadata::Dict{String,String})
+function _has_authorization_key(metadata::Dict{String, String})
     n = ncodeunits(_AUTHORIZATION_HEADER)
     for k in keys(metadata)
         ncodeunits(k) == n || continue
@@ -237,8 +251,8 @@ end
     max_recieve_message_length::Int = 4 * 1024 * 1024
     # Optional bearer token attached to every request as an
     # `authorization: Bearer <token>` header. `nothing` sends no header.
-	# Note that this is equivalent to adding "authorization" => "Bearer $token"
-	# to metadata
+    # Note that this is equivalent to adding "authorization" => "Bearer $token"
+    # to metadata
     token::Union{Nothing, String} = nothing
     metadata::Union{Nothing, Dict{String, String}} = nothing
 
@@ -253,22 +267,22 @@ end
     # To swap a client-level token for per-request metadata, pass `token = nothing`
     # alongside the metadata override.
     function gRPCConnectionOptions(
-        secure,
-        deadline,
-        keepalive,
-        max_send_message_length,
-        max_recieve_message_length,
-        token,
-        metadata,
-    )
+            secure,
+            deadline,
+            keepalive,
+            max_send_message_length,
+            max_recieve_message_length,
+            token,
+            metadata,
+        )
         if !isnothing(token) &&
-           !isnothing(metadata) &&
-           _has_authorization_key(metadata)
+                !isnothing(metadata) &&
+                _has_authorization_key(metadata)
             throw(
                 gRPCServiceCallException(
                     GRPC_INVALID_ARGUMENT,
                     "token and an \"authorization\" metadata entry both set the authorization header; " *
-                    "use one or the other (pass token = nothing to override a client-level token with metadata)",
+                        "use one or the other (pass token = nothing to override a client-level token with metadata)",
                 ),
             )
         end
@@ -284,10 +298,10 @@ end
     end
 end
 
-# Creates a new options object (if necessary) where some fields are overridden 
+# Creates a new options object (if necessary) where some fields are overridden
 # based on overrides
 @generated function _merge_options(options::gRPCConnectionOptions, overrides::AbstractDict)::gRPCConnectionOptions
-    # if no argument is overriden, just return options. 
+    # if no argument is overriden, just return options.
     # Otherwise, create a new object with some fields overridden
     return quote
         $(Expr(:meta, :inline)) # Equivalent of @inline for generated functions
@@ -298,14 +312,16 @@ end
             end
         end
         gRPCConnectionOptions(
-            $([
-                # Generate 
-                # get(overrides, :field1, options.field1)
-                # get(overrides, :field2, options.field2)
-                # ...
-                # for each fieldname of gRPCConnectionOptions
-                :(get(overrides, $(QuoteNode(fn)), options.$fn)) 
-                    for fn in fieldnames(gRPCConnectionOptions) if fn != :metadata]...
+            $(
+                [
+                    # Generate
+                    # get(overrides, :field1, options.field1)
+                    # get(overrides, :field2, options.field2)
+                    # ...
+                    # for each fieldname of gRPCConnectionOptions
+                    :(get(overrides, $(QuoteNode(fn)), options.$fn))
+                        for fn in fieldnames(gRPCConnectionOptions) if fn != :metadata
+                ]...
             ),
             # For metadata, we override on a per-field basis instead
             if :metadata in keys(overrides) && !isnothing(overrides[:metadata])
@@ -338,7 +354,7 @@ mutable struct gRPCRequest
     # CURL headers list
     headers::Ptr{Cvoid}
 
-    # The full request URL 
+    # The full request URL
     url::String
 
     # Contains the request data which will be uploaded in read_callback
@@ -351,8 +367,8 @@ mutable struct gRPCRequest
     response::IOBuffer
 
     # These are only used when the request or response is streaming
-    request_c::Union{Channel{IOBuffer},NoChannel}
-    response_c::Union{Channel{IOBuffer},NoChannel}
+    request_c::Union{Channel{IOBuffer}, NoChannel}
+    response_c::Union{Channel{IOBuffer}, NoChannel}
 
     # The task making the request can block on this until the request is complete
     ready::Event
@@ -366,7 +382,7 @@ mutable struct gRPCRequest
     max_recieve_message_length::Int64
 
     # Contains the first exception if any encountered during the request
-    ex::Union{Nothing,Exception}
+    ex::Union{Nothing, Exception}
 
     # Keeps track of the response stream parsing state
     response_read_header::Bool
@@ -389,18 +405,18 @@ mutable struct gRPCRequest
     completed::Bool
 
     # Client-side deadline watchdog, see the comment in the constructor
-    timer::Union{Nothing,Timer}
+    timer::Union{Nothing, Timer}
 
     function gRPCRequest(
-        grpc,
-        url::String,
-        request::IOBuffer,
-        response::IOBuffer,
-        request_c::Union{Channel{IOBuffer},NoChannel},
-        response_c::Union{Channel{IOBuffer},NoChannel},
-        options::gRPCConnectionOptions;
-        kws...
-    )
+            grpc,
+            url::String,
+            request::IOBuffer,
+            response::IOBuffer,
+            request_c::Union{Channel{IOBuffer}, NoChannel},
+            response_c::Union{Channel{IOBuffer}, NoChannel},
+            options::gRPCConnectionOptions;
+            kws...
+        )
 
         options = _merge_options(options, kws)
 
@@ -685,15 +701,15 @@ mutable struct gRPCRequest
     # max_streams slot, is never added to grpc.requests, and is already marked
     # completed so cleanup_request and grpc_cancel are no-ops on it.
     function gRPCRequest(
-        grpc,
-        url::String,
-        request::IOBuffer,
-        response::IOBuffer,
-        request_c::Union{Channel{IOBuffer},NoChannel},
-        response_c::Union{Channel{IOBuffer},NoChannel},
-        ex::Exception,
-        options::gRPCConnectionOptions,
-    )
+            grpc,
+            url::String,
+            request::IOBuffer,
+            response::IOBuffer,
+            request_c::Union{Channel{IOBuffer}, NoChannel},
+            response_c::Union{Channel{IOBuffer}, NoChannel},
+            ex::Exception,
+            options::gRPCConnectionOptions,
+        )
         req = new(
             grpc.lock,
             Ptr{Cvoid}(0),
@@ -735,7 +751,7 @@ end
 function handle_exception(req::gRPCRequest, ex; notify_ready = false)
     # We want to record the *first* exception a request encounters
     # This helps identify the root cause of why something failed
-    if isnothing(req.ex)
+    return if isnothing(req.ex)
         req.ex = ex
         notify_ready && notify(req.ready)
     end
@@ -767,9 +783,9 @@ function complete_streaming_message!(req::gRPCRequest)
 end
 
 function handle_write(
-    req::gRPCRequest,
-    buf::Vector{UInt8},
-)::Tuple{Int64,Union{Nothing,Vector{UInt8}}}
+        req::gRPCRequest,
+        buf::Vector{UInt8},
+    )::Tuple{Int64, Union{Nothing, Vector{UInt8}}}
     if !req.response_read_header
         header_bytes_left = GRPC_HEADER_SIZE - req.response.size
 
@@ -925,7 +941,7 @@ mutable struct CURLWatcher
     function CURLWatcher(sock, fdw)
         event = Event()
         notify(event)
-        new(sock, fdw, event, true)
+        return new(sock, fdw, event, true)
     end
 end
 
@@ -934,17 +950,17 @@ Base.iswritable(w::CURLWatcher) = w.fdw.writable
 function Base.close(w::CURLWatcher)
     w.running = false
     notify(w.ready)
-    close(w.fdw)
+    return close(w.fdw)
 end
 
 
 function socket_callback(
-    easy_h::Ptr{Cvoid},
-    sock::curl_socket_t,
-    action::Cint,
-    grpc_p::Ptr{Cvoid},
-    socket_p::Ptr{Cvoid},
-)::Cint
+        easy_h::Ptr{Cvoid},
+        sock::curl_socket_t,
+        action::Cint,
+        grpc_p::Ptr{Cvoid},
+        socket_p::Ptr{Cvoid},
+    )::Cint
     try
         if action ∉ (CURL_POLL_IN, CURL_POLL_OUT, CURL_POLL_INOUT, CURL_POLL_REMOVE)
             @error("socket_callback: unexpected action", action, maxlog = 1_000)
@@ -1075,7 +1091,7 @@ function grpc_multi_init(grpc)
         (Ptr{Cvoid}, curl_socket_t, Cint, Ptr{Cvoid}, Ptr{Cvoid})
     )
     curl_multi_setopt(grpc.multi, CURLMOPT_SOCKETFUNCTION, socket_cb)
-    curl_multi_setopt(grpc.multi, CURLMOPT_SOCKETDATA, grpc_p)
+    return curl_multi_setopt(grpc.multi, CURLMOPT_SOCKETDATA, grpc_p)
 end
 
 
@@ -1084,8 +1100,8 @@ mutable struct gRPCCURL
     multi::Ptr{Cvoid}
     # *ALL* operations on the multi handle, any easy handles added to the multi, or this struct must acquire this lock.
     lock::ReentrantLock
-    timer::Union{Nothing,Timer}
-    watchers::Dict{curl_socket_t,CURLWatcher}
+    timer::Union{Nothing, Timer}
+    watchers::Dict{curl_socket_t, CURLWatcher}
     # Reduce lock contention by giving watchers their own lock
     watchers_lock::ReentrantLock
     running::Bool
@@ -1105,15 +1121,15 @@ mutable struct gRPCCURL
     sticky::Bool
 
     function gRPCCURL(;
-        max_streams::Int = GRPC_MAX_STREAMS,
-        running = true,
-        sticky::Bool = false,
-    )
+            max_streams::Int = GRPC_MAX_STREAMS,
+            running = true,
+            sticky::Bool = false,
+        )
         grpc = new(
             Ptr{Cvoid}(0),
             ReentrantLock(),
             nothing,
-            Dict{curl_socket_t,CURLWatcher}(),
+            Dict{curl_socket_t, CURLWatcher}(),
             ReentrantLock(),
             running,
             Vector{gRPCRequest}(),
@@ -1196,19 +1212,19 @@ function Base.close(grpc::gRPCCURL)
 
     unpreserve_handle(grpc)
 
-    nothing
+    return nothing
 end
 
 function Base.open(grpc::gRPCCURL)
-    lock(grpc.lock) do
+    return lock(grpc.lock) do
         if grpc.multi == Ptr{Cvoid}(0)
             lock(grpc.watchers_lock) do
                 # Guarantee that we start with a clean slate
-                grpc.watchers = Dict{curl_socket_t,CURLWatcher}()
+                grpc.watchers = Dict{curl_socket_t, CURLWatcher}()
             end
 
             lock(grpc.sem_cond) do
-                grpc.sem_free = Event[Event() for _ = 1:grpc.max_streams]
+                grpc.sem_free = Event[Event() for _ in 1:grpc.max_streams]
             end
 
             grpc.requests = Vector{gRPCRequest}()
@@ -1227,7 +1243,7 @@ end
 # max_reqs_inc when a slot frees, by any request's deadline watchdog firing, and by
 # close(grpc), and re-check their own condition on every wake.
 function max_reqs_dec(grpc::gRPCCURL, expiry::Float64)
-    lock(grpc.sem_cond) do
+    return lock(grpc.sem_cond) do
         while isempty(grpc.sem_free)
             grpc.running || throw(
                 gRPCServiceCallException(
@@ -1254,11 +1270,11 @@ function max_reqs_inc(grpc::gRPCCURL, event::Event)
         # it takes the slot, notices, and returns it here, passing the wake-up on.
         notify(grpc.sem_cond; all = false)
     end
-    nothing
+    return nothing
 end
 
 function max_reqs_inc(grpc::gRPCCURL, req::gRPCRequest)
-    if isstreaming_request(req)
+    return if isstreaming_request(req)
         # The request-stream pump may still be waiting on (or about to wait on) this
         # request's curl_done_reading Event. Notify it so the pump wakes and observes
         # req.completed, and hand the freelist a fresh Event so a lingering pump can
@@ -1291,13 +1307,13 @@ function cleanup_request(grpc::gRPCCURL, req::gRPCRequest)
     curl_slist_free_all(req.headers)
     # Allow this to be GC now that there is no risk of use in C callback
     unpreserve_handle(req)
-    # Close streaming channels 
+    # Close streaming channels
     close(req.response_c)
     close(req.request_c)
     # Increment the request semaphore to allow more requests through
     max_reqs_inc(grpc, req)
     # Unblock anything waiting on the request
-    notify(req.ready)
+    return notify(req.ready)
 end
 
 """
@@ -1313,14 +1329,14 @@ cancellation and `false` when the request had already completed (or the handle w
 shut down), in which case nothing changes.
 """
 function grpc_cancel(
-    req::gRPCRequest,
-    ex::Exception = gRPCServiceCallException(
-        GRPC_CANCELLED,
-        "Request was cancelled by the client.",
-    ),
-)
+        req::gRPCRequest,
+        ex::Exception = gRPCServiceCallException(
+            GRPC_CANCELLED,
+            "Request was cancelled by the client.",
+        ),
+    )
     grpc = req.grpc::gRPCCURL
-    lock(grpc.lock) do
+    return lock(grpc.lock) do
         # Already completed, or the whole handle was shut down: nothing to cancel
         (req.completed || !grpc.running) && return false
 
@@ -1367,6 +1383,7 @@ function check_multi_info(grpc::gRPCCURL)
             @error("curl_multi_info_read: unknown message", message, maxlog = 1_000)
         end
     end
+    return
 end
 
 
@@ -1376,5 +1393,5 @@ function stoptimer!(grpc::gRPCCURL)
         grpc.timer = nothing
         close(t)
     end
-    nothing
+    return nothing
 end

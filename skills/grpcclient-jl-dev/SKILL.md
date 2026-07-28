@@ -23,6 +23,20 @@ description: Work on the gRPCClient.jl package itself. Covers running the Go tes
 
 Streaming is conditionally compiled: `src/Streaming.jl` is included only under `@static if VERSION >= v"1.12"`, so anything added there needs a matching version guard in the tests.
 
+## Formatting
+
+The repository is formatted with [Runic.jl](https://github.com/fredrikekre/Runic.jl), and contributed code is expected to be run through it before a pull request goes up:
+
+```
+] app add Runic          # once, Julia 1.12 or newer
+```
+
+```bash
+runic --inplace .        # from the repository root
+```
+
+Use `--check --diff` in place of `--inplace` to verify without writing. Runic takes no configuration. `CONTRIBUTING.md` states this for human contributors.
+
 ## Test server
 
 ```bash

@@ -53,7 +53,7 @@ const GRPC_UNAVAILABLE = 14
 const GRPC_DATA_LOSS = 15
 const GRPC_UNAUTHENTICATED = 16
 
-const GRPC_CODE_TABLE = Dict{Int64,String}(
+const GRPC_CODE_TABLE = Dict{Int64, String}(
     0 => "OK",
     1 => "CANCELLED",
     2 => "UNKNOWN",
@@ -74,7 +74,7 @@ const GRPC_CODE_TABLE = Dict{Int64,String}(
 )
 
 function Base.showerror(io::IO, e::gRPCServiceCallException)
-    print(
+    return print(
         io,
         "gRPCServiceCallException(grpc_status=$(GRPC_CODE_TABLE[e.grpc_status])($(e.grpc_status)), message=\"$(e.message)\")",
     )
@@ -114,7 +114,7 @@ export gRPCServiceCallException
 
 function __init__()
     grpc_init()
-    grpc_register_service_codegen()
+    return grpc_register_service_codegen()
 end
 
 end
