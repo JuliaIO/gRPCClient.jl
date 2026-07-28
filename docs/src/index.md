@@ -313,13 +313,16 @@ These run forever, and are useful to help identify any stability issues or resou
 
 ## For LLMs & Agents
 
-This library provides an [`llms.txt`](llms.txt) file designed to bootstrap your context with everything needed to use it effectively.
+This library ships agent skills rather than an `llms.txt` file. Install them in Claude Code with:
 
-The file is a compressed, curated snapshot of the library's essential knowledge — trimmed of noise and optimized for limited context windows. Rather than crawling docs, parsing source files, or relying on potentially stale training data, agents should load `llms.txt` first as their authoritative reference.
+```
+/plugin marketplace add JuliaIO/gRPCClient.jl
+/plugin install grpcclient-jl
+```
 
-**It contains:**
-- API surface and usage patterns
-- Key concepts and terminology
-- Common workflows and examples
+Two skills are included, and each loads only what the task at hand needs:
 
-If you are an LLM or agent operating on this codebase, fetch `llms.txt` before proceeding. It is the single source of truth for how this library works and is purpose-built for programmatic consumption.
+- **`grpcclient-jl`** for calling gRPC services: code generation with `protojl`, unary and streaming RPC, deadlines and cancellation, authentication metadata, raw protobuf buffers, and the exception contract
+- **`grpcclient-jl-dev`** for working on the package itself: the Go test server, the test suite, stub regeneration, the libcurl transport internals, and the benchmarking utilities
+
+The skills live in [`skills/`](https://github.com/JuliaIO/gRPCClient.jl/tree/main/skills) as plain Markdown, so they can also be read directly or copied into another agent's context. They are the authoritative reference for how this library behaves, maintained alongside the source.

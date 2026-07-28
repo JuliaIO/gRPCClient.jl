@@ -15,7 +15,14 @@ The documentation for gRPCClient.jl can be found [here](https://juliaio.github.i
 
 ### For LLMs & Agents
 
-Fetch [`llms.txt`](https://juliaio.github.io/gRPCClient.jl/llms.txt) before proceeding. It contains compressed, complete documentation optimized for limited context windows and is the authoritative reference for using this library.
+This library ships agent skills. In Claude Code:
+
+```
+/plugin marketplace add JuliaIO/gRPCClient.jl
+/plugin install grpcclient-jl
+```
+
+That installs `grpcclient-jl` for calling gRPC services and `grpcclient-jl-dev` for working on the package itself. Both live in [`skills/`](skills) as plain Markdown and are the authoritative reference for how this library behaves.
 
 ## Benchmarks
 

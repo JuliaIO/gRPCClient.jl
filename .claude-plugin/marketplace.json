@@ -1,0 +1,25 @@
+{
+  "name": "grpcclient-jl",
+  "owner": {
+    "name": "JuliaIO",
+    "url": "https://github.com/JuliaIO/gRPCClient.jl"
+  },
+  "metadata": {
+    "description": "Agent skills for gRPCClient.jl, the Julia gRPC client.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "grpcclient-jl",
+      "source": "./",
+      "description": "Skills for calling gRPC services from Julia with gRPCClient.jl, and for developing the package itself.",
+      "version": "1.0.0",
+      "category": "development",
+      "keywords": [
+        "julia",
+        "grpc",
+        "protobuf"
+      ]
+    }
+  ]
+}
