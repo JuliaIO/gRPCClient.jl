@@ -1,0 +1,29 @@
+name: Format
+
+# Runic formatting check. Kept separate from ci.yml so it runs on any Julia
+# source change, including docs and utils, which the test matrix skips.
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - '**/*.jl'
+      - '.github/workflows/format.yml'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - '**/*.jl'
+      - '.github/workflows/format.yml'
+
+jobs:
+  runic:
+    name: Runic
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - uses: julia-actions/setup-julia@v2
+      with:
+        version: '1'
+    - uses: julia-actions/cache@v2
+    - uses: fredrikekre/runic-action@v1
+      with:
+        version: '1'
