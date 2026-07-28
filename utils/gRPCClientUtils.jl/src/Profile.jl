@@ -3,8 +3,8 @@ function profile_memory_fn(f::Function)
     _ = f()
 
     Profile.Allocs.clear()
-    Profile.Allocs.@profile sample_rate=0.1 f()
-    PProf.Allocs.pprof()
+    Profile.Allocs.@profile sample_rate = 0.1 f()
+    return PProf.Allocs.pprof()
 end
 
 profile_memory_workload_smol() = profile_memory_fn(workload_smol)

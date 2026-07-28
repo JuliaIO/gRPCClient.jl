@@ -2,6 +2,7 @@ function stress_workload(f::Function)
     while true
         f()
     end
+    return
 end
 
 stress_workload_smol() = stress_workload(workload_smol)

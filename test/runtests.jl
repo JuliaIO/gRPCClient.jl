@@ -21,7 +21,7 @@ const _TEST_BEARER_TOKEN = "test-secret-token"
 # This is primarily used for starting the server when running CI.
 # By launching the server asynchronously within julia, we ensure
 # that the server is active while testing, which otherwise would require
-# scheduling a task on windows CI. 
+# scheduling a task on windows CI.
 if haskey(ENV, "JULIA_GRPCCLIENT_TEST_START_SERVER")
     if ENV["JULIA_GRPCCLIENT_TEST_START_SERVER"] == "go"
         pipe = Pipe()
@@ -61,7 +61,7 @@ if haskey(ENV, "JULIA_GRPCCLIENT_TEST_START_SERVER")
 end
 
 function _get_test_host()
-    if "GRPC_TEST_SERVER_HOST" in keys(ENV)
+    return if "GRPC_TEST_SERVER_HOST" in keys(ENV)
         ENV["GRPC_TEST_SERVER_HOST"]
     else
         "localhost"
@@ -69,7 +69,7 @@ function _get_test_host()
 end
 
 function _get_test_port()
-    if "GRPC_TEST_SERVER_PORT" in keys(ENV)
+    return if "GRPC_TEST_SERVER_PORT" in keys(ENV)
         parse(UInt16, ENV["GRPC_TEST_SERVER_PORT"])
     else
         8001
@@ -166,7 +166,7 @@ include("gen/test/test_pb.jl")
         client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
 
         requests = Vector{gRPCRequest}()
-        for i = 1:1000
+        for i in 1:1000
             request = grpc_async_request(client, TestRequest(i, zeros(UInt64, i)))
             push!(requests, request)
         end
@@ -185,7 +185,7 @@ include("gen/test/test_pb.jl")
         client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
 
         requests = Vector{gRPCRequest}()
-        for i = 1:1000
+        for i in 1:1000
             request = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
             push!(requests, request)
         end
@@ -201,9 +201,9 @@ include("gen/test/test_pb.jl")
         client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
 
         requests = Vector{gRPCRequest}()
-        for i = 1:100
+        for i in 1:100
             # 28*224*sizeof(UInt64) == sending batch of 32 224*224 UInt8 image
-            request = grpc_async_request(client, TestRequest(64, zeros(UInt64, 32*28*224)))
+            request = grpc_async_request(client, TestRequest(64, zeros(UInt64, 32 * 28 * 224)))
             push!(requests, request)
         end
 
@@ -216,9 +216,9 @@ include("gen/test/test_pb.jl")
     @testset "Threads.@spawn small request/response" begin
         client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
 
-        responses = [TestResponse(Vector{UInt64}()) for _ = 1:1000]
+        responses = [TestResponse(Vector{UInt64}()) for _ in 1:1000]
 
-        @sync Threads.@threads for i = 1:1000
+        @sync Threads.@threads for i in 1:1000
             response = grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
             responses[i] = response
         end
@@ -232,9 +232,9 @@ include("gen/test/test_pb.jl")
     @testset "Threads.@spawn varying request/response" begin
         client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
 
-        responses = [TestResponse(Vector{UInt64}()) for _ = 1:1000]
+        responses = [TestResponse(Vector{UInt64}()) for _ in 1:1000]
 
-        @sync Threads.@threads for i = 1:1000
+        @sync Threads.@threads for i in 1:1000
             response = grpc_sync_request(client, TestRequest(i, zeros(UInt64, i)))
             responses[i] = response
         end
@@ -251,11 +251,11 @@ include("gen/test/test_pb.jl")
         client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
 
         channel = Channel{gRPCAsyncChannelResponse{TestResponse}}(1000)
-        for i = 1:1000
+        for i in 1:1000
             grpc_async_request(client, TestRequest(i, zeros(UInt64, 1)), channel, i)
         end
 
-        for i = 1:1000
+        for i in 1:1000
             r = take!(channel)
             !isnothing(r.ex) && throw(r.ex)
             @test r.index == length(r.response.data)
@@ -294,7 +294,7 @@ include("gen/test/test_pb.jl")
             req = grpc_async_request(client, TestRequest(N, zeros(UInt64, 1)), response_c)
 
             # We should get back N messages that end with their length
-            for i = 1:N
+            for i in 1:N
                 response = take_or_diagnose(req, response_c)
                 @test length(response.data) == i
                 @test last(response.data) == i
@@ -314,7 +314,7 @@ include("gen/test/test_pb.jl")
 
             request = grpc_async_request(client, request_c)
 
-            for i = 1:N
+            for i in 1:N
                 put!(request_c, TestRequest(1, zeros(UInt64, 1)))
             end
 
@@ -322,7 +322,7 @@ include("gen/test/test_pb.jl")
             response = grpc_async_await(client, request)
 
             @test length(response.data) == N
-            for i = 1:N
+            for i in 1:N
                 @test response.data[i] == i
             end
         end
@@ -340,11 +340,11 @@ include("gen/test/test_pb.jl")
 
             req = grpc_async_request(client, request_c, response_c)
 
-            for i = 1:N
+            for i in 1:N
                 put!(request_c, TestRequest(i, zeros(UInt64, i)))
             end
 
-            for i = 1:N
+            for i in 1:N
                 response = take_or_diagnose(req, response_c)
                 @test length(response.data) == i
                 @test last(response.data) == i
@@ -377,7 +377,7 @@ include("gen/test/test_pb.jl")
             req = grpc_async_request(client, request_c, response_c)
 
             # Every other response is empty, including the last one
-            sizes = [iseven(i) ? 0 : i for i = 1:N]
+            sizes = [iseven(i) ? 0 : i for i in 1:N]
             for sz in sizes
                 put!(request_c, TestRequest(sz, UInt64[]))
             end
@@ -454,7 +454,7 @@ include("gen/test/test_pb.jl")
             req = grpc_async_request(client, TestRequest(N, zeros(UInt64, 1)), response_c)
 
             # We should get back N small messages
-            for i = 1:N
+            for i in 1:N
                 response = take_or_diagnose(req, response_c)
                 @test length(response.data) >= 1
             end
@@ -474,8 +474,8 @@ include("gen/test/test_pb.jl")
             request = grpc_async_request(client, request_c)
 
             # Send 100 large payloads (similar to unary big test)
-            for i = 1:N
-                put!(request_c, TestRequest(1, zeros(UInt64, 32*28*224)))
+            for i in 1:N
+                put!(request_c, TestRequest(1, zeros(UInt64, 32 * 28 * 224)))
             end
 
             close(request_c)
@@ -611,7 +611,7 @@ include("gen/test/test_pb.jl")
             req = grpc_async_request(client, request_c, response_c)
 
             # Stream is live: request/response round trips work
-            for i = 1:3
+            for i in 1:3
                 put!(request_c, TestRequest(i, zeros(UInt64, i)))
                 r = take!(response_c)
                 @test length(r.data) == i
@@ -637,7 +637,7 @@ include("gen/test/test_pb.jl")
             # Regression for the recycled curl_done_reading Event: the slot freed by
             # the cancelled stream (LIFO freelist, so the next request reuses it) must
             # be clean. Run follow-up streams and unary requests on the same handle.
-            for _ = 1:3
+            for _ in 1:3
                 cs_client = TestService_TestClientStreamRPC_Client(_TEST_HOST, _TEST_PORT)
                 cs_c = Channel{TestRequest}(4)
                 cs_req = grpc_async_request(cs_client, cs_c)
@@ -754,15 +754,17 @@ include("gen/test/test_pb.jl")
     @testset "grpc-timeout header value formatting" begin
         # Per the gRPC HTTP/2 spec, a grpc-timeout value is a positive integer of at most 8 digits
         # followed by a unit char: H (hour), M (minute), S (second), m (ms), u (us), n (ns).
-        _UNIT_NS = Dict('H' => 3_600_000_000_000, 'M' => 60_000_000_000, 'S' => 1_000_000_000,
-                        'm' => 1_000_000, 'u' => 1_000, 'n' => 1)
+        _UNIT_NS = Dict(
+            'H' => 3_600_000_000_000, 'M' => 60_000_000_000, 'S' => 1_000_000_000,
+            'm' => 1_000_000, 'u' => 1_000, 'n' => 1
+        )
         # Decode a header value back to seconds so we can check it never encodes a shorter timeout.
-        decode_s(hv) = parse(Int64, hv[1:end-1]) * _UNIT_NS[hv[end]] / 1e9
+        decode_s(hv) = parse(Int64, hv[1:(end - 1)]) * _UNIT_NS[hv[end]] / 1.0e9
         # Assert the value obeys the spec: 1-8 ASCII digits then a known unit char.
         function is_wellformed(hv)
             length(hv) >= 2 || return false
             haskey(_UNIT_NS, hv[end]) || return false
-            digits = hv[1:end-1]
+            digits = hv[1:(end - 1)]
             1 <= length(digits) <= 8 && all(isdigit, digits)
         end
 
@@ -780,7 +782,7 @@ include("gen/test/test_pb.jl")
             @test grpc_timeout_header_val(0.0005) == "500u"
             # Whole nanoseconds render as n.
             @test grpc_timeout_header_val(0.0000001) == "100n"
-            @test grpc_timeout_header_val(1e-9) == "1n"
+            @test grpc_timeout_header_val(1.0e-9) == "1n"
         end
 
         @testset "coarsest exact unit is preferred" begin
@@ -810,9 +812,9 @@ include("gen/test/test_pb.jl")
             @test grpc_timeout_header_val(0) == "0S"     # zero is valid: immediate deadline
             # A strictly positive timeout must never round DOWN to "0S" (already-expired). Values
             # below half a nanosecond floor at one nanosecond instead of collapsing to zero.
-            @test grpc_timeout_header_val(1e-10) == "1n"
-            @test grpc_timeout_header_val(4e-10) == "1n"
-            @test grpc_timeout_header_val(1e-12) == "1n"
+            @test grpc_timeout_header_val(1.0e-10) == "1n"
+            @test grpc_timeout_header_val(4.0e-10) == "1n"
+            @test grpc_timeout_header_val(1.0e-12) == "1n"
         end
 
         @testset "narrow and exotic Real types" begin
@@ -839,22 +841,24 @@ include("gen/test/test_pb.jl")
                 e isa gRPCServiceCallException && e.grpc_status == gRPCClient.GRPC_INVALID_ARGUMENT
             end
             @test invalid_arg(() -> grpc_timeout_header_val(-1))          # negative
-            @test invalid_arg(() -> grpc_timeout_header_val(-1e-9))       # negative, sub-nanosecond
+            @test invalid_arg(() -> grpc_timeout_header_val(-1.0e-9))       # negative, sub-nanosecond
             @test invalid_arg(() -> grpc_timeout_header_val(Inf))         # non-finite
             @test invalid_arg(() -> grpc_timeout_header_val(NaN))         # non-finite
-            @test invalid_arg(() -> grpc_timeout_header_val(1e12))        # beyond Int64 ns (~292y)
+            @test invalid_arg(() -> grpc_timeout_header_val(1.0e12))        # beyond Int64 ns (~292y)
         end
 
         @testset "invariants over a wide sweep" begin
             # For every timeout, the header must be well-formed (<=8 digits + valid unit) and must
             # never encode a SHORTER timeout than requested (rounding is always up).
-            vals = Float64[0, 1e-9, 5e-9, 1e-7, 0.0005, 0.05, 0.099999999, 0.1, 0.5, 1, 2.5,
-                           9.9999999, 10.0000001, 29.999999046, 60, 90.0001, 123.4567, 3600,
-                           99_999.9994, 1e6 + 0.5, 99_999_999]
+            vals = Float64[
+                0, 1.0e-9, 5.0e-9, 1.0e-7, 0.0005, 0.05, 0.099999999, 0.1, 0.5, 1, 2.5,
+                9.9999999, 10.0000001, 29.999999046, 60, 90.0001, 123.4567, 3600,
+                99_999.9994, 1.0e6 + 0.5, 99_999_999,
+            ]
             for t in vals
                 hv = grpc_timeout_header_val(t)
                 @test is_wellformed(hv)
-                @test decode_s(hv) >= t - 1e-9
+                @test decode_s(hv) >= t - 1.0e-9
             end
         end
     end
@@ -879,7 +883,7 @@ include("gen/test/test_pb.jl")
             TestRequest(1024, zeros(UInt64, 1)),
         )
     end
-    
+
     function client_authorizes(client; kws...)
         # A client configured with the correct bearer token sends
         # `authorization: Bearer <token>`, which the test server validates.
@@ -943,7 +947,7 @@ include("gen/test/test_pb.jl")
         )
         @test client_fails_authorization(bad_client)
     end
-    
+
     @testset "_merge_options" begin
         # Most options should be plainly overridden
         options = gRPCClient.gRPCConnectionOptions()
@@ -963,11 +967,11 @@ include("gen/test/test_pb.jl")
 
         # set metadata = nothing in gRPCConnectionOptions
         opts = gRPCClient.gRPCConnectionOptions(metadata = nothing)
-        gRPCClient._merge_options(opts, Dict{Symbol,Any}(:metadata => Dict("x" => "1")))
+        gRPCClient._merge_options(opts, Dict{Symbol, Any}(:metadata => Dict("x" => "1")))
 
         # Check rejection of invalid arguments
         opts = gRPCClient.gRPCConnectionOptions(metadata = nothing)
-        @test_throws ArgumentError gRPCClient._merge_options(opts, Dict{Symbol,Any}(:not_a_key => Dict("x" => "1")))
+        @test_throws ArgumentError gRPCClient._merge_options(opts, Dict{Symbol, Any}(:not_a_key => Dict("x" => "1")))
     end
 
     @testset "token and authorization metadata conflict" begin
@@ -981,7 +985,7 @@ include("gen/test/test_pb.jl")
                 return false
             catch ex
                 return isa(ex, gRPCServiceCallException) &&
-                       ex.grpc_status == GRPC_INVALID_ARGUMENT
+                    ex.grpc_status == GRPC_INVALID_ARGUMENT
             end
         end
 
@@ -1059,7 +1063,7 @@ include("gen/test/test_pb.jl")
         )
         # Bad token provided to grpc_sync_request should override
         @test client_fails_authorization(good_client; token = "bad token")
- 
+
         # Client has bad token
         bad_client = TestService_TestRPC_Client(
             _TEST_HOST,
@@ -1081,7 +1085,7 @@ include("gen/test/test_pb.jl")
         N = 100
         tasks = Vector{Task}(undef, N)
 
-        for i = 1:N
+        for i in 1:N
             tasks[i] = @spawn begin
                 try
                     # Make requests with varying sizes
@@ -1148,14 +1152,14 @@ include("gen/test/test_pb.jl")
         t0 = time()
         tasks = [
             @spawn begin
-                try
-                    request = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
-                    grpc_async_await(client, request)
-                    nothing
+                    try
+                        request = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+                        grpc_async_await(client, request)
+                        nothing
                 catch ex
-                    ex
+                        ex
                 end
-            end for _ = 1:N
+                end for _ in 1:N
         ]
         results = fetch.(tasks)
         elapsed = time() - t0
@@ -1163,8 +1167,8 @@ include("gen/test/test_pb.jl")
         # Every request resolved (no wedge) with DEADLINE_EXCEEDED at ~deadline per batch
         @test all(
             ex ->
-                isa(ex, gRPCServiceCallException) &&
-                    ex.grpc_status == GRPC_DEADLINE_EXCEEDED,
+            isa(ex, gRPCServiceCallException) &&
+                ex.grpc_status == GRPC_DEADLINE_EXCEEDED,
             results,
         )
         # Two semaphore batches, each bounded by deadline + watchdog grace; generous margin

@@ -10,16 +10,16 @@ function perform_benchmark(f)
     N = f()
 
     b = @benchmark $f($N)
-    timing = sum(b.times) / 1e9
-    timings_us = b.times ./ 1e3
+    timing = sum(b.times) / 1.0e9
+    timings_us = b.times ./ 1.0e3
     N_sample = length(b.times) * N
-    mem = round(b.memory / (1024*1024), digits = 2)
+    mem = round(b.memory / (1024 * 1024), digits = 2)
 
     return [
         f,
-        1000*mem / N, # Avg Memory
+        1000 * mem / N, # Avg Memory
         round(b.allocs / N, digits = 1), # Avg Allocs
-        round(Int, N_sample/timing), # Throughput
+        round(Int, N_sample / timing), # Throughput
         round(Int, mean(timings_us) / N), # Avg duration
         round(std(timings_us) / N, digits = 2),
         round(Int, minimum(timings_us) / N),
@@ -51,7 +51,7 @@ function benchmark_table()
 
     all_results = [perform_benchmark(f) for f in ProgressBar(all_benchmarks)]
 
-    pretty_table(
+    return pretty_table(
         permutedims(reduce(hcat, all_results));
         column_labels = column_labels,
         style = TextTableStyle(first_line_column_label = crayon"yellow bold"),
