@@ -54,7 +54,7 @@ The following keyword arguments may be set:
 - **`max_send_message_length`**: The maximum size in bytes for messages sent to the server. Attempting to send messages larger than this will raise an exception. Default: `4*1024*1024` (4 MiB)
 - **`max_recieve_message_length`**: The maximum size in bytes for messages received from the server. Receiving messages larger than this will raise an exception. Default: `4*1024*1024` (4 MiB)
 - **`token`**: Optional bearer token attached to every request as an `authorization: Bearer <token>` header. 
-- **`metadata`**: A `Dict{String, String}` for adding arbitrary fields to the header. For example, the token field can also added by setting `metadata = Dict("authorization" => "Bearer <token>")` instead of using the `token` keyword. 
+- **`metadata`**: A `Dict{String, String}` for adding arbitrary fields to the header. For example, the token field can also added by setting `metadata = Dict("authorization" => "Bearer <token>")` instead of using the `token` keyword. Setting `token` and an `authorization` metadata entry at the same time raises `INVALID_ARGUMENT`, since the two are the same header and sending both would leave which one applies up to the server; the check is case-insensitive. To override a client-level `token` with per-request metadata, pass `token = nothing` alongside it.
 """
 struct gRPCServiceClient{TRequest,SRequest,TResponse,SResponse}
     grpc::gRPCCURL

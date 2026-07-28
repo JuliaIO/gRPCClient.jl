@@ -196,6 +196,31 @@ function grpc_timeout_header_val(timeout::Real)
         "grpc-timeout $(timeout)s could not be encoded within the 8-digit gRPC limit"))
 end
 
+const _AUTHORIZATION_HEADER = "authorization"
+
+# ASCII case-fold a single byte. Header names are ASCII per the HTTP/2 spec, so folding
+# bytes is sufficient and, unlike lowercase(), needs no temporary String.
+@inline _ascii_lower(b::UInt8) = ifelse(UInt8('A') <= b <= UInt8('Z'), b | 0x20, b)
+
+# Does `metadata` carry an `authorization` entry under any capitalization? Header names
+# are case-insensitive and libcurl lowercases them for HTTP/2, so "Authorization"
+# collides with `token` exactly as "authorization" does.
+#
+# Allocation-free by construction: `keys` on a Dict is a lazy KeySet, and comparing with
+# `codeunit` reads bytes in place rather than building a lowercased copy of each key.
+function _has_authorization_key(metadata::Dict{String,String})
+    n = ncodeunits(_AUTHORIZATION_HEADER)
+    for k in keys(metadata)
+        ncodeunits(k) == n || continue
+        i = 1
+        while i <= n && _ascii_lower(codeunit(k, i)) == codeunit(_AUTHORIZATION_HEADER, i)
+            i += 1
+        end
+        i > n && return true
+    end
+    return false
+end
+
 @kwdef struct gRPCConnectionOptions
     secure::Bool = false
     deadline::Float64 = 10
@@ -208,6 +233,47 @@ end
 	# to metadata
     token::Union{Nothing, String} = nothing
     metadata::Union{Nothing, Dict{String, String}} = nothing
+
+    # `token` and an `authorization` metadata entry are two spellings of the same
+    # header, so setting both would append two `authorization` headers and leave which
+    # one applies up to the server. Reject that ambiguity at construction rather than
+    # silently sending both. Validating here covers every path that builds options: the
+    # client constructor and _merge_options, which reaches this via the positional
+    # constructor. The check runs once per options object, not once per request, since
+    # _merge_options returns the existing object untouched when nothing is overridden.
+    #
+    # To swap a client-level token for per-request metadata, pass `token = nothing`
+    # alongside the metadata override.
+    function gRPCConnectionOptions(
+        secure,
+        deadline,
+        keepalive,
+        max_send_message_length,
+        max_recieve_message_length,
+        token,
+        metadata,
+    )
+        if !isnothing(token) &&
+           !isnothing(metadata) &&
+           _has_authorization_key(metadata)
+            throw(
+                gRPCServiceCallException(
+                    GRPC_INVALID_ARGUMENT,
+                    "token and an \"authorization\" metadata entry both set the authorization header; " *
+                    "use one or the other (pass token = nothing to override a client-level token with metadata)",
+                ),
+            )
+        end
+        new(
+            secure,
+            deadline,
+            keepalive,
+            max_send_message_length,
+            max_recieve_message_length,
+            token,
+            metadata,
+        )
+    end
 end
 
 # Creates a new options object (if necessary) where some fields are overridden 

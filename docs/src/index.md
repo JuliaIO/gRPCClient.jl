@@ -109,7 +109,7 @@ TestService_TestRPC_Client(
   - **`max_send_message_length`**: The maximum size in bytes for messages sent to the server. Attempting to send messages larger than this will raise an exception. Default: `4*1024*1024` (4 MiB)
   - **`max_recieve_message_length`**: The maximum size in bytes for messages received from the server. Receiving messages larger than this will raise an exception. Default: `4*1024*1024` (4 MiB)
   - **`token`**: Optional bearer token attached to every request as an `authorization: Bearer <token>` header. 
-  - **`metadata`**: A `Dict{String, String}` for adding arbitrary fields to the header. For example, a token can also be attached by setting `metadata = Dict("authorization" => "Bearer <token>")` instead of using the `token` keyword. 
+  - **`metadata`**: A `Dict{String, String}` for adding arbitrary fields to the header. For example, a token can also be attached by setting `metadata = Dict("authorization" => "Bearer <token>")` instead of using the `token` keyword. Setting `token` and an `authorization` metadata entry at the same time raises `INVALID_ARGUMENT`, since the two are the same header and sending both would leave which one applies up to the server; the check is case-insensitive. To override a client-level `token` with per-request metadata, pass `token = nothing` alongside it.
 
 Any of the options mentioned above may also be provided as keyword arguments to `grpc_async_request` or `grpc_async_request`, taking priority over options set for the client.  
 
@@ -167,11 +167,11 @@ indefinitely for a slot.
 
 The exception contract: `grpc_async_request` throws only for programming
 errors it can detect synchronously at submission (an uninitialized or
-shut-down handle as `FAILED_PRECONDITION`, an invalid deadline as
-`INVALID_ARGUMENT`, an oversized message as `RESOURCE_EXHAUSTED`). Every
-failure that depends on time or concurrency (deadline exceeded, including
-expiry while queued, cancellation, transport errors, server statuses) is
-raised by `grpc_async_await`.
+shut-down handle as `FAILED_PRECONDITION`, an invalid deadline or a
+`token`/`authorization`-metadata conflict as `INVALID_ARGUMENT`, an oversized
+message as `RESOURCE_EXHAUSTED`). Every failure that depends on time or
+concurrency (deadline exceeded, including expiry while queued, cancellation,
+transport errors, server statuses) is raised by `grpc_async_await`.
 
 An in-flight request can also be cancelled explicitly at any time:
 

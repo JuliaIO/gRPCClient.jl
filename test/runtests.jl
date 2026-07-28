@@ -934,6 +934,80 @@ include("gen/test/test_pb.jl")
         @test_throws ArgumentError gRPCClient._merge_options(opts, Dict{Symbol,Any}(:not_a_key => Dict("x" => "1")))
     end
 
+    @testset "token and authorization metadata conflict" begin
+        # `token` and an `authorization` metadata entry are two spellings of the same
+        # header. Setting both would put two `authorization` headers on the wire and
+        # leave the choice to the server, so it is rejected as INVALID_ARGUMENT rather
+        # than silently sending both.
+        function conflicts(; kws...)
+            try
+                gRPCClient.gRPCConnectionOptions(; kws...)
+                return false
+            catch ex
+                return isa(ex, gRPCServiceCallException) &&
+                       ex.grpc_status == GRPC_INVALID_ARGUMENT
+            end
+        end
+
+        @test conflicts(token = "t", metadata = Dict("authorization" => "Bearer x"))
+        # Header names are case-insensitive and libcurl lowercases them for HTTP/2, so
+        # any capitalization collides with `token`.
+        @test conflicts(token = "t", metadata = Dict("Authorization" => "Bearer x"))
+        @test conflicts(token = "t", metadata = Dict("AUTHORIZATION" => "Bearer x"))
+        @test conflicts(
+            token = "t",
+            metadata = Dict("x-req-id" => "1", "authoriZATION" => "Bearer x"),
+        )
+
+        # Either mechanism alone is fine, as is metadata that merely looks similar.
+        @test !conflicts(token = "t")
+        @test !conflicts(metadata = Dict("authorization" => "Bearer x"))
+        @test !conflicts(token = "t", metadata = Dict("x-api-key" => "k"))
+        @test !conflicts(token = "t", metadata = Dict("authorizatio" => "x"))
+        @test !conflicts(token = "t", metadata = Dict("authorizationx" => "x"))
+        @test !conflicts(token = "t", metadata = Dict("x-authorization" => "x"))
+
+        # The conflict is also caught when a per-request override introduces it, in
+        # either direction.
+        with_token = gRPCClient.gRPCConnectionOptions(token = "t")
+        @test_throws gRPCServiceCallException gRPCClient._merge_options(
+            with_token,
+            Dict(:metadata => Dict("authorization" => "Bearer x")),
+        )
+        with_md = gRPCClient.gRPCConnectionOptions(
+            metadata = Dict("authorization" => "Bearer x"),
+        )
+        @test_throws gRPCServiceCallException gRPCClient._merge_options(
+            with_md,
+            Dict(:token => "t"),
+        )
+
+        # Passing `token = nothing` is the documented way to hand a client-level token
+        # over to per-request metadata.
+        swapped = gRPCClient._merge_options(
+            with_token,
+            Dict(:token => nothing, :metadata => Dict("authorization" => "Bearer x")),
+        )
+        @test isnothing(swapped.token)
+        @test swapped.metadata["authorization"] == "Bearer x"
+
+        # The conflict check must not allocate: it runs whenever options are built.
+        md = Dict("x-req-id" => "1", "authorization" => "Bearer x")
+        gRPCClient._has_authorization_key(md)  # warm up
+        @test (@allocated gRPCClient._has_authorization_key(md)) == 0
+        md_miss = Dict("x-req-id" => "1", "x-trace" => "abc")
+        gRPCClient._has_authorization_key(md_miss)
+        @test (@allocated gRPCClient._has_authorization_key(md_miss)) == 0
+
+        # A client rejects the conflicting pair end to end.
+        @test_throws gRPCServiceCallException TestService_TestRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            token = _TEST_BEARER_TOKEN,
+            metadata = Dict("authorization" => "Bearer $(_TEST_BEARER_TOKEN)"),
+        )
+    end
+
     @testset "Connection options priority" begin
         # Tests _merge_options in action
 

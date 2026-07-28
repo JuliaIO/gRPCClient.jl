@@ -194,6 +194,12 @@ All generated constructors share the same keyword parameters:
 | `keepalive`                | `60`            | TCP keepalive interval (seconds); sets both idle and probe interval |
 | `max_send_message_length`  | `4*1024*1024`   | Max bytes per outgoing message |
 | `max_recieve_message_length`| `4*1024*1024`  | Max bytes per incoming message (note: typo in API — `recieve`) |
+| `token`                    | `nothing`       | Bearer token sent as `authorization: Bearer <token>` |
+| `metadata`                 | `nothing`       | `Dict{String,String}` of extra request headers. Equivalent way to set a token: `Dict("authorization" => "Bearer <token>")`. Cannot be combined with `token` for the `authorization` key (raises `GRPC_INVALID_ARGUMENT`) |
+
+Any of these may also be passed per-request to `grpc_async_request` /
+`grpc_sync_request`, taking priority over the client's own options. `metadata`
+merges key-by-key with the client's; other options are replaced outright.
 
 ### Unary RPC
 
@@ -230,13 +236,17 @@ that never finishes the HTTP/2 handshake never have their timeouts driven by
 libcurl). The deadline covers client-side queueing for a `max_streams` slot
 too. Exception contract: `grpc_async_request` throws only for synchronously
 detectable programming errors (uninitialized/shut-down handle =
-FAILED_PRECONDITION, invalid deadline = INVALID_ARGUMENT, oversized message =
+FAILED_PRECONDITION, invalid deadline = INVALID_ARGUMENT, `token` set together
+with an `authorization` metadata entry = INVALID_ARGUMENT, oversized message =
 RESOURCE_EXHAUSTED); time/concurrency-dependent failures (deadline exceeded,
 including expiry while queued, cancellation, transport errors) are raised by
 `grpc_async_await`.
 
 A deadline must be non-negative: `0` expires immediately (DEADLINE_EXCEEDED
 from await), while negative/`NaN`/`-Inf` raise INVALID_ARGUMENT at submission.
+`token` and `metadata["authorization"]` are the same header, so setting both
+raises INVALID_ARGUMENT (case-insensitive) rather than sending two; pass
+`token = nothing` to hand a client-level token over to per-request metadata.
 
 For explicitly-managed lifetimes (e.g. long-lived streams), `deadline = Inf`
 disables all timeouts (client-side and the `grpc-timeout` header); end the
