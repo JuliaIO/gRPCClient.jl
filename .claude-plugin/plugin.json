@@ -1,0 +1,18 @@
+{
+  "name": "grpcclient-jl",
+  "description": "Skills for calling gRPC services from Julia with gRPCClient.jl, and for developing the package itself.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Carroll Vance"
+  },
+  "homepage": "https://juliaio.github.io/gRPCClient.jl",
+  "repository": "https://github.com/JuliaIO/gRPCClient.jl",
+  "license": "MIT",
+  "keywords": [
+    "julia",
+    "grpc",
+    "protobuf",
+    "http2",
+    "libcurl"
+  ]
+}
