@@ -1,9 +1,7 @@
-
-
 function grpc_async_stream_request(
-    req::gRPCRequest,
-    channel::Channel{TRequest},
-) where {TRequest<:Any}
+        req::gRPCRequest,
+        channel::Channel{TRequest},
+    ) where {TRequest <: Any}
     try
         encode_buf = IOBuffer()
         reqs_ready = 0
@@ -91,13 +89,13 @@ function grpc_async_stream_request(
         close(req.request_c)
     end
 
-    nothing
+    return nothing
 end
 
 function grpc_async_stream_response(
-    req::gRPCRequest,
-    channel::Channel{TResponse},
-) where {TResponse<:Any}
+        req::gRPCRequest,
+        channel::Channel{TResponse},
+    ) where {TResponse <: Any}
     try
         while isnothing(req.ex)
             response_buf = take!(req.response_c)
@@ -117,7 +115,7 @@ function grpc_async_stream_response(
         close(req.response_c)
     end
 
-    nothing
+    return nothing
 end
 
 """
@@ -153,10 +151,10 @@ test_response = grpc_async_await(client, req)
 ```
 """
 function grpc_async_request(
-    client::gRPCServiceClient{TRequest,true,TResponse,false},
-    request::Channel{TRequest};
-    options...
-) where {TRequest<:Any,TResponse<:Any}
+        client::gRPCServiceClient{TRequest, true, TResponse, false},
+        request::Channel{TRequest};
+        options...
+    ) where {TRequest <: Any, TResponse <: Any}
 
     req = gRPCRequest(
         client.grpc,
@@ -171,7 +169,7 @@ function grpc_async_request(
     request_task = _spawn(() -> grpc_async_stream_request(req, request), client)
     errormonitor(request_task)
 
-    req
+    return req
 end
 
 """
@@ -207,11 +205,11 @@ grpc_async_await(req)
 ```
 """
 function grpc_async_request(
-    client::gRPCServiceClient{TRequest,false,TResponse,true},
-    request::TRequest,
-    response::Channel{TResponse};
-    kws...
-) where {TRequest<:Any,TResponse<:Any}
+        client::gRPCServiceClient{TRequest, false, TResponse, true},
+        request::TRequest,
+        response::Channel{TResponse};
+        kws...
+    ) where {TRequest <: Any, TResponse <: Any}
 
     options = _merge_options(client.options, kws)
 
@@ -234,7 +232,7 @@ function grpc_async_request(
     response_task = _spawn(() -> grpc_async_stream_response(req, response), client)
     errormonitor(response_task)
 
-    req
+    return req
 end
 
 """
@@ -276,11 +274,11 @@ grpc_async_await(req)
 ```
 """
 function grpc_async_request(
-    client::gRPCServiceClient{TRequest,true,TResponse,true},
-    request::Channel{TRequest},
-    response::Channel{TResponse};
-    options...
-) where {TRequest<:Any,TResponse<:Any}
+        client::gRPCServiceClient{TRequest, true, TResponse, true},
+        request::Channel{TRequest},
+        response::Channel{TResponse};
+        options...
+    ) where {TRequest <: Any, TResponse <: Any}
 
     req = gRPCRequest(
         client.grpc,
@@ -298,7 +296,7 @@ function grpc_async_request(
     response_task = _spawn(() -> grpc_async_stream_response(req, response), client)
     errormonitor(response_task)
 
-    req
+    return req
 end
 
 
@@ -308,6 +306,6 @@ end
 Raise any exceptions encountered during the streaming request.
 """
 grpc_async_await(
-    client::gRPCServiceClient{TRequest,true,TResponse,false},
+    client::gRPCServiceClient{TRequest, true, TResponse, false},
     request::gRPCRequest,
-) where {TRequest<:Any,TResponse<:Any} = grpc_async_await(request, TResponse)
+) where {TRequest <: Any, TResponse <: Any} = grpc_async_await(request, TResponse)

@@ -30,10 +30,10 @@ end
 ```
 """
 function grpc_async_request(
-    client::gRPCServiceClient{TRequest,false,TResponse,false},
-    request::TRequest;
-    kws...
-) where {TRequest<:Any,TResponse<:Any}
+        client::gRPCServiceClient{TRequest, false, TResponse, false},
+        request::TRequest;
+        kws...
+    ) where {TRequest <: Any, TResponse <: Any}
 
     options = _merge_options(client.options, kws)
 
@@ -53,14 +53,14 @@ function grpc_async_request(
         options
     )
 
-    req
+    return req
 end
 
 
 mutable struct gRPCAsyncChannelResponse{TResponse}
     index::Int64
-    response::Union{Nothing,TResponse}
-    ex::Union{Nothing,Exception}
+    response::Union{Nothing, TResponse}
+    ex::Union{Nothing, Exception}
 end
 
 """
@@ -99,12 +99,12 @@ end
 ```
 """
 function grpc_async_request(
-    client::gRPCServiceClient{TRequest,false,TResponse,false},
-    request::TRequest,
-    channel::Channel{gRPCAsyncChannelResponse{TResponse}},
-    index::Int64;
-    kws...
-) where {TRequest<:Any,TResponse<:Any}
+        client::gRPCServiceClient{TRequest, false, TResponse, false},
+        request::TRequest,
+        channel::Channel{gRPCAsyncChannelResponse{TResponse}},
+        index::Int64;
+        kws...
+    ) where {TRequest <: Any, TResponse <: Any}
 
     options = _merge_options(client.options, kws)
 
@@ -133,7 +133,7 @@ function grpc_async_request(
         end
     end
 
-    nothing
+    return nothing
 end
 
 
@@ -143,9 +143,9 @@ end
 Wait for the request to complete and return the response when it is ready. Throws any exceptions that were encountered during handling of the request.
 """
 grpc_async_await(
-    client::gRPCServiceClient{TRequest,false,TResponse,false},
+    client::gRPCServiceClient{TRequest, false, TResponse, false},
     request::gRPCRequest,
-) where {TRequest<:Any,TResponse<:Any} = grpc_async_await(request, TResponse)
+) where {TRequest <: Any, TResponse <: Any} = grpc_async_await(request, TResponse)
 
 
 """
@@ -173,8 +173,8 @@ response = grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
 ```
 """
 grpc_sync_request(
-    client::gRPCServiceClient{TRequest,false,TResponse,false},
-    request::TRequest; 
+    client::gRPCServiceClient{TRequest, false, TResponse, false},
+    request::TRequest;
     kws...
-) where {TRequest<:Any,TResponse<:Any} =
+) where {TRequest <: Any, TResponse <: Any} =
     grpc_async_await(grpc_async_request(client, request; kws...), TResponse)

@@ -12,10 +12,10 @@ export TestResponse, TestRequest
 struct TestResponse
     data::Vector{UInt64}
 end
-PB.default_values(::Type{TestResponse}) = (;data = Vector{UInt64}())
-PB.field_numbers(::Type{TestResponse}) = (;data = 1)
+PB.default_values(::Type{TestResponse}) = (; data = Vector{UInt64}())
+PB.field_numbers(::Type{TestResponse}) = (; data = 1)
 
-function PB.decode(d::PB.AbstractProtoDecoder, ::Type{<:TestResponse}, _endpos::Int=0, _group::Bool=false)
+function PB.decode(d::PB.AbstractProtoDecoder, ::Type{<:TestResponse}, _endpos::Int = 0, _group::Bool = false)
     data = PB.BufferedVector{UInt64}()
     while !PB.message_done(d, _endpos, _group)
         field_number, wire_type = PB.decode_tag(d)
@@ -43,10 +43,10 @@ struct TestRequest
     test_response_sz::UInt64
     data::Vector{UInt64}
 end
-PB.default_values(::Type{TestRequest}) = (;test_response_sz = zero(UInt64), data = Vector{UInt64}())
-PB.field_numbers(::Type{TestRequest}) = (;test_response_sz = 1, data = 2)
+PB.default_values(::Type{TestRequest}) = (; test_response_sz = zero(UInt64), data = Vector{UInt64}())
+PB.field_numbers(::Type{TestRequest}) = (; test_response_sz = 1, data = 2)
 
-function PB.decode(d::PB.AbstractProtoDecoder, ::Type{<:TestRequest}, _endpos::Int=0, _group::Bool=false)
+function PB.decode(d::PB.AbstractProtoDecoder, ::Type{<:TestRequest}, _endpos::Int = 0, _group::Bool = false)
     test_response_sz = zero(UInt64)
     data = PB.BufferedVector{UInt64}()
     while !PB.message_done(d, _endpos, _group)
@@ -77,54 +77,54 @@ end
 
 # gRPCClient.jl BEGIN
 TestService_TestRPC_Client(
-	host, port;
-	TRequest=TestRequest,
-	TResponse=TestResponse,
-	grpc=gRPCClient.grpc_global_handle(),
-	options...
+    host, port;
+    TRequest = TestRequest,
+    TResponse = TestResponse,
+    grpc = gRPCClient.grpc_global_handle(),
+    options...
 ) = gRPCClient.gRPCServiceClient{TRequest, false, TResponse, false}(
-	host, port, "/test.TestService/TestRPC";
-	grpc=grpc,
-	options...
+    host, port, "/test.TestService/TestRPC";
+    grpc = grpc,
+    options...
 )
 export TestService_TestRPC_Client
 
 TestService_TestServerStreamRPC_Client(
-	host, port;
-	TRequest=TestRequest,
-	TResponse=TestResponse,
-	grpc=gRPCClient.grpc_global_handle(),
-	options...
+    host, port;
+    TRequest = TestRequest,
+    TResponse = TestResponse,
+    grpc = gRPCClient.grpc_global_handle(),
+    options...
 ) = gRPCClient.gRPCServiceClient{TRequest, false, TResponse, true}(
-	host, port, "/test.TestService/TestServerStreamRPC";
-	grpc=grpc,
-	options...
+    host, port, "/test.TestService/TestServerStreamRPC";
+    grpc = grpc,
+    options...
 )
 export TestService_TestServerStreamRPC_Client
 
 TestService_TestClientStreamRPC_Client(
-	host, port;
-	TRequest=TestRequest,
-	TResponse=TestResponse,
-	grpc=gRPCClient.grpc_global_handle(),
-	options...
+    host, port;
+    TRequest = TestRequest,
+    TResponse = TestResponse,
+    grpc = gRPCClient.grpc_global_handle(),
+    options...
 ) = gRPCClient.gRPCServiceClient{TRequest, true, TResponse, false}(
-	host, port, "/test.TestService/TestClientStreamRPC";
-	grpc=grpc,
-	options...
+    host, port, "/test.TestService/TestClientStreamRPC";
+    grpc = grpc,
+    options...
 )
 export TestService_TestClientStreamRPC_Client
 
 TestService_TestBidirectionalStreamRPC_Client(
-	host, port;
-	TRequest=TestRequest,
-	TResponse=TestResponse,
-	grpc=gRPCClient.grpc_global_handle(),
-	options...
+    host, port;
+    TRequest = TestRequest,
+    TResponse = TestResponse,
+    grpc = gRPCClient.grpc_global_handle(),
+    options...
 ) = gRPCClient.gRPCServiceClient{TRequest, true, TResponse, true}(
-	host, port, "/test.TestService/TestBidirectionalStreamRPC";
-	grpc=grpc,
-	options...
+    host, port, "/test.TestService/TestBidirectionalStreamRPC";
+    grpc = grpc,
+    options...
 )
 export TestService_TestBidirectionalStreamRPC_Client
 # gRPCClient.jl END

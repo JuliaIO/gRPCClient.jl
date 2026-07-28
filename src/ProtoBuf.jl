@@ -47,6 +47,7 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
         end
     end
 
+    return
 end
 
 import_cb(io, ctx, definitions) =
