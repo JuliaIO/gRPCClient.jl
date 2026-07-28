@@ -163,6 +163,16 @@ function grpc_async_await(req::gRPCRequest)
 
     req.code == CURLE_OPERATION_TIMEDOUT &&
         throw(gRPCServiceCallException(GRPC_DEADLINE_EXCEEDED, "Deadline exceeded."))
+
+    # Any transport error observed after the deadline passed is a deadline expiry.
+    # Tearing the transfer down at CURLOPT_TIMEOUT_MS normally yields
+    # CURLE_OPERATION_TIMEDOUT, but the socket error from the teardown can surface
+    # first instead (seen on Windows, where a tight deadline reports a send/recv or
+    # connect failure), and reporting that as INTERNAL loses the reason the call
+    # actually failed. Requests with no deadline have expiry == Inf and are unaffected.
+    req.code != CURLE_OK && time() >= req.expiry &&
+        throw(gRPCServiceCallException(GRPC_DEADLINE_EXCEEDED, "Deadline exceeded."))
+
     return req.code != CURLE_OK &&
         throw(gRPCServiceCallException(GRPC_INTERNAL, nullstring(req.errbuf)))
 end
