@@ -68,6 +68,15 @@ function grpc_async_stream_request(
             # wakes; the re-check under req.lock keeps curl_easy_pause off the freed
             # easy handle).
             if !req.completed
+                # Mark the request stream closed before the un-pause below, not just in
+                # the `finally` further down. read_callback only returns 0 (which is what
+                # ends the request) once it sees this closed, and the un-pause is what
+                # draws that callback: with the close left until afterwards, a callback
+                # landing in between still sees an open stream, pauses again, and the
+                # transfer sits paused with nobody left to un-pause it, so the call hangs
+                # until its deadline even though both sides are done.
+                close(req.request_c)
+
                 # Wait for any request data to be flushed by curl
                 wait(req.curl_done_reading)
 

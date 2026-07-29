@@ -60,9 +60,7 @@ JULIA_GRPCCLIENT_TEST_START_SERVER=go julia --project test/runtests.jl
 If you already have a server listening on `localhost:8001`, plain `julia --project test/runtests.jl`
 is enough. `GRPC_TEST_SERVER_HOST` and `GRPC_TEST_SERVER_PORT` point the suite elsewhere.
 
-CI covers Julia 1.10, 1.12, and nightly across Linux, Windows, and macOS. Note that
-`src/Streaming.jl` is compiled only on Julia 1.12 and newer, so streaming code and its tests need
-matching version guards.
+CI covers Julia 1.10, 1.12, and nightly across Linux, Windows, and macOS.
 
 ## Pull requests
 

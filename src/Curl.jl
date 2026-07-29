@@ -343,6 +343,11 @@ end
 # watchdog only wins when libcurl has wedged (see the watchdog comment in gRPCRequest).
 const GRPC_DEADLINE_GRACE = 0.25
 
+# How often (seconds) an in-flight request-streaming call re-issues
+# `curl_easy_pause(CURLPAUSE_CONT)` while libcurl has our request buffer drained. See
+# the `unpause` field in gRPCRequest for why this is needed.
+const GRPC_UNPAUSE_INTERVAL = 0.05
+
 mutable struct gRPCRequest
     # CURL multi lock for exclusive access to the easy handle after its added to the multi
     lock::ReentrantLock
@@ -406,6 +411,30 @@ mutable struct gRPCRequest
 
     # Client-side deadline watchdog, see the comment in the constructor
     timer::Union{Nothing, Timer}
+
+    # Repeating un-pause for a request-streaming call, `nothing` for every other kind.
+    #
+    # read_callback pauses libcurl's send direction whenever the request buffer runs
+    # dry, which for a streaming request is every time the caller has nothing queued,
+    # and `curl_easy_pause(CURLPAUSE_CONT)` from the request pump is what resumes it.
+    # Every un-pause the pump issues is one-shot, and libcurl can drop the transfer on
+    # the floor around one: it stops servicing the transfer's socket entirely, so the
+    # peer's response bytes pile up unread in the receive queue while
+    # curl_multi_socket_action keeps reporting CURLM_OK without consuming any of them.
+    # Nothing but another un-pause shakes it loose - driving the multi handle, by socket
+    # event or by timeout, does not - so a bidirectional stream whose caller is waiting
+    # on responses before it sends anything more deadlocks until its deadline expires.
+    # This is what made streaming unusable on Julia 1.10, whose LibCURL_jll is pinned to
+    # the 8.4 series: https://github.com/JuliaIO/gRPCClient.jl/issues/68
+    #
+    # So rather than rely on a single un-pause landing, keep re-issuing it for as long as
+    # such a call is in flight and libcurl holds none of our request data. That covers
+    # the end of the stream too, where the un-pause is what draws the read_callback that
+    # returns 0 and closes the request. curl_easy_pause returns immediately without
+    # doing anything when the transfer is not paused, and an un-pause with an empty
+    # request buffer just draws one read_callback that pauses straight back, so a healthy
+    # call pays only for the call itself while a stalled one recovers within an interval.
+    unpause::Union{Nothing, Timer}
 
     # Absolute `time()` at which this request's deadline expires, Inf when there is no
     # deadline. grpc_async_await uses it to attribute a transport error that landed after
@@ -637,9 +666,36 @@ mutable struct gRPCRequest
             grpc,
             false,
             watchdog,
+            nothing,
             expiry,
         )
         preserve_handle(req)
+
+        # Arm the repeating un-pause once `req` exists, see the `unpause` field above.
+        # Only a request-streaming call ever pauses, so nothing else needs one.
+        if isstreaming_request(req)
+            req.unpause = Timer(
+                GRPC_UNPAUSE_INTERVAL;
+                interval = GRPC_UNPAUSE_INTERVAL,
+            ) do _
+                try
+                    lock(grpc.lock) do
+                        # cleanup_request runs under this lock and frees the easy
+                        # handle, so re-check both before touching it
+                        (req.completed || !grpc.running) && return
+                        # Only once libcurl has taken every byte of the request buffer,
+                        # which is exactly when there is nothing in flight for the
+                        # un-pause to disturb. While the pump has a batch staged the
+                        # buffer is non-empty, so this stays out of the handoff the pump
+                        # is in the middle of driving itself.
+                        req.request_ptr == req.request.size &&
+                            curl_easy_pause(req.easy, CURLPAUSE_CONT)
+                    end
+                catch err
+                    @error("streaming un-pause: unexpected error", err, maxlog = 1_000)
+                end
+            end
+        end
 
         req_p = pointer_from_objref(req)
         curl_easy_setopt(easy_handle, CURLOPT_PRIVATE, req_p)
@@ -671,6 +727,7 @@ mutable struct gRPCRequest
                 # shut-down handle is a submission-time FAILED_PRECONDITION per the
                 # contract at the top of this constructor.
                 isnothing(watchdog) || close(watchdog)
+                isnothing(req.unpause) || close(req.unpause)
                 curl_easy_cleanup(easy_handle)
                 curl_slist_free_all(headers)
                 unpreserve_handle(req)
@@ -746,6 +803,7 @@ mutable struct gRPCRequest
             "",
             grpc,
             true,
+            nothing,
             nothing,
             expiry,
         )
@@ -1307,6 +1365,9 @@ function cleanup_request(grpc::gRPCCURL, req::gRPCRequest)
     req.completed = true
     # Stop the deadline watchdog
     isnothing(req.timer) || close(req.timer)
+    # Stop the repeating streaming un-pause. It is a *repeating* Timer, so leaving it
+    # open would keep the libuv event loop alive for the rest of the process.
+    isnothing(req.unpause) || close(req.unpause)
     # First remove from the multi
     curl_multi_remove_handle(grpc.multi, req.easy)
     # Cleanup the easy handle

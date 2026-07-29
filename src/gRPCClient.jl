@@ -85,13 +85,7 @@ include("Curl.jl")
 include("gRPC.jl")
 include("Unary.jl")
 
-# Streaming only supported on >= 1.12
-@static if VERSION >= v"1.12"
-    include("Streaming.jl")
-else
-    @warn "Julia $(VERSION) <= 1.12, streaming support is disabled: https://github.com/JuliaIO/gRPCClient.jl/issues/68"
-end
-
+include("Streaming.jl")
 include("ProtoBuf.jl")
 
 export grpc_init
