@@ -1,7 +1,5 @@
 # Streaming RPC
 
-Requires Julia 1.12 or newer. On older versions `src/Streaming.jl` is not included at all, a warning is emitted at load time, and the streaming `grpc_async_request` methods simply do not exist, so the failure looks like a `MethodError` rather than a version check.
-
 Every streaming variant follows the same rhythm: create the channels, start the request, move messages, then await for errors. `grpc_async_request` returns a `gRPCRequest` immediately in all three cases.
 
 ## Client streaming, many requests to one response
