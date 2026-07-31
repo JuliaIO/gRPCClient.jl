@@ -88,9 +88,13 @@ function read_callback(
     try
         req = unsafe_pointer_to_objref(req_p)::gRPCRequest
 
-        # Sometimes curl calls again even after we tell it to pause
-        req.curl_done_reading.set && return CURL_READFUNC_PAUSE
-
+        # Curl sometimes calls this again even after we tell it to pause, and it needs no
+        # special handling: the request buffer is empty in that state, so the streaming
+        # branch below simply pauses again, or ends the request if the stream has since
+        # closed. Bailing out early instead used to be actively harmful, because it
+        # swallowed the un-pause the request pump issues and left the transfer paused for
+        # good. The pump stages the buffer under `req.lock`, which is the lock libcurl
+        # invokes this callback under, so a partially written buffer is never visible here.
         buf_p = pointer(req.request.data) + req.request_ptr
         n_left = req.request.size - req.request_ptr
 
@@ -102,8 +106,8 @@ function read_callback(
         req.request_ptr += n_min
 
         if isstreaming_request(req) && n_min == 0
-            # Keep sending until the channel is closed and empty
-            if !isopen(req.request_c) && isempty(req.request_c)
+            # Keep sending until the caller's request stream has ended
+            if req.request_eof
                 notify(req.curl_done_reading)
                 return 0
             end
@@ -389,8 +393,22 @@ mutable struct gRPCRequest
     response_compressed::Bool
     response_length::UInt32
 
-    # When this is set we can write to the request upload buffer because curl is not reading from it
+    # Set by read_callback once curl has taken every byte of the request upload buffer, so
+    # the request pump knows the buffer is free and it may stage the next batch. Flow
+    # control only: what keeps the pump's write from racing a read_callback is `lock`
     curl_done_reading::Event
+
+    # Set once the caller's request stream has ended, so no further request data will ever
+    # be staged and read_callback should end the upload by returning 0. Only meaningful for
+    # a request-streaming call.
+    #
+    # This used to be read off `request_c` (closed and empty), but nothing is ever put into
+    # that channel: it is a lifecycle handle and a flag, not a queue. A plain field can be
+    # written inside the critical section below, where `close(::Channel)` cannot go, because
+    # close acquires the channel's own lock and this section runs while holding the one lock
+    # that serializes every transfer on the handle. It also keeps read_callback, which runs
+    # inside libcurl, from taking a Channel's lock at all.
+    request_eof::Bool
 
     # Response headers
     grpc_status::Int64
@@ -632,6 +650,7 @@ mutable struct gRPCRequest
             false,
             0,
             curl_done_reading,
+            false,
             GRPC_OK,
             "",
             grpc,
@@ -742,6 +761,7 @@ mutable struct gRPCRequest
             false,
             0,
             Event(),
+            true,
             GRPC_OK,
             "",
             grpc,

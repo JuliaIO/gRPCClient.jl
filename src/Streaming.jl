@@ -42,15 +42,22 @@ function grpc_async_stream_request(
                     # Wait for libCURL to not be reading anymore
                     wait(req.curl_done_reading)
 
-                    # Write all of the encoded protobufs to the request read buffer
-                    write(req.request, encode_buf)
-
-                    # Block on the next wait until cleared by the curl read_callback
-                    reset(req.curl_done_reading)
-
-                    # Tell curl we have more to send
+                    # Stage the batch and resume the transfer as one critical section.
+                    # read_callback runs under this same lock, so it cannot land between
+                    # the un-pause and the buffer it is meant to pick up, and cannot pause
+                    # again behind our back. Any pause it takes afterwards is a fresh one
+                    # against an empty buffer, which the next batch resumes.
                     lock(req.lock) do
-                        req.completed || curl_easy_pause(req.easy, CURLPAUSE_CONT)
+                        req.completed && return
+
+                        # Write all of the encoded protobufs to the request read buffer
+                        write(req.request, encode_buf)
+
+                        # Block on the next wait until cleared by the curl read_callback
+                        reset(req.curl_done_reading)
+
+                        # Tell curl we have more to send
+                        curl_easy_pause(req.easy, CURLPAUSE_CONT)
                     end
 
                     # Reset the encode buffer
@@ -71,10 +78,27 @@ function grpc_async_stream_request(
                 # Wait for any request data to be flushed by curl
                 wait(req.curl_done_reading)
 
-                # Trigger a "return 0" in read_callback so curl ends the current request
-                reset(req.curl_done_reading)
+                # Marking the stream ended and resuming the transfer must be one critical
+                # section. read_callback only returns 0 (which is what ends the request)
+                # once it sees the stream ended, and the un-pause is what draws that
+                # callback: were the mark to land after the un-pause, a callback in between
+                # would still see an open stream, pause again, and leave the transfer
+                # paused with nobody to resume it, hanging the call until its deadline even
+                # though both peers are done.
+                #
+                # Nothing in here may block. This holds the lock that serializes every
+                # transfer on the handle, so a task descheduled inside it stalls all of
+                # them. A field write and reset(::Event) are stores, curl_easy_pause with
+                # no paused receive direction draws no callback, and write(::IOBuffer)
+                # above only allocates. close(::Channel) would not qualify, which is why
+                # `request_eof` exists.
                 lock(req.lock) do
-                    req.completed || curl_easy_pause(req.easy, CURLPAUSE_CONT)
+                    req.completed && return
+
+                    req.request_eof = true
+
+                    # Trigger a "return 0" in read_callback so curl ends the current request
+                    curl_easy_pause(req.easy, CURLPAUSE_CONT)
                 end
             end
 
@@ -86,6 +110,12 @@ function grpc_async_stream_request(
         end
     finally
         close(channel)
+        # However this pump exits, no further request data will ever be staged, so end the
+        # upload the way a normal end of stream does. Under the lock for the same ordering
+        # against read_callback as the end-of-stream handoff above, and idempotent with it.
+        lock(req.lock) do
+            req.request_eof = true
+        end
         close(req.request_c)
     end
 
