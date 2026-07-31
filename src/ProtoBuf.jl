@@ -196,7 +196,7 @@ struct gRPCUnaryHandle{Trpc} <: gRPCCallHandle{Trpc}
 end
 struct gRPCStreamRequestHandle{Trpc, TRequest} <: gRPCCallHandle{Trpc}
     req::gRPCRequest
-    request_stream::Channel{TRequest}
+    request_channel::Channel{TRequest}
 end
 struct gRPCStreamResponseHandle{Trpc, TResponse} <: gRPCCallHandle{Trpc}
     req::gRPCRequest
