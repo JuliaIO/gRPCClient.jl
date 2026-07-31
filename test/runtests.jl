@@ -336,12 +336,12 @@ include("gen/test/test_pb.jl")
         resp2 = take!(rpc) # Get data again, also remove
         @test resp1.data == resp2.data == [1]
         @test !rpc.req.completed # The rpc should still be active and ready for new requests
-        @test isopen(rpc.response_stream)
+        @test isopen(rpc.response_channel)
         kill(rpc)
         @test rpc.req.completed # Stream should be done
         # response stream should have been closed by the response task 
-        timedwait(() -> !isopen(rpc.response_stream), 0.01)
-        @test !isopen(rpc.response_stream) 
+        timedwait(() -> !isopen(rpc.response_channel), 0.01)
+        @test !isopen(rpc.response_channel) 
         # Check that we get information about _why_ stream was killed
         @test_throws gRPCException take!(rpc)
 
@@ -349,7 +349,7 @@ include("gen/test/test_pb.jl")
         rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
         close(rpc)
         @test rpc.req.completed # Stream should be done
-        @test !isopen(rpc.response_stream) 
+        @test !isopen(rpc.response_channel) 
         # Check that we get information about _why_ stream was closed
         @test_throws gRPCException take!(rpc)
     end
