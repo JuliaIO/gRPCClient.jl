@@ -266,19 +266,19 @@ include("gen/test/test_pb.jl")
     @testset "Simple API: Unary" begin
         # sync
         chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
-        resp = @inferred TestService.TestRPC(chan, TestRequest(1, [1]))
+        resp = TestService.TestRPC(chan, TestRequest(1, [1]))
         @test resp.data == [1]
 
         # async
-        handle = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
-        resp = @inferred close(handle)
+        rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
+        resp = close(rpc)
         @test resp.data == [1]
 
         # Killing
-        handle = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
-        @test !handle.call.completed
-        kill(handle)
-        @test handle.call.completed
+        rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
+        @test !rpc.req.completed
+        kill(rpc)
+        @test rpc.req.completed
 
         # store response in channel
         responses = Channel{gRPCAsyncChannelResponse{TestResponse}}(Inf)
@@ -295,50 +295,64 @@ include("gen/test/test_pb.jl")
 
     @testset "Simple API: Streaming request" begin
         chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
-        stream = TestService.TestClientStreamRPC(chan)
+        rpc = TestService.TestClientStreamRPC(chan)
         for i = 1:4
-            put!(stream, TestRequest(1, [1]))
+            put!(rpc, TestRequest(1, [1]))
         end
-        response = close(stream)
+        response = close(rpc)
         @test response.data == 1:4
     end
 
     @testset "Simple API: Streaming request" begin
         # Streaming response
         chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
-        stream = TestService.TestServerStreamRPC(chan, TestRequest(4, [1]))
+        rpc = TestService.TestServerStreamRPC(chan, TestRequest(4, [1]))
         for i = 1:4
-            resp = take!(stream)
+            resp = take!(rpc)
             @test length(resp.data) == i
         end
     end
 
-    #=@testset "Simple API: Bidirectional" begin
+    @testset "Simple API: Bidirectional" begin
         chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
 
         # Minimal example
-        stream = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
-        put!(stream, TestRequest(1, [1]))
-        resp = take!(stream)
+        rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
+        put!(rpc, TestRequest(1, [1]))
+        resp = take!(rpc)
         @test resp.data == [1]
-        close(stream)
+        close(rpc)
 
         # Testing larger set of methods
-        stream = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
-        @test !isfull(stream)
-        put!(stream, TestRequest(1, [1]))
-        @test isfull(stream) # If this runs immediately after put!, it should be true
-        @test !isready(stream) # If this runs immediately after put!, it should be true
-        wait(stream)
-        @test !isfull(stream) # If we got a response, the request stream should have been cleared
-        @test isready(stream) # response stream should be ready
-        resp1 = fetch(stream) # Get data without removing
-        resp2 = take!(stream) # Get data again, also remove
+        rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
+        @test !isfull(rpc)
+        put!(rpc, TestRequest(1, [1]))
+        @test isfull(rpc) # If this runs immediately after put!, it should be true
+        @test !isready(rpc) # If this runs immediately after put!, it should be true
+        wait(rpc) # Wait until a response is available
+        @test !isfull(rpc) # If we got a response, the request stream should have been cleared
+        @test isready(rpc) # response stream should be ready
+        resp1 = fetch(rpc) # Get data without removing
+        resp2 = take!(rpc) # Get data again, also remove
         @test resp1.data == resp2.data == [1]
-        @test !stream.call.completed # The stream should still be active and ready for new requests
-        kill(stream)
-        @test stream.call.completed # Stream should be done
-    end=#
+        @test !rpc.req.completed # The rpc should still be active and ready for new requests
+        @test isopen(rpc.response_stream)
+        kill(rpc)
+        @test rpc.req.completed # Stream should be done
+        # response stream should have been closed by the response task 
+        timedwait(() -> !isopen(rpc.response_stream), 0.01)
+        @test !isopen(rpc.response_stream) 
+        # Check that we get information about _why_ stream was killed
+        @test_throws gRPCException take!(rpc)
+
+        # Check that we can close immediately and 
+        rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
+        close(rpc)
+        @test rpc.req.completed # Stream should be done
+        @test !isopen(rpc.response_stream) 
+        # Check that we get information about _why_ stream was closed
+        @test_throws gRPCException take!(rpc)
+    end
 
     @static if VERSION >= v"1.12"
 
