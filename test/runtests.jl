@@ -278,6 +278,7 @@ include("gen/test/test_pb.jl")
         rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
         @test !rpc.req.completed
         kill(rpc)
+        @test_throws gRPCException close(rpc)
         @test rpc.req.completed
 
         # store response in channel
