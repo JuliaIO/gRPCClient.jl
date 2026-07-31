@@ -105,7 +105,6 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
         """)
 
         if !rpc.request_stream && !rpc.response_stream
-            # methods with `async` keyword should be inlined to guarantee type stability
             print(io, """
                 function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type; kws...)
                     gRPCClient.grpc_call_unary_sync(chan, typeof($(rpc.name)), req; kws...)::$response_type
@@ -193,60 +192,111 @@ request_type(::gRPCCallHandle{Trpc}) where Trpc = request_type(Trpc)
 response_type(::gRPCCallHandle{Trpc}) where Trpc = response_type(Trpc)
 
 struct gRPCUnaryHandle{Trpc} <: gRPCCallHandle{Trpc}
-    call::gRPCRequest
+    req::gRPCRequest
 end
 struct gRPCStreamRequestHandle{Trpc, TRequest} <: gRPCCallHandle{Trpc}
-    call::gRPCRequest
+    req::gRPCRequest
     request_stream::Channel{TRequest}
 end
 struct gRPCStreamResponseHandle{Trpc, TResponse} <: gRPCCallHandle{Trpc}
-    call::gRPCRequest
-    response_stream::Channel{TResponse}
+    req::gRPCRequest
+    response_channel::Channel{TResponse}
 end
 struct gRPCBidirectionalStreamHandle{Trpc, TRequest, TResponse} <: gRPCCallHandle{Trpc}
-    call::gRPCRequest
-    request_stream::Channel{TRequest}
-    response_stream::Channel{TResponse}
+    req::gRPCRequest
+    request_channel::Channel{TRequest}
+    response_channel::Channel{TResponse}
 end
 
 """
+Block on RPCs with unary responses. 
+
 Throws any error found during the call. Returns the result for 
 RPCs with unary responses. 
 """
-function Base.close(h::gRPCCallHandle)
-    if isstreaming_request(h)
-        close(h.request_stream)
+function Base.close(rpc::gRPCCallHandle)
+    if isstreaming_request(rpc)
+        close(rpc.request_channel)
     end
-    if isstreaming_response(h)
-        grpc_async_await(h.call)
+    retval = if isstreaming_response(rpc)
+        grpc_async_await(rpc.req)
     else
-        grpc_async_await(h.call, response_type(h))
+        grpc_async_await(rpc.req, response_type(rpc))
+    end
+    if isstreaming_response(rpc) 
+        # this will be closed by a task anyway, but
+        # its better to ensure it is closed before this 
+        # function returns.
+        close(rpc.response_channel)
+    end
+    return retval
+end
+function Base.kill(rpc::gRPCCallHandle)
+    if isstreaming_request(rpc)
+        close(rpc.request_channel)
+    end
+    grpc_cancel(rpc.req)# TODO: also close channels
+    if isstreaming_response(rpc)
+        # this will be closed by a task anyway, but
+        # its better to ensure it is closed before this 
+        # function returns.
+        close(rpc.response_channel)
     end
 end
-Base.kill(h::gRPCCallHandle) = grpc_cancel(h.call)# TODO: also close channels
+
+function Base.isopen(rpc::gRPCCallHandle)
+    lock(rpc.req.grpc.lock) do # TODO: What is the correct lock?
+        rpc.req.completed
+    end
+end
 
 # Streaming request
-Base.put!(h::gRPCStreamRequestHandle, msg) = put!(h.request_stream, msg)
-Base.isfull(h::gRPCStreamRequestHandle) = isfull(h.request_stream)
+Base.put!(rpc::gRPCStreamRequestHandle, msg) = put!(rpc.request_channel, msg)
+@static if @isdefined(isfull) # Not available in 1.10
+    Base.isfull(rpc::gRPCStreamRequestHandle) = isfull(rpc.request_channel)
+end
+
+for f in (:take!, :wait, :fetch, :isready)
+    eval(quote
+        function $(Symbol("$(f)_or_diagnose"))(rpc::gRPCCallHandle)
+            try
+                $(f)(rpc.response_channel)
+            catch ex
+                if isa(ex, InvalidStateException) && ex.state === :closed
+                    @lock rpc.req.lock if !isnothing(rpc.req.ex)
+                        throw(rpc.req.ex) # TODO: What is the correct lock?
+                    end
+                    @lock rpc.req.grpc.lock if rpc.req.completed
+                        @assert rpc.req.grpc_status == GRPC_OK "This should not happen, please file a bug report."
+                        throw(gRPCServiceCallException(GRPC_OK, "Request has already been closed"))
+                    end
+                end
+                rethrow()
+            end 
+        end
+    end)
+end
 
 # Streaming response: 
-Base.take!(h::gRPCStreamResponseHandle) = take!(h.response_stream)
-Base.wait(h::gRPCStreamResponseHandle) = wait(h.response_stream)
-Base.fetch(h::gRPCStreamResponseHandle) = fetch(h.response_stream)
-Base.isready(h::gRPCStreamResponseHandle) = isready(h.response_stream)
-Base.iterate(h::gRPCStreamResponseHandle) = iterate(h.response_stream)
-Base.iterate(h::gRPCStreamResponseHandle, state) = iterate(h.response_stream, state)
+Base.take!(rpc::gRPCStreamResponseHandle) = take!_or_diagnose(rpc)
+Base.wait(rpc::gRPCStreamResponseHandle) = wait_or_diagnose(rpc.response_channel)
+Base.fetch(rpc::gRPCStreamResponseHandle) = fetch_or_diagnose(rpc.response_channel)
+Base.isready(rpc::gRPCStreamResponseHandle) = isready_or_diagnose(rpc.response_channel)
+Base.iterate(rpc::gRPCStreamResponseHandle) = iterate(rpc.response_channel)
+Base.iterate(rpc::gRPCStreamResponseHandle, state) = iterate(rpc.response_channel, state)
 IteratorSize(::Type{<:gRPCStreamResponseHandle}) = SizeUnknown()
 
 # Bidirectional stream (put! and isfull operate on request, the rest on response)
-Base.put!(h::gRPCBidirectionalStreamHandle, msg) = put!(h.request_stream, msg)
-Base.isfull(h::gRPCBidirectionalStreamHandle) = isfull(h.request_stream)
-Base.take!(h::gRPCBidirectionalStreamHandle) = take!(h.response_stream)
-Base.wait(h::gRPCBidirectionalStreamHandle) = wait(h.response_stream)
-Base.fetch(h::gRPCBidirectionalStreamHandle) = fetch(h.response_stream)
-Base.isready(h::gRPCBidirectionalStreamHandle) = isready(h.response_stream)
-Base.iterate(h::gRPCBidirectionalStreamHandle) = iterate(h.response_stream)
-Base.iterate(h::gRPCBidirectionalStreamHandle, state) = iterate(h.response_stream, state)
+Base.put!(rpc::gRPCBidirectionalStreamHandle, msg) = put!(rpc.request_channel, msg) # TODO: error if request is closed
+@static if @isdefined(isfull)
+    Base.isfull(rpc::gRPCBidirectionalStreamHandle) = isfull(rpc.request_channel)
+end
+Base.take!(rpc::gRPCBidirectionalStreamHandle) = take!_or_diagnose(rpc)
+Base.wait(rpc::gRPCBidirectionalStreamHandle) = wait(rpc.response_channel)
+Base.fetch(rpc::gRPCBidirectionalStreamHandle) = fetch(rpc.response_channel)
+Base.isready(rpc::gRPCBidirectionalStreamHandle) = isready(rpc.response_channel)
+Base.iterate(rpc::gRPCBidirectionalStreamHandle) = iterate(rpc.response_channel)
+Base.iterate(rpc::gRPCBidirectionalStreamHandle, state) = iterate(rpc.response_channel, state)
 IteratorSize(::Type{<:gRPCBidirectionalStreamHandle}) = SizeUnknown()
 
 @inline function _client(chan, Trpc; kws...)
@@ -308,6 +358,18 @@ function grpc_call_bidirectional_stream(chan::gRPCChannel, ::Type{Trpc}; respons
     )
 end
 
+"""
+    gRPCAsync()
+
+Singleton struct for flagging that a Unary RPC should be called asynchronously.
+
+# Example: 
+```
+chan = gRPCChannel(host, port)
+rpc = MyService.MyRPC(chan, RequestType(...), gRPCAsync())
+response = close(rpc)
+```
+"""
 struct gRPCAsync end
 export gRPCAsync
 function rpc_path end
