@@ -139,9 +139,9 @@ module TestService
         gRPCClient.grpc_call_unary_sync(chan, typeof(TestRPC), req; kws...)::TestResponse
     end
     function TestRPC(chan::gRPCClient.gRPCChannel, req::TestRequest, ::gRPCClient.gRPCAsync; kws...) 
-        gRPCClient.grpc_call_unary_async(chan, typeof(TestRPC), req; kws...)::gRPCClient.gRPCUnaryHandle{typeof(TestRPC)}
+        gRPCClient.grpc_call_unary_async(chan, typeof(TestRPC), req; kws...)::gRPCClient.gRPCCallHandle
     end
-    function TestRPC(chan::gRPCClient.gRPCChannel, req::TestRequest, response_ch::Channel{gRPCClient.gRPCAsyncChannelResponse{TestResponse}}, index::Integer; kws...)::Nothing
+    function TestRPC(chan::gRPCClient.gRPCChannel, req::TestRequest, response_ch::Channel, index::Integer; kws...)::Nothing
         gRPCClient.grpc_call_unary_async(chan, typeof(TestRPC), req, response_ch, index; kws...)
     end
     function TestRPC(host::AbstractString, port::Integer, req::TestRequest, args...; kws...)
@@ -158,7 +158,7 @@ module TestService
 
     # TestService.TestServerStreamRPC
     function TestServerStreamRPC(chan::gRPCClient.gRPCChannel, req::TestRequest; kws...)
-        gRPCClient.grpc_call_stream_response(chan, typeof(TestServerStreamRPC), req; kws...)::gRPCClient.gRPCStreamResponseHandle{typeof(TestServerStreamRPC), TestResponse}
+        gRPCClient.grpc_call_stream_response(chan, typeof(TestServerStreamRPC), req; kws...)::gRPCClient.gRPCCallHandle
     end
     function TestServerStreamRPC(host::AbstractString, port::Integer, req::TestRequest; kws...)
         TestServerStreamRPC(gRPCChannel(host, port), req; kws...)
@@ -174,7 +174,7 @@ module TestService
 
     # TestService.TestClientStreamRPC
     function TestClientStreamRPC(chan::gRPCClient.gRPCChannel; kws...)
-        gRPCClient.grpc_call_stream_request(chan, typeof(TestClientStreamRPC); kws...)::gRPCClient.gRPCStreamRequestHandle{typeof(TestClientStreamRPC), TestRequest}
+        gRPCClient.grpc_call_stream_request(chan, typeof(TestClientStreamRPC); kws...)::gRPCClient.gRPCCallHandle
     end
     function TestClientStreamRPC(host::AbstractString, port::Integer; kws...)
         TestClientStreamRPC(gRPCChannel(host, port); kws...)
@@ -190,7 +190,7 @@ module TestService
 
     # TestService.TestBidirectionalStreamRPC
     function TestBidirectionalStreamRPC(chan::gRPCClient.gRPCChannel; kws...)
-        gRPCClient.grpc_call_bidirectional_stream(chan, typeof(TestBidirectionalStreamRPC); kws...)::gRPCClient.gRPCBidirectionalStreamHandle{typeof(TestBidirectionalStreamRPC), TestRequest, TestResponse}
+        gRPCClient.grpc_call_bidirectional_stream(chan, typeof(TestBidirectionalStreamRPC); kws...)::gRPCClient.gRPCCallHandle
     end
     function TestBidirectionalStreamRPC(host::AbstractString, port::Integer; kws...)
         TestBidirectionalStreamRPC(gRPCChannel(host, port); kws...)

@@ -110,9 +110,9 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
                     gRPCClient.grpc_call_unary_sync(chan, typeof($(rpc.name)), req; kws...)::$response_type
                 end
                 function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type, ::gRPCClient.gRPCAsync; kws...) 
-                    gRPCClient.grpc_call_unary_async(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.gRPCUnaryHandle{typeof($(rpc.name))}
+                    gRPCClient.grpc_call_unary_async(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.gRPCCallHandle
                 end
-                function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type, response_ch::Channel{gRPCClient.gRPCAsyncChannelResponse{$response_type}}, index::Integer; kws...)::Nothing
+                function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type, response_ch::Channel, index::Integer; kws...)::Nothing
                     gRPCClient.grpc_call_unary_async(chan, typeof($(rpc.name)), req, response_ch, index; kws...)
                 end
                 function $(rpc.name)(host::AbstractString, port::Integer, req::$request_type, args...; kws...)
@@ -122,7 +122,7 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
         elseif rpc.request_stream && !rpc.response_stream
             print(io, """
                 function $(rpc.name)(chan::gRPCClient.gRPCChannel; kws...)
-                    gRPCClient.grpc_call_stream_request(chan, typeof($(rpc.name)); kws...)::gRPCClient.gRPCStreamRequestHandle{typeof($(rpc.name)), $request_type}
+                    gRPCClient.grpc_call_stream_request(chan, typeof($(rpc.name)); kws...)::gRPCClient.gRPCCallHandle
                 end
                 function $(rpc.name)(host::AbstractString, port::Integer; kws...)
                     $(rpc.name)(gRPCChannel(host, port); kws...)
@@ -131,7 +131,7 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
         elseif !rpc.request_stream && rpc.response_stream
             print(io, """
                 function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type; kws...)
-                    gRPCClient.grpc_call_stream_response(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.gRPCStreamResponseHandle{typeof($(rpc.name)), $response_type}
+                    gRPCClient.grpc_call_stream_response(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.gRPCCallHandle
                 end
                 function $(rpc.name)(host::AbstractString, port::Integer, req::$request_type; kws...)
                     $(rpc.name)(gRPCChannel(host, port), req; kws...)
@@ -140,7 +140,7 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
         elseif rpc.request_stream && rpc.response_stream
             print(io, """
                 function $(rpc.name)(chan::gRPCClient.gRPCChannel; kws...)
-                    gRPCClient.grpc_call_bidirectional_stream(chan, typeof($(rpc.name)); kws...)::gRPCClient.gRPCBidirectionalStreamHandle{typeof($(rpc.name)), $request_type, $response_type}
+                    gRPCClient.grpc_call_bidirectional_stream(chan, typeof($(rpc.name)); kws...)::gRPCClient.gRPCCallHandle
                 end
                 function $(rpc.name)(host::AbstractString, port::Integer; kws...)
                     $(rpc.name)(gRPCChannel(host, port); kws...)
