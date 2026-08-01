@@ -263,6 +263,98 @@ include("gen/test/test_pb.jl")
         end
     end
 
+    @testset "Simple API: Unary" begin
+        # sync
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
+        resp = TestService.TestRPC(chan, TestRequest(1, [1]))
+        @test resp.data == [1]
+
+        # async
+        rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
+        resp = close(rpc)
+        @test resp.data == [1]
+
+        # Killing
+        rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
+        @test !rpc.req.completed
+        kill(rpc)
+        @test_throws gRPCException close(rpc)
+        @test rpc.req.completed
+
+        # store response in channel
+        responses = Channel{gRPCAsyncChannelResponse{TestResponse}}(Inf)
+        TestService.TestRPC(chan, TestRequest(2, []), responses, 1)
+        TestService.TestRPC(chan, TestRequest(3, []), responses, 2)
+
+        rs = Any[nothing, nothing]
+        r = take!(responses)
+        rs[r.index] = r.response.data
+        r = take!(responses)
+        rs[r.index] = r.response.data
+        @test rs == [[1, 2], [1, 2, 3]]
+    end
+
+    @testset "Simple API: Streaming request" begin
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
+        rpc = TestService.TestClientStreamRPC(chan)
+        for i = 1:4
+            put!(rpc, TestRequest(1, [1]))
+        end
+        response = close(rpc)
+        @test response.data == 1:4
+    end
+
+    @testset "Simple API: Streaming request" begin
+        # Streaming response
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
+        rpc = TestService.TestServerStreamRPC(chan, TestRequest(4, [1]))
+        for i = 1:4
+            resp = take!(rpc)
+            @test length(resp.data) == i
+        end
+    end
+
+    @testset "Simple API: Bidirectional" begin
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
+
+        # Minimal example
+        rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
+        put!(rpc, TestRequest(1, [1]))
+        resp = take!(rpc)
+        @test resp.data == [1]
+        close(rpc)
+
+        # Testing larger set of methods
+        rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
+        @test !isfull(rpc)
+        put!(rpc, TestRequest(1, [1]))
+        @test isfull(rpc) # If this runs immediately after put!, it should be true
+        @test !isready(rpc) # If this runs immediately after put!, it should be true
+        wait(rpc) # Wait until a response is available
+        @test !isfull(rpc) # If we got a response, the request stream should have been cleared
+        @test isready(rpc) # response stream should be ready
+        resp1 = fetch(rpc) # Get data without removing
+        resp2 = take!(rpc) # Get data again, also remove
+        @test resp1.data == resp2.data == [1]
+        @test !rpc.req.completed # The rpc should still be active and ready for new requests
+        @test isopen(rpc.response_channel)
+        kill(rpc)
+        @test rpc.req.completed # Stream should be done
+        # response stream should have been closed by the response task 
+        timedwait(() -> !isopen(rpc.response_channel), 0.01)
+        @test !isopen(rpc.response_channel) 
+        # Check that we get information about _why_ stream was killed
+        @test_throws gRPCException take!(rpc)
+
+        # Check that we can close immediately and 
+        rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
+        close(rpc)
+        @test rpc.req.completed # Stream should be done
+        @test !isopen(rpc.response_channel) 
+        # Check that we get information about _why_ stream was closed
+        @test_throws gRPCException take!(rpc)
+    end
+
     @static if VERSION >= v"1.12"
 
         # The streaming stress tests move ~1000 messages (or ~160MB) through a single

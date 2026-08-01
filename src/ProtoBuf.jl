@@ -47,6 +47,123 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
         end
     end
 
+    ###################
+    # New API
+    ###################
+    println(io, """
+
+    module $service_name
+        import ..gRPCClient
+    """)
+    
+    # Import individual types from the parent module
+    import_type_list = Set{String}()
+    # Types referred to by module need not be imported individually,
+    # importing the top-level module is enough
+    import_mod_list = Set{String}()
+
+    # Find all top-level packages containing the request and response types
+    for rpc in t.rpcs
+        for t in (rpc.request_type, rpc.response_type)
+            ns = t.package_namespace
+            if !isnothing(ns)
+                modname = first(split(ns, '.'))
+                # Until julia gets a dedicated syntax for importing from parent module without
+                # knowing its name, we need to use `parentmodule`. Otherwise the generated file
+                # will only work if included from the correct generated toplevel package file. 
+                push!(import_mod_list, "const $(modname)::Module = Base.parentmodule(@__MODULE__).$(modname)")
+            else
+                push!(import_type_list, "const $(t.name)::DataType = Base.parentmodule(@__MODULE__).$(t.name)")
+            end
+        end
+    end
+    for imp in import_mod_list
+        print(io, """
+            $imp
+        """)
+    end
+    for imp in import_type_list
+        print(io, """
+            $imp
+        """)
+    end
+    println(io, )
+
+    for rpc in t.rpcs
+        request_type = rpc.request_type.name
+        response_type = rpc.response_type.name
+
+        if rpc.request_type.package_namespace !== nothing
+            request_type = join([rpc.request_type.package_namespace, request_type], ".")
+        end
+        if rpc.response_type.package_namespace !== nothing
+            response_type = join([rpc.response_type.package_namespace, response_type], ".")
+        end
+
+        print(io, """
+            # $service_name.$(rpc.name)
+        """)
+
+        if !rpc.request_stream && !rpc.response_stream
+            print(io, """
+                function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type; kws...)
+                    gRPCClient.grpc_call_unary_sync(chan, typeof($(rpc.name)), req; kws...)::$response_type
+                end
+                function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type, ::gRPCClient.gRPCAsync; kws...) 
+                    gRPCClient.grpc_call_unary_async(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.gRPCCallHandle
+                end
+                function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type, response_ch::Channel, index::Integer; kws...)::Nothing
+                    gRPCClient.grpc_call_unary_async(chan, typeof($(rpc.name)), req, response_ch, index; kws...)
+                end
+                function $(rpc.name)(host::AbstractString, port::Integer, req::$request_type, args...; kws...)
+                    $(rpc.name)(gRPCChannel(host, port), req::$request_type, args...; kws...)
+                end
+            """)
+        elseif rpc.request_stream && !rpc.response_stream
+            print(io, """
+                function $(rpc.name)(chan::gRPCClient.gRPCChannel; kws...)
+                    gRPCClient.grpc_call_stream_request(chan, typeof($(rpc.name)); kws...)::gRPCClient.gRPCCallHandle
+                end
+                function $(rpc.name)(host::AbstractString, port::Integer; kws...)
+                    $(rpc.name)(gRPCChannel(host, port); kws...)
+                end
+                Base.put!(handle::gRPCClient.gRPCCallHandle{typeof($(rpc.name))}, msg::$(request_type)) = gRPCClient._put!(handle, msg)
+            """)
+        elseif !rpc.request_stream && rpc.response_stream
+            print(io, """
+                function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type; kws...)
+                    gRPCClient.grpc_call_stream_response(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.gRPCCallHandle
+                end
+                function $(rpc.name)(host::AbstractString, port::Integer, req::$request_type; kws...)
+                    $(rpc.name)(gRPCChannel(host, port), req; kws...)
+                end
+            """)
+        elseif rpc.request_stream && rpc.response_stream
+            print(io, """
+                function $(rpc.name)(chan::gRPCClient.gRPCChannel; kws...)
+                    gRPCClient.grpc_call_bidirectional_stream(chan, typeof($(rpc.name)); kws...)::gRPCClient.gRPCCallHandle
+                end
+                function $(rpc.name)(host::AbstractString, port::Integer; kws...)
+                    $(rpc.name)(gRPCChannel(host, port); kws...)
+                end
+                Base.put!(handle::gRPCClient.gRPCCallHandle{typeof($(rpc.name))}, msg::$(request_type)) = gRPCClient._put!(handle, msg)
+            """)
+        end
+        println(io, """
+            @doc gRPCClient.grpc_generate_rpc_docstring($(rpc.name)) $(rpc.name)
+            gRPCClient.rpc_path(::Type{typeof($(rpc.name))}) = "/$namespace.$service_name/$(rpc.name)"
+            gRPCClient.isstreaming_request(::Type{typeof($(rpc.name))}) = $(rpc.request_stream)
+            gRPCClient.isstreaming_response(::Type{typeof($(rpc.name))}) = $(rpc.response_stream)
+            gRPCClient.request_type(::Type{typeof($(rpc.name))}) = $request_type
+            gRPCClient.response_type(::Type{typeof($(rpc.name))}) = $response_type
+            export $(rpc.name)
+
+        """)
+    end
+    println(io, """
+    end # module $service_name
+    export $service_name
+    """)
     return
 end
 
@@ -60,3 +177,199 @@ grpc_register_service_codegen() = CodeGenerators.register_external_codegen_handl
     import_cb = import_cb,
     service_cb = service_cb,
 )
+
+struct gRPCChannel
+    host::String
+    port::Int
+    grpc::gRPCCURL
+    function gRPCChannel(host::AbstractString, port::Integer; grpc = grpc_global_handle())
+        new(host, port, grpc)
+    end
+end
+
+abstract type gRPCCallHandle{Trpc} end
+isstreaming_request(::gRPCCallHandle{Trpc}) where Trpc = isstreaming_request(Trpc)
+isstreaming_response(::gRPCCallHandle{Trpc}) where Trpc = isstreaming_response(Trpc)
+request_type(::gRPCCallHandle{Trpc}) where Trpc = request_type(Trpc)
+response_type(::gRPCCallHandle{Trpc}) where Trpc = response_type(Trpc)
+
+struct gRPCUnaryHandle{Trpc} <: gRPCCallHandle{Trpc}
+    req::gRPCRequest
+end
+struct gRPCStreamRequestHandle{Trpc, TRequest} <: gRPCCallHandle{Trpc}
+    req::gRPCRequest
+    request_channel::Channel{TRequest}
+end
+struct gRPCStreamResponseHandle{Trpc, TResponse} <: gRPCCallHandle{Trpc}
+    req::gRPCRequest
+    response_channel::Channel{TResponse}
+end
+struct gRPCBidirectionalStreamHandle{Trpc, TRequest, TResponse} <: gRPCCallHandle{Trpc}
+    req::gRPCRequest
+    request_channel::Channel{TRequest}
+    response_channel::Channel{TResponse}
+end
+
+function Base.show(io::IO, rpc::gRPCCallHandle) 
+    f = typeof(rpc).parameters[1].instance
+    if get(IOContext(io), :compact, false)
+        print(io, "$(typeof(rpc))(...)")
+    else
+        print(io, """
+        $(typeof(rpc))(...) with:
+         RPC           : $(parentmodule(f)).$(nameof(f))
+         Request type  : $(isstreaming_request(rpc) ? "stream" : "") $(request_type(rpc))
+         Response type : $(isstreaming_response(rpc) ? "stream" : "") $(response_type(rpc))
+         Status        : $(GRPC_CODE_TABLE[rpc.req.grpc_status])
+         Completed     : $(rpc.req.completed)""")
+    end
+end
+
+const UnaryRequestRPC = Union{gRPCUnaryHandle, gRPCStreamResponseHandle}
+const StreamingRequestRPC = Union{gRPCStreamRequestHandle, gRPCBidirectionalStreamHandle}
+const UnaryResponseRPC = Union{gRPCUnaryHandle, gRPCStreamRequestHandle}
+const StreamingResponseRPC = Union{gRPCStreamResponseHandle, gRPCBidirectionalStreamHandle}
+
+"""
+Block on RPCs with unary responses. 
+
+Throws any error found during the call. Returns the result for 
+RPCs with unary responses. 
+"""
+function Base.close(rpc::gRPCCallHandle)
+    isstreaming_request(rpc) && close(rpc.request_channel)
+    return if isstreaming_response(rpc)
+        grpc_async_await(rpc.req)
+        # this will be closed by a task anyway, but
+        # its better to ensure it is closed before this 
+        # function returns.
+        close(rpc.response_channel)
+    else
+        grpc_async_await(rpc.req, response_type(rpc))
+    end
+end
+function Base.kill(rpc::gRPCCallHandle)
+    isstreaming_request(rpc) && close(rpc.request_channel)
+    grpc_cancel(rpc.req)# TODO: also close channels
+    isstreaming_response(rpc) && close(rpc.response_channel)
+    return nothing
+end
+
+function Base.isopen(rpc::gRPCCallHandle)
+    lock(rpc.req.grpc.lock) do # TODO: What is the correct lock?
+        !rpc.req.completed
+    end
+end
+
+_put!(rpc::StreamingRequestRPC, msg) = put!(rpc.request_channel, msg)
+@static if @isdefined(isfull) # Not available in 1.10
+    Base.isfull(rpc::StreamingRequestRPC) = isfull(rpc.request_channel)
+end
+Base.detach(rpc::StreamingRequestRPC) = close(rpc.request_channel)
+
+for f in (:take!, :wait, :fetch, :isready)
+    eval(quote
+        function Base.$f(rpc::StreamingResponseRPC)
+            try
+                $(f)(rpc.response_channel)
+            catch ex
+                if isa(ex, InvalidStateException) && ex.state === :closed
+                    @lock rpc.req.lock if !isnothing(rpc.req.ex)
+                        throw(rpc.req.ex) # TODO: What is the correct lock?
+                    end
+                    @lock rpc.req.grpc.lock if rpc.req.completed
+                        @assert rpc.req.grpc_status == GRPC_OK "This should not happen, please file a bug report."
+                        throw(gRPCServiceCallException(GRPC_OK, "Request has already been closed"))
+                    end
+                end
+                rethrow()
+            end 
+        end
+    end)
+end
+
+@inline function _client(chan, Trpc; kws...)
+    return gRPCServiceClient{request_type(Trpc), isstreaming_request(Trpc), response_type(Trpc), isstreaming_response(Trpc)}(
+        chan.host,
+        chan.port,
+        rpc_path(Trpc);
+        grpc=chan.grpc,
+        kws...
+    )
+end
+
+# Methods to be called from generated code only
+# Unary sync
+function grpc_call_unary_sync(chan::gRPCChannel, ::Type{Trpc}, req; kws...) where {Trpc <: Function}
+    client = _client(chan, Trpc)
+    grpc_sync_request(client, req)
+end
+# Unary async
+function grpc_call_unary_async(chan::gRPCChannel, ::Type{Trpc}, req; kws...) where {Trpc <: Function}
+    client = _client(chan, Trpc; kws...)
+    return gRPCUnaryHandle{Trpc}(
+        grpc_async_request(client, req; kws...)
+    )
+end
+# Unary async channel
+function grpc_call_unary_async(chan::gRPCChannel, ::Type{Trpc}, req, ch::Channel, index::Integer; kws...) where {Trpc <: Function}
+    client = _client(chan, Trpc; kws...)
+    grpc_async_request(client, req, ch, index; kws...)
+    return nothing
+end
+# Stream request
+function grpc_call_stream_request(chan::gRPCChannel, ::Type{Trpc}; request_channel_size::Int = 16, kws...) where {Trpc <: Function}
+    client = _client(chan, Trpc; kws...)
+    request_c = Channel{request_type(Trpc)}(request_channel_size)
+    return gRPCStreamRequestHandle{Trpc, request_type(Trpc)}(
+        grpc_async_request(client, request_c; kws...), 
+        request_c
+    )
+end
+# Stream response
+function grpc_call_stream_response(chan::gRPCChannel, ::Type{Trpc}, req; response_channel_size::Int = 16, kws...) where {Trpc <: Function}
+    client = _client(chan, Trpc; kws...)
+    response_c = Channel{response_type(Trpc)}(response_channel_size)
+    return gRPCStreamResponseHandle{Trpc, response_type(Trpc)}(
+        grpc_async_request(client, req, response_c; kws...), 
+        response_c
+    )
+end
+# Bidirectional
+function grpc_call_bidirectional_stream(chan::gRPCChannel, ::Type{Trpc}; response_channel_size::Int = 16, request_channel_size::Int = 16, kws...) where {Trpc <: Function}
+    client = _client(chan, Trpc; kws...)
+    request_c = Channel{request_type(Trpc)}(request_channel_size)
+    response_c = Channel{response_type(Trpc)}(response_channel_size)
+    return gRPCBidirectionalStreamHandle{Trpc, request_type(Trpc), response_type(Trpc)}(
+        grpc_async_request(client, request_c, response_c; kws...), 
+        request_c, 
+        response_c
+    )
+end
+
+"""
+    gRPCAsync()
+
+Singleton struct for flagging that a Unary RPC should be called asynchronously.
+
+# Example: 
+```
+chan = gRPCChannel(host, port)
+rpc = MyService.MyRPC(chan, RequestType(...), gRPCAsync())
+response = close(rpc)
+```
+"""
+struct gRPCAsync end
+export gRPCAsync
+function rpc_path end
+function request_type end
+function response_type end
+@inline rpc_path(f::Function) = rpc_path(typeof(f))
+@inline isstreaming_request(f::Function) = isstreaming_request(typeof(f))
+@inline isstreaming_response(f::Function) = isstreaming_response(typeof(f))
+@inline request_type(f::Function) = request_type(typeof(f))
+@inline response_type(f::Function) = response_type(typeof(f))
+
+function grpc_generate_rpc_docstring(rpc::Function)
+    return "This is the docstring for $(nameof(rpc))"
+end
