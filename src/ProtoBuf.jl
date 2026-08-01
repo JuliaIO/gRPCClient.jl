@@ -127,6 +127,7 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
                 function $(rpc.name)(host::AbstractString, port::Integer; kws...)
                     $(rpc.name)(gRPCChannel(host, port); kws...)
                 end
+                Base.put!(handle::gRPCClient.gRPCCallHandle{typeof($(rpc.name))}, msg::$(request_type)) = gRPCClient._put!(handle, msg)
             """)
         elseif !rpc.request_stream && rpc.response_stream
             print(io, """
@@ -145,6 +146,7 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
                 function $(rpc.name)(host::AbstractString, port::Integer; kws...)
                     $(rpc.name)(gRPCChannel(host, port); kws...)
                 end
+                Base.put!(handle::gRPCClient.gRPCCallHandle{typeof($(rpc.name))}, msg::$(request_type)) = gRPCClient._put!(handle, msg)
             """)
         end
         println(io, """
@@ -246,15 +248,16 @@ end
 
 function Base.isopen(rpc::gRPCCallHandle)
     lock(rpc.req.grpc.lock) do # TODO: What is the correct lock?
-        rpc.req.completed
+        !rpc.req.completed
     end
 end
 
 # Streaming request
-Base.put!(rpc::gRPCStreamRequestHandle, msg) = put!(rpc.request_channel, msg)
+_put!(rpc::gRPCStreamRequestHandle, msg) = put!(rpc.request_channel, msg)
 @static if @isdefined(isfull) # Not available in 1.10
     Base.isfull(rpc::gRPCStreamRequestHandle) = isfull(rpc.request_channel)
 end
+Base.detach(rpc::gRPCStreamRequestHandle) = close(rpc.request_channel)
 
 for f in (:take!, :wait, :fetch, :isready)
     eval(quote
@@ -279,25 +282,20 @@ end
 
 # Streaming response: 
 Base.take!(rpc::gRPCStreamResponseHandle) = take!_or_diagnose(rpc)
-Base.wait(rpc::gRPCStreamResponseHandle) = wait_or_diagnose(rpc.response_channel)
-Base.fetch(rpc::gRPCStreamResponseHandle) = fetch_or_diagnose(rpc.response_channel)
-Base.isready(rpc::gRPCStreamResponseHandle) = isready_or_diagnose(rpc.response_channel)
-Base.iterate(rpc::gRPCStreamResponseHandle) = iterate(rpc.response_channel)
-Base.iterate(rpc::gRPCStreamResponseHandle, state) = iterate(rpc.response_channel, state)
-IteratorSize(::Type{<:gRPCStreamResponseHandle}) = SizeUnknown()
+Base.wait(rpc::gRPCStreamResponseHandle) = wait_or_diagnose(rpc)
+Base.fetch(rpc::gRPCStreamResponseHandle) = fetch_or_diagnose(rpc)
+Base.isready(rpc::gRPCStreamResponseHandle) = isready_or_diagnose(rpc)
 
 # Bidirectional stream (put! and isfull operate on request, the rest on response)
-Base.put!(rpc::gRPCBidirectionalStreamHandle, msg) = put!(rpc.request_channel, msg) # TODO: error if request is closed
+_put!(rpc::gRPCBidirectionalStreamHandle, msg) = put!(rpc.request_channel, msg) # TODO: error if request is closed
 @static if @isdefined(isfull)
     Base.isfull(rpc::gRPCBidirectionalStreamHandle) = isfull(rpc.request_channel)
 end
+Base.detach(rpc::gRPCBidirectionalStreamHandle) = close(rpc.request_channel)
 Base.take!(rpc::gRPCBidirectionalStreamHandle) = take!_or_diagnose(rpc)
-Base.wait(rpc::gRPCBidirectionalStreamHandle) = wait(rpc.response_channel)
-Base.fetch(rpc::gRPCBidirectionalStreamHandle) = fetch(rpc.response_channel)
-Base.isready(rpc::gRPCBidirectionalStreamHandle) = isready(rpc.response_channel)
-Base.iterate(rpc::gRPCBidirectionalStreamHandle) = iterate(rpc.response_channel)
-Base.iterate(rpc::gRPCBidirectionalStreamHandle, state) = iterate(rpc.response_channel, state)
-IteratorSize(::Type{<:gRPCBidirectionalStreamHandle}) = SizeUnknown()
+Base.wait(rpc::gRPCBidirectionalStreamHandle) = wait_or_diagnose(rpc)
+Base.fetch(rpc::gRPCBidirectionalStreamHandle) = fetch_or_diagnose(rpc)
+Base.isready(rpc::gRPCBidirectionalStreamHandle) = isready_or_diagnose(rpc)
 
 @inline function _client(chan, Trpc; kws...)
     return gRPCServiceClient{request_type(Trpc), isstreaming_request(Trpc), response_type(Trpc), isstreaming_response(Trpc)}(
