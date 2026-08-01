@@ -263,434 +263,435 @@ include("gen/test/test_pb.jl")
         end
     end
 
-    @static if VERSION >= v"1.12"
+    # The streaming stress tests move ~1000 messages (or ~160MB) through a single
+    # call. On a slow CI runner that can take longer than the default 10s deadline,
+    # and the call's own DEADLINE_EXCEEDED then closes the stream mid-test, so give
+    # them a deadline generous enough to only trip when something is truly wedged.
+    stream_test_deadline = 300.0
 
-        # The streaming stress tests move ~1000 messages (or ~160MB) through a single
-        # call. On a slow CI runner that can take longer than the default 10s deadline,
-        # and the call's own DEADLINE_EXCEEDED then closes the stream mid-test, so give
-        # them a deadline generous enough to only trip when something is truly wedged.
-        stream_test_deadline = 300.0
+    # take! that, when the stream has died and closed the channel, surfaces the
+    # request's real failure (DEADLINE_EXCEEDED, a server error, ...) through
+    # grpc_async_await instead of erroring with a bare InvalidStateException.
+    take_or_diagnose = (req, channel) -> try
+        take!(channel)
+    catch
+        grpc_async_await(req)
+        rethrow()
+    end
 
-        # take! that, when the stream has died and closed the channel, surfaces the
-        # request's real failure (DEADLINE_EXCEEDED, a server error, ...) through
-        # grpc_async_await instead of erroring with a bare InvalidStateException.
-        take_or_diagnose = (req, channel) -> try
-            take!(channel)
-        catch
-            grpc_async_await(req)
-            rethrow()
+    @testset "Response Streaming" begin
+        N = 1000
+
+        client = TestService_TestServerStreamRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            deadline = stream_test_deadline,
+        )
+
+        response_c = Channel{TestResponse}(N)
+
+        req = grpc_async_request(client, TestRequest(N, zeros(UInt64, 1)), response_c)
+
+        # We should get back N messages that end with their length
+        for i in 1:N
+            response = take_or_diagnose(req, response_c)
+            @test length(response.data) == i
+            @test last(response.data) == i
         end
 
-        @testset "Response Streaming" begin
-            N = 1000
+        grpc_async_await(req)
+    end
 
-            client = TestService_TestServerStreamRPC_Client(
-                _TEST_HOST,
-                _TEST_PORT;
-                deadline = stream_test_deadline,
+    @testset "Request Streaming" begin
+        N = 1000
+        client = TestService_TestClientStreamRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            deadline = stream_test_deadline,
+        )
+        request_c = Channel{TestRequest}(N)
+
+        request = grpc_async_request(client, request_c)
+
+        for i in 1:N
+            put!(request_c, TestRequest(1, zeros(UInt64, 1)))
+        end
+
+        close(request_c)
+        response = grpc_async_await(client, request)
+
+        @test length(response.data) == N
+        for i in 1:N
+            @test response.data[i] == i
+        end
+    end
+
+    @testset "Bidirectional Streaming" begin
+        N = 1000
+        client = TestService_TestBidirectionalStreamRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            deadline = stream_test_deadline,
+        )
+
+        request_c = Channel{TestRequest}(N)
+        response_c = Channel{TestResponse}(N)
+
+        req = grpc_async_request(client, request_c, response_c)
+
+        for i in 1:N
+            put!(request_c, TestRequest(i, zeros(UInt64, i)))
+        end
+
+        for i in 1:N
+            response = take_or_diagnose(req, response_c)
+            @test length(response.data) == i
+            @test last(response.data) == i
+        end
+
+
+        close(request_c)
+        grpc_async_await(req)
+    end
+
+    # An all-default protobuf encodes to zero bytes, so its 5-byte length-prefix
+    # is the entire frame. Such a message used to fail the response parser: it
+    # completed without consuming any of the current chunk, which the write
+    # callback read as a stall and reported as INTERNAL "only handled N bytes",
+    # and a zero-length message whose prefix was the last thing on the wire was
+    # dropped instead of delivered. Interleaving empty and non-empty responses
+    # covers both, ending on an empty one.
+    @testset "Response Streaming zero-length messages" begin
+        N = 200
+
+        client = TestService_TestBidirectionalStreamRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            deadline = stream_test_deadline,
+        )
+
+        request_c = Channel{TestRequest}(N)
+        response_c = Channel{TestResponse}(N)
+
+        req = grpc_async_request(client, request_c, response_c)
+
+        # Every other response is empty, including the last one
+        sizes = [iseven(i) ? 0 : i for i in 1:N]
+        for sz in sizes
+            put!(request_c, TestRequest(sz, UInt64[]))
+        end
+        close(request_c)
+
+        for sz in sizes
+            response = take_or_diagnose(req, response_c)
+            @test length(response.data) == sz
+        end
+
+        grpc_async_await(req)
+    end
+
+    @testset "Response Streaming hang after END_STREAM" begin
+        N = 10
+
+        client = TestService_TestServerStreamRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            deadline = stream_test_deadline,
+        )
+
+        response_c = Channel{TestResponse}(N)
+
+        req = grpc_async_request(client, TestRequest(N, zeros(UInt64, 1)), response_c)
+
+        i = 1
+        try
+            while i <= N + 1
+                response = take!(response_c)
+                i += 1
+            end
+            @test false
+        catch ex
+            @test isa(ex, InvalidStateException)
+            @test i == N + 1
+        end
+        grpc_async_await(req)
+    end
+
+    @testset "Deadline Exceeded" begin
+        client = TestService_TestClientStreamRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            deadline = 0.001,
+        )
+        request_c = Channel{TestRequest}(1)
+
+        # Even with a 1ms deadline submission never throws; the failure is
+        # raised by the await
+        request = grpc_async_request(client, request_c)
+        sleep(1.0)
+
+        try
+            grpc_async_await(request)
+            @test false
+        catch ex
+            # Verify the deadline was exceeded
+            @test isa(ex, gRPCServiceCallException)
+            # A mismatch here has historically only reproduced on CI, where the
+            # status number alone says nothing about which transport error the
+            # platform reported, so log the message before asserting
+            ex.grpc_status == GRPC_DEADLINE_EXCEEDED || @error(
+                "expected DEADLINE_EXCEEDED",
+                status = ex.grpc_status,
+                message = ex.grpc_message,
             )
-
-            response_c = Channel{TestResponse}(N)
-
-            req = grpc_async_request(client, TestRequest(N, zeros(UInt64, 1)), response_c)
-
-            # We should get back N messages that end with their length
-            for i in 1:N
-                response = take_or_diagnose(req, response_c)
-                @test length(response.data) == i
-                @test last(response.data) == i
-            end
-
-            grpc_async_await(req)
+            @test ex.grpc_status == GRPC_DEADLINE_EXCEEDED
         end
+    end
 
-        @testset "Request Streaming" begin
-            N = 1000
-            client = TestService_TestClientStreamRPC_Client(
-                _TEST_HOST,
-                _TEST_PORT;
-                deadline = stream_test_deadline,
-            )
-            request_c = Channel{TestRequest}(N)
+    @testset "Deadline Exceeded - non-timeout transport error" begin
+        # Tearing a transfer down at CURLOPT_TIMEOUT_MS does not always surface as
+        # CURLE_OPERATION_TIMEDOUT: on Windows the socket error from the teardown can
+        # arrive first. Whichever curl reports, a call whose deadline has passed must
+        # fail with DEADLINE_EXCEEDED rather than INTERNAL. The platform-specific race
+        # cannot be provoked here, so drive a real request to completion and then
+        # rewrite the three fields await reads.
+        client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
+        req = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+        grpc_async_await(client, req)
 
-            request = grpc_async_request(client, request_c)
+        req.code = gRPCClient.CURLE_SEND_ERROR
 
-            for i in 1:N
-                put!(request_c, TestRequest(1, zeros(UInt64, 1)))
-            end
-
-            close(request_c)
-            response = grpc_async_await(client, request)
-
-            @test length(response.data) == N
-            for i in 1:N
-                @test response.data[i] == i
-            end
-        end
-
-        @testset "Bidirectional Streaming" begin
-            N = 1000
-            client = TestService_TestBidirectionalStreamRPC_Client(
-                _TEST_HOST,
-                _TEST_PORT;
-                deadline = stream_test_deadline,
-            )
-
-            request_c = Channel{TestRequest}(N)
-            response_c = Channel{TestResponse}(N)
-
-            req = grpc_async_request(client, request_c, response_c)
-
-            for i in 1:N
-                put!(request_c, TestRequest(i, zeros(UInt64, i)))
-            end
-
-            for i in 1:N
-                response = take_or_diagnose(req, response_c)
-                @test length(response.data) == i
-                @test last(response.data) == i
-            end
-
-
-            close(request_c)
-            grpc_async_await(req)
-        end
-
-        # An all-default protobuf encodes to zero bytes, so its 5-byte length-prefix
-        # is the entire frame. Such a message used to fail the response parser: it
-        # completed without consuming any of the current chunk, which the write
-        # callback read as a stall and reported as INTERNAL "only handled N bytes",
-        # and a zero-length message whose prefix was the last thing on the wire was
-        # dropped instead of delivered. Interleaving empty and non-empty responses
-        # covers both, ending on an empty one.
-        @testset "Response Streaming zero-length messages" begin
-            N = 200
-
-            client = TestService_TestBidirectionalStreamRPC_Client(
-                _TEST_HOST,
-                _TEST_PORT;
-                deadline = stream_test_deadline,
-            )
-
-            request_c = Channel{TestRequest}(N)
-            response_c = Channel{TestResponse}(N)
-
-            req = grpc_async_request(client, request_c, response_c)
-
-            # Every other response is empty, including the last one
-            sizes = [iseven(i) ? 0 : i for i in 1:N]
-            for sz in sizes
-                put!(request_c, TestRequest(sz, UInt64[]))
-            end
-            close(request_c)
-
-            for sz in sizes
-                response = take_or_diagnose(req, response_c)
-                @test length(response.data) == sz
-            end
-
-            grpc_async_await(req)
-        end
-
-        @testset "Response Streaming hang after END_STREAM" begin
-            N = 10
-
-            client = TestService_TestServerStreamRPC_Client(
-                _TEST_HOST,
-                _TEST_PORT;
-                deadline = stream_test_deadline,
-            )
-
-            response_c = Channel{TestResponse}(N)
-
-            req = grpc_async_request(client, TestRequest(N, zeros(UInt64, 1)), response_c)
-
-            i = 1
-            try
-                while i <= N + 1
-                    response = take!(response_c)
-                    i += 1
-                end
-                @test false
-            catch ex
-                @test isa(ex, InvalidStateException)
-                @test i == N + 1
-            end
-            grpc_async_await(req)
-        end
-
-        @testset "Deadline Exceeded" begin
-            client = TestService_TestClientStreamRPC_Client(
-                _TEST_HOST,
-                _TEST_PORT;
-                deadline = 0.001,
-            )
-            request_c = Channel{TestRequest}(1)
-
-            # Even with a 1ms deadline submission never throws; the failure is
-            # raised by the await
-            request = grpc_async_request(client, request_c)
-            sleep(1.0)
-
-            try
-                grpc_async_await(request)
-                @test false
-            catch ex
-                # Verify the deadline was exceeded
-                @test isa(ex, gRPCServiceCallException)
-                # A mismatch here has historically only reproduced on CI, where the
-                # status number alone says nothing about which transport error the
-                # platform reported, so log the message before asserting
-                ex.grpc_status == GRPC_DEADLINE_EXCEEDED || @error(
-                    "expected DEADLINE_EXCEEDED",
-                    status = ex.grpc_status,
-                    message = ex.grpc_message,
-                )
-                @test ex.grpc_status == GRPC_DEADLINE_EXCEEDED
-            end
-        end
-
-        @testset "Deadline Exceeded - non-timeout transport error" begin
-            # Tearing a transfer down at CURLOPT_TIMEOUT_MS does not always surface as
-            # CURLE_OPERATION_TIMEDOUT: on Windows the socket error from the teardown can
-            # arrive first. Whichever curl reports, a call whose deadline has passed must
-            # fail with DEADLINE_EXCEEDED rather than INTERNAL. The platform-specific race
-            # cannot be provoked here, so drive a real request to completion and then
-            # rewrite the three fields await reads.
-            client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
-            req = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
-            grpc_async_await(client, req)
-
-            req.code = gRPCClient.CURLE_SEND_ERROR
-
-            awaited_status = function (expiry)
-                req.expiry = expiry
-                return try
-                    grpc_async_await(req)
-                    nothing
-                catch ex
-                    @test isa(ex, gRPCServiceCallException)
-                    ex.grpc_status
-                end
-            end
-
-            @test awaited_status(time() - 1) == GRPC_DEADLINE_EXCEEDED
-
-            # The same error before the deadline, or on a request with no deadline at
-            # all, stays an INTERNAL transport failure
-            @test awaited_status(time() + 60) == GRPC_INTERNAL
-            @test awaited_status(Inf) == GRPC_INTERNAL
-        end
-
-        @testset "Response Streaming - Small Messages" begin
-            N = 1000
-            client = TestService_TestServerStreamRPC_Client(
-                _TEST_HOST,
-                _TEST_PORT;
-                deadline = stream_test_deadline,
-            )
-
-            response_c = Channel{TestResponse}(N)
-
-            req = grpc_async_request(client, TestRequest(N, zeros(UInt64, 1)), response_c)
-
-            # We should get back N small messages
-            for i in 1:N
-                response = take_or_diagnose(req, response_c)
-                @test length(response.data) >= 1
-            end
-
-            grpc_async_await(req)
-        end
-
-        @testset "Request Streaming - Large Payloads" begin
-            N = 100
-            client = TestService_TestClientStreamRPC_Client(
-                _TEST_HOST,
-                _TEST_PORT;
-                deadline = stream_test_deadline,
-            )
-            request_c = Channel{TestRequest}(N)
-
-            request = grpc_async_request(client, request_c)
-
-            # Send 100 large payloads (similar to unary big test)
-            for i in 1:N
-                put!(request_c, TestRequest(1, zeros(UInt64, 32 * 28 * 224)))
-            end
-
-            close(request_c)
-            response = grpc_async_await(client, request)
-
-            @test length(response.data) == N
-        end
-
-        @testset "Don't Stick User Tasks" begin
-            # This fails on Julia 1.10 but works on Julia 1.12
-            client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
-
-            task = @sync begin
-                @spawn begin
-                    grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
-                end
-            end
-
-            @test !task.sticky
-        end
-
-        @testset "grpc_async_stream_request - gRPCServiceCallException" begin
-            # Test that gRPCServiceCallException is properly stored in req.ex
-            client = TestService_TestClientStreamRPC_Client(
-                _TEST_HOST,
-                _TEST_PORT;
-                max_send_message_length = 100,
-            )
-            request_c = Channel{TestRequest}(1)
-
-            req = grpc_async_request(client, request_c)
-
-            # Send a request that exceeds max_send_message_length to trigger gRPCServiceCallException
-            put!(request_c, TestRequest(1, zeros(UInt64, 1000)))
-            close(request_c)
-
-            # Wait and check that the exception is a gRPCServiceCallException
-            try
-                grpc_async_await(client, req)
-                @test false  # Should not reach here
+        awaited_status = function (expiry)
+            req.expiry = expiry
+            return try
+                grpc_async_await(req)
+                nothing
             catch ex
                 @test isa(ex, gRPCServiceCallException)
+                ex.grpc_status
             end
         end
 
-        @testset "grpc_async_stream_request - general exception" begin
-            # Test the else branch with a non-gRPC exception
-            client = TestService_TestClientStreamRPC_Client(_TEST_HOST, _TEST_PORT)
-            request_c = Channel{TestRequest}(1)
+        @test awaited_status(time() - 1) == GRPC_DEADLINE_EXCEEDED
 
-            req = grpc_async_request(client, request_c)
+        # The same error before the deadline, or on a request with no deadline at
+        # all, stays an INTERNAL transport failure
+        @test awaited_status(time() + 60) == GRPC_INTERNAL
+        @test awaited_status(Inf) == GRPC_INTERNAL
+    end
 
-            # Close the channel and then try to take from it (triggers InvalidStateException)
-            close(request_c)
+    @testset "Response Streaming - Small Messages" begin
+        N = 1000
+        client = TestService_TestServerStreamRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            deadline = stream_test_deadline,
+        )
 
-            # Give the async task time to encounter the exception
-            sleep(0.2)
+        response_c = Channel{TestResponse}(N)
 
-            # The InvalidStateException should be handled gracefully
-            # and the request should complete (possibly with no error or a different error)
-            try
-                grpc_async_await(client, req)
-            catch ex
-                # If there's an exception, it shouldn't be InvalidStateException
-                # (that should be handled internally)
-                @test !isa(ex, InvalidStateException)
-            end
-        end
+        req = grpc_async_request(client, TestRequest(N, zeros(UInt64, 1)), response_c)
 
-        @testset "grpc_async_stream_response - InvalidStateException" begin
-            # Test that InvalidStateException is handled when response channel closes early
-            client = TestService_TestServerStreamRPC_Client(_TEST_HOST, _TEST_PORT)
-            response_c = Channel{TestResponse}(1)
-
-            req = grpc_async_request(client, TestRequest(10, zeros(UInt64, 1)), response_c)
-
-            # Take one response then close the channel to trigger InvalidStateException in put!
-            response = take!(response_c)
+        # We should get back N small messages
+        for i in 1:N
+            response = take_or_diagnose(req, response_c)
             @test length(response.data) >= 1
-            close(response_c)
+        end
 
-            # Give time for the async task to encounter InvalidStateException
-            sleep(0.2)
+        grpc_async_await(req)
+    end
 
-            # InvalidStateException should be handled internally without propagating
-            try
-                grpc_async_await(req)
-            catch ex
-                # If there's an exception, it shouldn't be InvalidStateException
-                @test !isa(ex, InvalidStateException)
+    @testset "Request Streaming - Large Payloads" begin
+        N = 100
+        client = TestService_TestClientStreamRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            deadline = stream_test_deadline,
+        )
+        request_c = Channel{TestRequest}(N)
+
+        request = grpc_async_request(client, request_c)
+
+        # Send 100 large payloads (similar to unary big test)
+        for i in 1:N
+            put!(request_c, TestRequest(1, zeros(UInt64, 32 * 28 * 224)))
+        end
+
+        close(request_c)
+        response = grpc_async_await(client, request)
+
+        @test length(response.data) == N
+    end
+
+    @testset "Don't Stick User Tasks" begin
+        # A unary test that only ever sat inside the streaming version guard. It is broken
+        # below 1.12, and not for anything this package can fix: arming the deadline
+        # watchdog with `Timer(cb, delay)` runs its callback loop in an `@async`, and on
+        # those versions scheduling a sticky task marks the scheduling task sticky too
+        # (JuliaLang/julia#41324, fixed by the 1.12 scheduler).
+        client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
+
+        task = @sync begin
+            @spawn begin
+                grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
             end
         end
 
-        @testset "grpc_async_stream_response - gRPCServiceCallException" begin
-            # Test that gRPCServiceCallException is properly handled in response stream
-            # Use a client with restrictive max_recieve_message_length
-            client = TestService_TestServerStreamRPC_Client(
-                _TEST_HOST,
-                _TEST_PORT;
-                max_recieve_message_length = 1,
-            )
-            response_c = Channel{TestResponse}(100)
+        @test !task.sticky broken = VERSION < v"1.12"
+    end
 
-            # Request a response that will exceed the max size
-            req =
-                grpc_async_request(client, TestRequest(10, zeros(UInt64, 100)), response_c)
+    @testset "grpc_async_stream_request - gRPCServiceCallException" begin
+        # Test that gRPCServiceCallException is properly stored in req.ex
+        client = TestService_TestClientStreamRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            max_send_message_length = 100,
+        )
+        request_c = Channel{TestRequest}(1)
 
-            # Wait for the error to occur
-            sleep(0.2)
+        req = grpc_async_request(client, request_c)
 
-            # Should get gRPCServiceCallException when awaiting
-            try
-                for response in response_c
-                    # Might get some responses before the error
-                end
-                grpc_async_await(req)
-                @test false  # Should not reach here
-            catch ex
-                @test isa(ex, gRPCServiceCallException)
+        # Send a request that exceeds max_send_message_length to trigger gRPCServiceCallException
+        put!(request_c, TestRequest(1, zeros(UInt64, 1000)))
+        close(request_c)
+
+        # Wait and check that the exception is a gRPCServiceCallException
+        try
+            grpc_async_await(client, req)
+            @test false  # Should not reach here
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+        end
+    end
+
+    @testset "grpc_async_stream_request - general exception" begin
+        # Test the else branch with a non-gRPC exception
+        client = TestService_TestClientStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+        request_c = Channel{TestRequest}(1)
+
+        req = grpc_async_request(client, request_c)
+
+        # Close the channel and then try to take from it (triggers InvalidStateException)
+        close(request_c)
+
+        # Give the async task time to encounter the exception
+        sleep(0.2)
+
+        # The InvalidStateException should be handled gracefully
+        # and the request should complete (possibly with no error or a different error)
+        try
+            grpc_async_await(client, req)
+        catch ex
+            # If there's an exception, it shouldn't be InvalidStateException
+            # (that should be handled internally)
+            @test !isa(ex, InvalidStateException)
+        end
+    end
+
+    @testset "grpc_async_stream_response - InvalidStateException" begin
+        # Test that InvalidStateException is handled when response channel closes early
+        client = TestService_TestServerStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+        response_c = Channel{TestResponse}(1)
+
+        req = grpc_async_request(client, TestRequest(10, zeros(UInt64, 1)), response_c)
+
+        # Take one response then close the channel to trigger InvalidStateException in put!
+        response = take!(response_c)
+        @test length(response.data) >= 1
+        close(response_c)
+
+        # Give time for the async task to encounter InvalidStateException
+        sleep(0.2)
+
+        # InvalidStateException should be handled internally without propagating
+        try
+            grpc_async_await(req)
+        catch ex
+            # If there's an exception, it shouldn't be InvalidStateException
+            @test !isa(ex, InvalidStateException)
+        end
+    end
+
+    @testset "grpc_async_stream_response - gRPCServiceCallException" begin
+        # Test that gRPCServiceCallException is properly handled in response stream
+        # Use a client with restrictive max_recieve_message_length
+        client = TestService_TestServerStreamRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            max_recieve_message_length = 1,
+        )
+        response_c = Channel{TestResponse}(100)
+
+        # Request a response that will exceed the max size
+        req =
+            grpc_async_request(client, TestRequest(10, zeros(UInt64, 100)), response_c)
+
+        # Wait for the error to occur
+        sleep(0.2)
+
+        # Should get gRPCServiceCallException when awaiting
+        try
+            for response in response_c
+                # Might get some responses before the error
             end
+            grpc_async_await(req)
+            @test false  # Should not reach here
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+        end
+    end
+
+    @testset "No deadline (Inf) ended by grpc_cancel" begin
+        # A bidirectional stream with no deadline stays open indefinitely and is
+        # ended by explicit cancellation
+        client = TestService_TestBidirectionalStreamRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            deadline = Inf,
+        )
+        request_c = Channel{TestRequest}(16)
+        response_c = Channel{TestResponse}(16)
+        req = grpc_async_request(client, request_c, response_c)
+
+        # Stream is live: request/response round trips work
+        for i in 1:3
+            put!(request_c, TestRequest(i, zeros(UInt64, i)))
+            r = take!(response_c)
+            @test length(r.data) == i
         end
 
-        @testset "No deadline (Inf) ended by grpc_cancel" begin
-            # A bidirectional stream with no deadline stays open indefinitely and is
-            # ended by explicit cancellation
-            client = TestService_TestBidirectionalStreamRPC_Client(
-                _TEST_HOST,
-                _TEST_PORT;
-                deadline = Inf,
-            )
-            request_c = Channel{TestRequest}(16)
-            response_c = Channel{TestResponse}(16)
-            req = grpc_async_request(client, request_c, response_c)
-
-            # Stream is live: request/response round trips work
-            for i in 1:3
-                put!(request_c, TestRequest(i, zeros(UInt64, i)))
-                r = take!(response_c)
-                @test length(r.data) == i
-            end
-
-            @test grpc_cancel(req)
-            # Response iteration ends promptly after cancellation
-            for _ in response_c
-            end
-            @test !isopen(response_c)
-            try
-                grpc_async_await(req)
-                @test false
-            catch ex
-                @test isa(ex, gRPCServiceCallException)
-                @test ex.grpc_status == GRPC_CANCELLED
-            end
-            # Cancel does not close the caller's request channel; that stays the
-            # caller's job
-            @test isopen(request_c)
-            close(request_c)
-
-            # Regression for the recycled curl_done_reading Event: the slot freed by
-            # the cancelled stream (LIFO freelist, so the next request reuses it) must
-            # be clean. Run follow-up streams and unary requests on the same handle.
-            for _ in 1:3
-                cs_client = TestService_TestClientStreamRPC_Client(_TEST_HOST, _TEST_PORT)
-                cs_c = Channel{TestRequest}(4)
-                cs_req = grpc_async_request(cs_client, cs_c)
-                put!(cs_c, TestRequest(1, zeros(UInt64, 1)))
-                put!(cs_c, TestRequest(1, zeros(UInt64, 1)))
-                close(cs_c)
-                r = grpc_async_await(cs_client, cs_req)
-                @test length(r.data) == 2
-            end
-            u_client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
-            @test length(grpc_sync_request(u_client, TestRequest(4, zeros(UInt64, 1))).data) == 4
+        @test grpc_cancel(req)
+        # Response iteration ends promptly after cancellation
+        for _ in response_c
         end
+        @test !isopen(response_c)
+        try
+            grpc_async_await(req)
+            @test false
+        catch ex
+            @test isa(ex, gRPCServiceCallException)
+            @test ex.grpc_status == GRPC_CANCELLED
+        end
+        # Cancel does not close the caller's request channel; that stays the
+        # caller's job
+        @test isopen(request_c)
+        close(request_c)
+
+        # Regression for the recycled curl_done_reading Event: the slot freed by
+        # the cancelled stream (LIFO freelist, so the next request reuses it) must
+        # be clean. Run follow-up streams and unary requests on the same handle.
+        for _ in 1:3
+            cs_client = TestService_TestClientStreamRPC_Client(_TEST_HOST, _TEST_PORT)
+            cs_c = Channel{TestRequest}(4)
+            cs_req = grpc_async_request(cs_client, cs_c)
+            put!(cs_c, TestRequest(1, zeros(UInt64, 1)))
+            put!(cs_c, TestRequest(1, zeros(UInt64, 1)))
+            close(cs_c)
+            r = grpc_async_await(cs_client, cs_req)
+            @test length(r.data) == 2
+        end
+        u_client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT)
+        @test length(grpc_sync_request(u_client, TestRequest(4, zeros(UInt64, 1))).data) == 4
     end
 
     @testset "No deadline (Inf) on a never-ready connection" begin

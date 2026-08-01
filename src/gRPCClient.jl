@@ -85,13 +85,7 @@ include("Curl.jl")
 include("gRPC.jl")
 include("Unary.jl")
 
-# Streaming only supported on >= 1.12
-@static if VERSION >= v"1.12"
-    include("Streaming.jl")
-else
-    @warn "Julia $(VERSION) <= 1.12, streaming support is disabled: https://github.com/JuliaIO/gRPCClient.jl/issues/68"
-end
-
+include("Streaming.jl")
 include("ProtoBuf.jl")
 
 export grpc_init
@@ -113,6 +107,12 @@ export gRPCException
 export gRPCServiceCallException
 
 function __init__()
+    let curl = _runtime_curl_version()
+        NEEDS_UNPAUSE_WORKAROUND[] =
+            CURL_SEND_PAUSE_BLOCKS_RECV_FROM <= curl < CURL_SEND_PAUSE_BLOCKS_RECV_BELOW
+        NEEDS_SELECT_BITS_WORKAROUND[] =
+            CURL_SELECT_BITS_CLOBBERED_FROM <= curl < CURL_SELECT_BITS_CLOBBERED_BELOW
+    end
     grpc_init()
     return grpc_register_service_codegen()
 end

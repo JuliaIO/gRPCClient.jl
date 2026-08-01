@@ -7,6 +7,88 @@ let m = match(r"^libcurl/(\d+\.\d+\.\d+)\b", CURL_VERSION_STR)
     const global USER_AGENT = "curl/$curl julia/$julia"
 end
 
+# libcurl 8.4.0 and 8.5.0 stop servicing a transfer's *receive* direction while its *send*
+# direction is paused, which wedges any request-streaming call whose caller stops sending
+# while responses are still outstanding.
+#
+# `lib/http2.c drain_stream()` sets `dselect_bits = CURL_CSELECT_IN | CURL_CSELECT_OUT` for
+# an HTTP/2 stream whose upload is still open, and this package sends an empty
+# `Content-Length:`, so CSELECT_OUT stays set for the life of the call. `Curl_readwrite`
+# then consults `select_bits_paused()`, which in those versions ORs the two directions:
+#
+#     return (((select_bits & CURL_CSELECT_IN)  && (keepon & KEEP_RECV_PAUSE)) ||
+#             ((select_bits & CURL_CSELECT_OUT) && (keepon & KEEP_SEND_PAUSE)));
+#
+# read_callback returns CURL_READFUNC_PAUSE whenever the upload buffer runs dry, setting
+# KEEP_SEND_PAUSE, so the second clause reports "paused", Curl_readwrite returns CURLE_OK
+# having read nothing, and it deliberately leaves the bits set. Every later
+# curl_multi_socket_action re-takes the same early return, response bytes pile up unread in
+# the socket receive queue, and the caller blocks until its deadline. Clearing
+# KEEP_SEND_PAUSE is the only thing that makes the predicate false, which is why driving the
+# multi handle does not help but curl_easy_pause(CURLPAUSE_CONT) does.
+#
+# The early return arrived in 8.4.0 as the fix for https://github.com/curl/curl/issues/11982
+# and over-corrected. Reported at https://curl.se/mail/lib-2024-01/0049.html and fixed in
+# 8.6.0 by "transfer: make the select_bits_paused condition check both directions", which
+# returns false as soon as any wanted direction is unpaused.
+#
+# The affected range is therefore closed at both ends: the early return does not exist
+# before 8.4.0, so those versions never had the bug. Both bounds are verified against the Go
+# test server on Julia 1.10, bidirectional, burst-send then drain, with the workaround
+# disabled: libcurl 7.84.0 is 0/30 on the shape that fails 29/30 on 8.4.0. The lower bound
+# matters because a Julia built against a system libcurl, as several distributions do, can
+# pair a supported Julia with a pre-8.4 library, and that combination needs no workaround.
+#
+# Julia bundles libcurl as a stdlib, so an affected version cannot simply be upgraded:
+# Julia 1.10 and 1.9 ship 8.4.0. On affected versions a request-streaming call re-issues the
+# un-pause on a timer for as long as it is in flight, which is what shakes the receive side
+# loose. See GRPC_UNPAUSE_INTERVAL and the `unpause` field of gRPCRequest.
+const CURL_SEND_PAUSE_BLOCKS_RECV_FROM = v"8.4.0"
+const CURL_SEND_PAUSE_BLOCKS_RECV_BELOW = v"8.6.0"
+
+# libcurl 8.6.0 loses a transfer's pending read interest, which strands a streaming call at
+# the end of the stream: every response has arrived, but the call never completes.
+#
+# `lib/http2.c drain_stream()` sets `data->state.select_bits = CURL_CSELECT_IN|CSELECT_OUT`
+# to mean "I still hold buffered input, run me and read it". `multi_socket()` then records
+# the event the application reports:
+#
+#     /* 8.6.0, lib/multi.c:3245 */   data->state.select_bits  = (unsigned char)ev_bitmask;
+#     /* 8.7.0, lib/multi.c:3170 */   data->state.select_bits |= (unsigned char)ev_bitmask;
+#
+# By that point libcurl has already drained the socket, so the kernel receive queue is empty
+# and the socket is only ever writable. The watcher task therefore reports CURL_CSELECT_OUT
+# alone, and on 8.6.0 that plain assignment overwrites the CURL_CSELECT_IN libcurl staked for
+# itself. `Curl_readwrite` runs the send half only, the buffered HTTP/2 input is never
+# surfaced, and every later writable wake-up overwrites the bit again. The transfer is stuck
+# for good, and because a TCP socket with room in its send buffer is always writable, the
+# watcher spins on it.
+#
+# Fixed upstream in 8.7.0 by the `|=` above: "multi: fix multi_sock handling of select_bits",
+# https://curl.se/bug/?i=12971. The range is closed at both ends and is 8.6.0 alone: 8.4.0
+# and 8.5.0 kept the drain signal in a separate field (`state.dselect_bits`, with the event
+# going to `conn->cselect_bits`), so no assignment could clobber it, and 8.6.0 is the release
+# that merged the two. Verified against the Go test server on Julia 1.11, on the shape that
+# fails 30/30 on 8.6.0: libcurl 7.84.0, 8.4.0, 8.5.0 and 8.7.1 are each 0/30.
+#
+# Julia 1.11 ships 8.6.0 and bundles libcurl as a stdlib, so it cannot simply be upgraded.
+# The workaround is in the watcher task: claim readability when the socket is writable and
+# not readable, so the socket action ORs in the bit libcurl wants rather than erasing it.
+const CURL_SELECT_BITS_CLOBBERED_FROM = v"8.6.0"
+const CURL_SELECT_BITS_CLOBBERED_BELOW = v"8.7.0"
+
+# Resolved in __init__ rather than read off the CURL_VERSION const above, because that const
+# is evaluated during precompilation and baked into the cache. Normally the two agree, since
+# libcurl is bundled with Julia, but they diverge when a different libcurl is loaded under an
+# existing cache, which is exactly how this workaround gets tested.
+const NEEDS_UNPAUSE_WORKAROUND = Ref(false)
+const NEEDS_SELECT_BITS_WORKAROUND = Ref(false)
+
+function _runtime_curl_version()
+    m = match(r"^libcurl/(\d+\.\d+\.\d+)\b", unsafe_string(curl_version()))
+    return m === nothing ? CURL_VERSION : VersionNumber(m.captures[1]::SubString{String})
+end
+
 struct NoChannel end
 const NOCHANNEL = NoChannel()
 
@@ -88,9 +170,13 @@ function read_callback(
     try
         req = unsafe_pointer_to_objref(req_p)::gRPCRequest
 
-        # Sometimes curl calls again even after we tell it to pause
-        req.curl_done_reading.set && return CURL_READFUNC_PAUSE
-
+        # Curl sometimes calls this again even after we tell it to pause, and it needs no
+        # special handling: the request buffer is empty in that state, so the streaming
+        # branch below simply pauses again, or ends the request if the stream has since
+        # closed. Bailing out early instead used to be actively harmful, because it
+        # swallowed the un-pause the request pump issues and left the transfer paused for
+        # good. The pump stages the buffer under `req.lock`, which is the lock libcurl
+        # invokes this callback under, so a partially written buffer is never visible here.
         buf_p = pointer(req.request.data) + req.request_ptr
         n_left = req.request.size - req.request_ptr
 
@@ -102,8 +188,8 @@ function read_callback(
         req.request_ptr += n_min
 
         if isstreaming_request(req) && n_min == 0
-            # Keep sending until the channel is closed and empty
-            if !isopen(req.request_c) && isempty(req.request_c)
+            # Keep sending until the caller's request stream has ended
+            if req.request_eof
                 notify(req.curl_done_reading)
                 return 0
             end
@@ -343,6 +429,14 @@ end
 # watchdog only wins when libcurl has wedged (see the watchdog comment in gRPCRequest).
 const GRPC_DEADLINE_GRACE = 0.25
 
+# How often (seconds) an in-flight request-streaming call re-issues
+# curl_easy_pause(CURLPAUSE_CONT) on a libcurl that needs the workaround described at the
+# top of this file. Only the un-pause clears the block, so this bounds how long a wedged
+# call stalls. curl_easy_pause on a transfer that is not paused is cheap, and an un-pause
+# with an empty request buffer draws one read_callback that pauses straight back, so a
+# healthy call pays only for the call itself.
+const GRPC_UNPAUSE_INTERVAL = 0.05
+
 mutable struct gRPCRequest
     # CURL multi lock for exclusive access to the easy handle after its added to the multi
     lock::ReentrantLock
@@ -387,9 +481,28 @@ mutable struct gRPCRequest
     # Keeps track of the response stream parsing state
     response_read_header::Bool
     response_compressed::Bool
+
+    # Set once the caller's request stream has ended, so no further request data will ever
+    # be staged and read_callback should end the upload by returning 0. Only meaningful for
+    # a request-streaming call.
+    #
+    # This used to be read off `request_c` (closed and empty), but nothing is ever put into
+    # that channel: it is a lifecycle handle and a flag, not a queue. A plain field can be
+    # written inside the critical section below, where `close(::Channel)` cannot go, because
+    # close acquires the channel's own lock and this section runs while holding the one lock
+    # that serializes every transfer on the handle. It also keeps read_callback, which runs
+    # inside libcurl, from taking a Channel's lock at all.
+    #
+    # Sits with the other Bools deliberately: `response_length` needs 4-byte alignment, so
+    # there are padding bytes here that this field occupies for free. Placed after
+    # `curl_done_reading` instead it would cost a whole 8-byte slot per request.
+    request_eof::Bool
+
     response_length::UInt32
 
-    # When this is set we can write to the request upload buffer because curl is not reading from it
+    # Set by read_callback once curl has taken every byte of the request upload buffer, so
+    # the request pump knows the buffer is free and it may stage the next batch. Flow
+    # control only: what keeps the pump's write from racing a read_callback is `lock`
     curl_done_reading::Event
 
     # Response headers
@@ -406,6 +519,11 @@ mutable struct gRPCRequest
 
     # Client-side deadline watchdog, see the comment in the constructor
     timer::Union{Nothing, Timer}
+
+    # Repeating un-pause for a request-streaming call on a libcurl whose send pause also
+    # blocks the receive direction, `nothing` everywhere else (every other kind of call, and
+    # every libcurl from 8.6.0 on). See CURL_SEND_PAUSE_BLOCKS_RECV_BELOW.
+    unpause::Union{Nothing, Timer}
 
     # Absolute `time()` at which this request's deadline expires, Inf when there is no
     # deadline. grpc_async_await uses it to attribute a transport error that landed after
@@ -630,6 +748,7 @@ mutable struct gRPCRequest
             nothing,
             false,
             false,
+            false,
             0,
             curl_done_reading,
             GRPC_OK,
@@ -637,9 +756,30 @@ mutable struct gRPCRequest
             grpc,
             false,
             watchdog,
+            nothing,
             expiry,
         )
         preserve_handle(req)
+
+        # Arm the repeating un-pause once `req` exists. Only a request-streaming call ever
+        # pauses the send direction, and only an affected libcurl needs shaking loose.
+        if NEEDS_UNPAUSE_WORKAROUND[] && isstreaming_request(req)
+            req.unpause = Timer(
+                GRPC_UNPAUSE_INTERVAL;
+                interval = GRPC_UNPAUSE_INTERVAL,
+            ) do _
+                try
+                    lock(grpc.lock) do
+                        # cleanup_request runs under this lock and frees the easy handle,
+                        # so re-check both before touching it
+                        (req.completed || !grpc.running) && return
+                        curl_easy_pause(req.easy, CURLPAUSE_CONT)
+                    end
+                catch err
+                    @error("streaming un-pause: unexpected error", err, maxlog = 1_000)
+                end
+            end
+        end
 
         req_p = pointer_from_objref(req)
         curl_easy_setopt(easy_handle, CURLOPT_PRIVATE, req_p)
@@ -671,6 +811,7 @@ mutable struct gRPCRequest
                 # shut-down handle is a submission-time FAILED_PRECONDITION per the
                 # contract at the top of this constructor.
                 isnothing(watchdog) || close(watchdog)
+                isnothing(req.unpause) || close(req.unpause)
                 curl_easy_cleanup(easy_handle)
                 curl_slist_free_all(headers)
                 unpreserve_handle(req)
@@ -740,12 +881,14 @@ mutable struct gRPCRequest
             ex,
             false,
             false,
+            true,
             0,
             Event(),
             GRPC_OK,
             "",
             grpc,
             true,
+            nothing,
             nothing,
             expiry,
         )
@@ -1038,9 +1181,24 @@ function socket_callback(
                         FileWatching.FDEvent()
                     end
 
+                    readable = isreadable(events)
+                    writable = iswritable(events)
+
+                    # On a libcurl that clobbers its own select bits, a socket action
+                    # carrying only CURL_CSELECT_OUT throws away the CURL_CSELECT_IN that
+                    # libcurl staked for input it has already buffered internally, and the
+                    # transfer never surfaces it. Claim readability in exactly that case, so
+                    # the action ORs in the bit libcurl is waiting for instead of erasing it.
+                    # See CURL_SELECT_BITS_CLOBBERED_FROM. Costs one extra recv attempt on an
+                    # affected libcurl, which returns EAGAIN when there is genuinely nothing
+                    # to read, the same as any spurious wake-up.
+                    if NEEDS_SELECT_BITS_WORKAROUND[] && writable && !readable
+                        readable = true
+                    end
+
                     flags =
-                        CURL_CSELECT_IN * isreadable(events) +
-                        CURL_CSELECT_OUT * iswritable(events) +
+                        CURL_CSELECT_IN * readable +
+                        CURL_CSELECT_OUT * writable +
                         CURL_CSELECT_ERR * (events.disconnect || events.timedout)
 
                     lock(grpc.lock) do
@@ -1307,6 +1465,9 @@ function cleanup_request(grpc::gRPCCURL, req::gRPCRequest)
     req.completed = true
     # Stop the deadline watchdog
     isnothing(req.timer) || close(req.timer)
+    # Stop the repeating un-pause. It is a *repeating* Timer, so leaving it open would keep
+    # the libuv event loop alive for the rest of the process.
+    isnothing(req.unpause) || close(req.unpause)
     # First remove from the multi
     curl_multi_remove_handle(grpc.multi, req.easy)
     # Cleanup the easy handle

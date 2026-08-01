@@ -13,15 +13,13 @@ description: Work on the gRPCClient.jl package itself. Covers running the Go tes
 | `src/Curl.jl` | The libcurl transport: `gRPCCURL`, `gRPCRequest`, callbacks, socket watchers, concurrency semaphore, deadline watchdog, `grpc_cancel` |
 | `src/gRPC.jl` | Public handle lifecycle, `gRPCServiceClient`, request framing, the generic `grpc_async_await` |
 | `src/Unary.jl` | Unary methods and `gRPCAsyncChannelResponse` |
-| `src/Streaming.jl` | Streaming methods and the request and response pump tasks; included only on Julia 1.12 and newer |
+| `src/Streaming.jl` | Streaming methods and the request and response pump tasks |
 | `src/ProtoBuf.jl` | The ProtoBuf.jl codegen hook that emits `*_Client` constructors |
 | `test/proto/test.proto` | One service with all four RPC variants |
 | `test/gen/` | Checked-in generated stubs used by the suite |
 | `test/go/` | The Go reference server every test and benchmark runs against |
 | `test/python/` | Generated Python stubs, regenerated alongside the Julia ones |
 | `utils/gRPCClientUtils.jl` | Separate package for benchmarks, stress workloads, and memory profiling |
-
-Streaming is conditionally compiled: `src/Streaming.jl` is included only under `@static if VERSION >= v"1.12"`, so anything added there needs a matching version guard in the tests.
 
 ## Formatting
 
