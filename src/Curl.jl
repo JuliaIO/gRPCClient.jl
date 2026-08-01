@@ -7,6 +7,48 @@ let m = match(r"^libcurl/(\d+\.\d+\.\d+)\b", CURL_VERSION_STR)
     const global USER_AGENT = "curl/$curl julia/$julia"
 end
 
+# libcurl 8.4.0 and 8.5.0 stop servicing a transfer's *receive* direction while its *send*
+# direction is paused, which wedges any request-streaming call whose caller stops sending
+# while responses are still outstanding.
+#
+# `lib/http2.c drain_stream()` sets `dselect_bits = CURL_CSELECT_IN | CURL_CSELECT_OUT` for
+# an HTTP/2 stream whose upload is still open, and this package sends an empty
+# `Content-Length:`, so CSELECT_OUT stays set for the life of the call. `Curl_readwrite`
+# then consults `select_bits_paused()`, which in those versions ORs the two directions:
+#
+#     return (((select_bits & CURL_CSELECT_IN)  && (keepon & KEEP_RECV_PAUSE)) ||
+#             ((select_bits & CURL_CSELECT_OUT) && (keepon & KEEP_SEND_PAUSE)));
+#
+# read_callback returns CURL_READFUNC_PAUSE whenever the upload buffer runs dry, setting
+# KEEP_SEND_PAUSE, so the second clause reports "paused", Curl_readwrite returns CURLE_OK
+# having read nothing, and it deliberately leaves the bits set. Every later
+# curl_multi_socket_action re-takes the same early return, response bytes pile up unread in
+# the socket receive queue, and the caller blocks until its deadline. Clearing
+# KEEP_SEND_PAUSE is the only thing that makes the predicate false, which is why driving the
+# multi handle does not help but curl_easy_pause(CURLPAUSE_CONT) does.
+#
+# The early return arrived in 8.4.0 as the fix for https://github.com/curl/curl/issues/11982
+# and over-corrected. Reported at https://curl.se/mail/lib-2024-01/0049.html and fixed in
+# 8.6.0 by "transfer: make the select_bits_paused condition check both directions", which
+# returns false as soon as any wanted direction is unpaused.
+#
+# Julia bundles libcurl as a stdlib, so an affected version cannot simply be upgraded:
+# Julia 1.10 ships 8.4.0. On those versions a request-streaming call re-issues the un-pause
+# on a timer for as long as it is in flight, which is what shakes the receive side loose.
+# See GRPC_UNPAUSE_INTERVAL and the `unpause` field of gRPCRequest.
+const CURL_SEND_PAUSE_BLOCKS_RECV_BELOW = v"8.6.0"
+
+# Resolved in __init__ rather than read off the CURL_VERSION const above, because that const
+# is evaluated during precompilation and baked into the cache. Normally the two agree, since
+# libcurl is bundled with Julia, but they diverge when a different libcurl is loaded under an
+# existing cache, which is exactly how this workaround gets tested.
+const NEEDS_UNPAUSE_WORKAROUND = Ref(false)
+
+function _runtime_curl_version()
+    m = match(r"^libcurl/(\d+\.\d+\.\d+)\b", unsafe_string(curl_version()))
+    return m === nothing ? CURL_VERSION : VersionNumber(m.captures[1]::SubString{String})
+end
+
 struct NoChannel end
 const NOCHANNEL = NoChannel()
 
@@ -347,6 +389,14 @@ end
 # watchdog only wins when libcurl has wedged (see the watchdog comment in gRPCRequest).
 const GRPC_DEADLINE_GRACE = 0.25
 
+# How often (seconds) an in-flight request-streaming call re-issues
+# curl_easy_pause(CURLPAUSE_CONT) on a libcurl that needs the workaround described at the
+# top of this file. Only the un-pause clears the block, so this bounds how long a wedged
+# call stalls. curl_easy_pause on a transfer that is not paused is cheap, and an un-pause
+# with an empty request buffer draws one read_callback that pauses straight back, so a
+# healthy call pays only for the call itself.
+const GRPC_UNPAUSE_INTERVAL = 0.05
+
 mutable struct gRPCRequest
     # CURL multi lock for exclusive access to the easy handle after its added to the multi
     lock::ReentrantLock
@@ -424,6 +474,11 @@ mutable struct gRPCRequest
 
     # Client-side deadline watchdog, see the comment in the constructor
     timer::Union{Nothing, Timer}
+
+    # Repeating un-pause for a request-streaming call on a libcurl whose send pause also
+    # blocks the receive direction, `nothing` everywhere else (every other kind of call, and
+    # every libcurl from 8.6.0 on). See CURL_SEND_PAUSE_BLOCKS_RECV_BELOW.
+    unpause::Union{Nothing, Timer}
 
     # Absolute `time()` at which this request's deadline expires, Inf when there is no
     # deadline. grpc_async_await uses it to attribute a transport error that landed after
@@ -656,9 +711,30 @@ mutable struct gRPCRequest
             grpc,
             false,
             watchdog,
+            nothing,
             expiry,
         )
         preserve_handle(req)
+
+        # Arm the repeating un-pause once `req` exists. Only a request-streaming call ever
+        # pauses the send direction, and only an affected libcurl needs shaking loose.
+        if NEEDS_UNPAUSE_WORKAROUND[] && isstreaming_request(req)
+            req.unpause = Timer(
+                GRPC_UNPAUSE_INTERVAL;
+                interval = GRPC_UNPAUSE_INTERVAL,
+            ) do _
+                try
+                    lock(grpc.lock) do
+                        # cleanup_request runs under this lock and frees the easy handle,
+                        # so re-check both before touching it
+                        (req.completed || !grpc.running) && return
+                        curl_easy_pause(req.easy, CURLPAUSE_CONT)
+                    end
+                catch err
+                    @error("streaming un-pause: unexpected error", err, maxlog = 1_000)
+                end
+            end
+        end
 
         req_p = pointer_from_objref(req)
         curl_easy_setopt(easy_handle, CURLOPT_PRIVATE, req_p)
@@ -690,6 +766,7 @@ mutable struct gRPCRequest
                 # shut-down handle is a submission-time FAILED_PRECONDITION per the
                 # contract at the top of this constructor.
                 isnothing(watchdog) || close(watchdog)
+                isnothing(req.unpause) || close(req.unpause)
                 curl_easy_cleanup(easy_handle)
                 curl_slist_free_all(headers)
                 unpreserve_handle(req)
@@ -766,6 +843,7 @@ mutable struct gRPCRequest
             "",
             grpc,
             true,
+            nothing,
             nothing,
             expiry,
         )
@@ -1327,6 +1405,9 @@ function cleanup_request(grpc::gRPCCURL, req::gRPCRequest)
     req.completed = true
     # Stop the deadline watchdog
     isnothing(req.timer) || close(req.timer)
+    # Stop the repeating un-pause. It is a *repeating* Timer, so leaving it open would keep
+    # the libuv event loop alive for the rest of the process.
+    isnothing(req.unpause) || close(req.unpause)
     # First remove from the multi
     curl_multi_remove_handle(grpc.multi, req.easy)
     # Cleanup the easy handle
