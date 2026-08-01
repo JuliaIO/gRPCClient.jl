@@ -32,10 +32,18 @@ end
 # 8.6.0 by "transfer: make the select_bits_paused condition check both directions", which
 # returns false as soon as any wanted direction is unpaused.
 #
+# The affected range is therefore closed at both ends: the early return does not exist
+# before 8.4.0, so those versions never had the bug. Both bounds are verified against the Go
+# test server on Julia 1.10, bidirectional, burst-send then drain, with the workaround
+# disabled: libcurl 7.84.0 is 0/30 on the shape that fails 29/30 on 8.4.0. The lower bound
+# matters because a Julia built against a system libcurl, as several distributions do, can
+# pair a supported Julia with a pre-8.4 library, and that combination needs no workaround.
+#
 # Julia bundles libcurl as a stdlib, so an affected version cannot simply be upgraded:
-# Julia 1.10 ships 8.4.0. On those versions a request-streaming call re-issues the un-pause
-# on a timer for as long as it is in flight, which is what shakes the receive side loose.
-# See GRPC_UNPAUSE_INTERVAL and the `unpause` field of gRPCRequest.
+# Julia 1.10 and 1.9 ship 8.4.0. On affected versions a request-streaming call re-issues the
+# un-pause on a timer for as long as it is in flight, which is what shakes the receive side
+# loose. See GRPC_UNPAUSE_INTERVAL and the `unpause` field of gRPCRequest.
+const CURL_SEND_PAUSE_BLOCKS_RECV_FROM = v"8.4.0"
 const CURL_SEND_PAUSE_BLOCKS_RECV_BELOW = v"8.6.0"
 
 # Resolved in __init__ rather than read off the CURL_VERSION const above, because that const

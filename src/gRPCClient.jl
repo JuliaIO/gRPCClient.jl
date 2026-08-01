@@ -107,8 +107,10 @@ export gRPCException
 export gRPCServiceCallException
 
 function __init__()
-    NEEDS_UNPAUSE_WORKAROUND[] =
-        _runtime_curl_version() < CURL_SEND_PAUSE_BLOCKS_RECV_BELOW
+    let curl = _runtime_curl_version()
+        NEEDS_UNPAUSE_WORKAROUND[] =
+            CURL_SEND_PAUSE_BLOCKS_RECV_FROM <= curl < CURL_SEND_PAUSE_BLOCKS_RECV_BELOW
+    end
     grpc_init()
     return grpc_register_service_codegen()
 end
