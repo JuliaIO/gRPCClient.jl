@@ -2,6 +2,12 @@ function grpc_async_stream_request(
         req::gRPCRequest,
         channel::Channel{TRequest},
     ) where {TRequest <: Any}
+    # Pumps the caller's request messages into the upload buffer curl sends from.
+    #
+    # The caller puts messages into `channel` and closes it once there are no more. This
+    # task takes them out, encodes them, and hands them to curl a batch at a time: curl
+    # stays paused while we fill the buffer and is resumed once a batch is staged. It runs
+    # until the channel is closed and drained, or the request ends some other way.
     try
         encode_buf = IOBuffer()
         reqs_ready = 0
@@ -30,30 +36,41 @@ function grpc_async_stream_request(
             catch ex
                 rethrow(ex)
             finally
-                # Once the request has completed (cancelled, deadline exceeded, done)
-                # the easy handle is gone and curl_done_reading will never be notified
-                # by curl again, so there is nothing left to hand off. cleanup_request
-                # notifies curl_done_reading, so a wait racing the completion still
-                # wakes, and the completed re-check under req.lock below (the lock
-                # cleanup runs under) keeps curl_easy_pause off the freed easy handle.
+                # A batch is ready, so hand it to curl. Unless the request is already over
+                # (cancelled, deadline exceeded, finished, failed): curl has torn down the
+                # handle we would be handing it to and will never ask us for data again, so
+                # there is nothing to hand off and nothing that would ever wake us up.
+                # cleanup_request wakes curl_done_reading on its way out, so a wait that
+                # started just before the request ended still returns instead of hanging
+                # here forever, and the second req.completed check below keeps us from
+                # touching a handle that was freed while we waited.
                 if encode_buf.size > 0 && !req.completed
                     seekstart(encode_buf)
 
-                    # Wait for libCURL to not be reading anymore
+                    # curl may still be copying the previous batch out of req.request.
+                    # Block here until it signals it has taken every byte, so we never
+                    # overwrite data that has not gone out on the wire yet.
                     wait(req.curl_done_reading)
 
-                    # Stage the batch and resume the transfer as one critical section.
-                    # read_callback runs under this same lock, so it cannot land between
-                    # the un-pause and the buffer it is meant to pick up, and cannot pause
-                    # again behind our back. Any pause it takes afterwards is a fresh one
-                    # against an empty buffer, which the next batch resumes.
+                    # Staging the batch and resuming the transfer have to happen together,
+                    # with nothing able to look at the buffer in between.
+                    #
+                    # req.lock is the same lock curl's read_callback runs under, so no
+                    # callback can run while we hold it. That keeps a callback from landing
+                    # between the resume and the buffer it is meant to pick up, and from
+                    # pausing the transfer again behind our back. Any pause it takes after
+                    # we let go of the lock is a fresh one against an empty buffer, which
+                    # the next batch resumes.
                     lock(req.lock) do
+                        # The request ended while we were waiting above, so the handle we
+                        # would be staging for no longer exists. Drop the batch.
                         req.completed && return
 
                         # Write all of the encoded protobufs to the request read buffer
                         write(req.request, encode_buf)
 
-                        # Block on the next wait until cleared by the curl read_callback
+                        # Re-arm the signal, so the wait above blocks the next time around
+                        # until read_callback reports this batch has been taken
                         reset(req.curl_done_reading)
 
                         # Tell curl we have more to send
@@ -69,30 +86,43 @@ function grpc_async_stream_request(
         end
     catch ex
         if isa(ex, InvalidStateException)
-            # End of stream. Skip the handoff if the request already completed: the
-            # easy handle is gone and curl will never signal curl_done_reading again
-            # (cleanup_request notifies it, so a wait racing the completion still
-            # wakes; the re-check under req.lock keeps curl_easy_pause off the freed
-            # easy handle).
+            # The caller closed the request channel and we have now drained it. This is the
+            # normal, successful way out of the loop above, not a failure.
+            #
+            # Closing a channel does not throw anything away: take! keeps handing back
+            # whatever is still buffered in it and only raises this exception once the
+            # buffer is empty. So reaching here means every message the caller ever put in
+            # the channel has already been encoded and handed to curl by the loop above.
+            # All that is left to do is tell curl there will be no more.
+            #
+            # Unless the request is already over, in which case there is no longer a handle
+            # to tell and nothing that would wake us up; see the same check in the loop.
             if !req.completed
-                # Wait for any request data to be flushed by curl
+                # Let curl finish copying the last batch out of req.request first.
                 wait(req.curl_done_reading)
 
-                # Marking the stream ended and resuming the transfer must be one critical
-                # section. read_callback only returns 0 (which is what ends the request)
-                # once it sees the stream ended, and the un-pause is what draws that
-                # callback: were the mark to land after the un-pause, a callback in between
-                # would still see an open stream, pause again, and leave the transfer
-                # paused with nobody to resume it, hanging the call until its deadline even
-                # though both peers are done.
+                # Marking the stream ended and resuming the transfer have to happen
+                # together, with nothing able to run in between.
                 #
-                # Nothing in here may block. This holds the lock that serializes every
-                # transfer on the handle, so a task descheduled inside it stalls all of
-                # them. A field write and reset(::Event) are stores, curl_easy_pause with
-                # no paused receive direction draws no callback, and write(::IOBuffer)
-                # above only allocates. close(::Channel) would not qualify, which is why
-                # `request_eof` exists.
+                # curl's read_callback is what actually ends the upload: it reports "no
+                # more data" to curl only once it sees request_eof set, and resuming the
+                # transfer is what makes curl call it. If we resumed first and set the flag
+                # second, a callback landing in between would see a stream that is still
+                # open, pause the transfer again, and go back to sleep with nobody left to
+                # wake it. The call would then sit idle until its deadline even though both
+                # sides are done talking. Holding req.lock, which read_callback also runs
+                # under, closes that window.
+                #
+                # Nothing in here may wait for anything. This is the lock that serializes
+                # every transfer sharing this connection, so if this task were paused while
+                # holding it, all of them would stall behind it. Setting a field and
+                # resuming a transfer both return immediately. Closing a Channel does not
+                # qualify, because it takes the channel's own lock and can wait on it,
+                # which is why end of stream is signalled with the plain `request_eof`
+                # field rather than by closing req.request_c in here.
                 lock(req.lock) do
+                    # The request ended while we were waiting above, so curl has already
+                    # stopped asking for data and there is nobody left to tell
                     req.completed && return
 
                     req.request_eof = true
@@ -110,9 +140,10 @@ function grpc_async_stream_request(
         end
     finally
         close(channel)
-        # However this pump exits, no further request data will ever be staged, so end the
-        # upload the way a normal end of stream does. Under the lock for the same ordering
-        # against read_callback as the end-of-stream handoff above, and idempotent with it.
+        # However this pump exits, including on an error, no further request data will ever
+        # be staged, so end the upload the same way a clean end of stream does. Held under
+        # req.lock for the same reason as above, and harmless to repeat if the end of
+        # stream path already set it.
         lock(req.lock) do
             req.request_eof = true
         end
