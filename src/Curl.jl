@@ -481,12 +481,6 @@ mutable struct gRPCRequest
     # Keeps track of the response stream parsing state
     response_read_header::Bool
     response_compressed::Bool
-    response_length::UInt32
-
-    # Set by read_callback once curl has taken every byte of the request upload buffer, so
-    # the request pump knows the buffer is free and it may stage the next batch. Flow
-    # control only: what keeps the pump's write from racing a read_callback is `lock`
-    curl_done_reading::Event
 
     # Set once the caller's request stream has ended, so no further request data will ever
     # be staged and read_callback should end the upload by returning 0. Only meaningful for
@@ -498,7 +492,18 @@ mutable struct gRPCRequest
     # close acquires the channel's own lock and this section runs while holding the one lock
     # that serializes every transfer on the handle. It also keeps read_callback, which runs
     # inside libcurl, from taking a Channel's lock at all.
+    #
+    # Sits with the other Bools deliberately: `response_length` needs 4-byte alignment, so
+    # there are padding bytes here that this field occupies for free. Placed after
+    # `curl_done_reading` instead it would cost a whole 8-byte slot per request.
     request_eof::Bool
+
+    response_length::UInt32
+
+    # Set by read_callback once curl has taken every byte of the request upload buffer, so
+    # the request pump knows the buffer is free and it may stage the next batch. Flow
+    # control only: what keeps the pump's write from racing a read_callback is `lock`
+    curl_done_reading::Event
 
     # Response headers
     grpc_status::Int64
@@ -743,9 +748,9 @@ mutable struct gRPCRequest
             nothing,
             false,
             false,
+            false,
             0,
             curl_done_reading,
-            false,
             GRPC_OK,
             "",
             grpc,
@@ -876,9 +881,9 @@ mutable struct gRPCRequest
             ex,
             false,
             false,
+            true,
             0,
             Event(),
-            true,
             GRPC_OK,
             "",
             grpc,
