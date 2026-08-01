@@ -46,11 +46,43 @@ end
 const CURL_SEND_PAUSE_BLOCKS_RECV_FROM = v"8.4.0"
 const CURL_SEND_PAUSE_BLOCKS_RECV_BELOW = v"8.6.0"
 
+# libcurl 8.6.0 loses a transfer's pending read interest, which strands a streaming call at
+# the end of the stream: every response has arrived, but the call never completes.
+#
+# `lib/http2.c drain_stream()` sets `data->state.select_bits = CURL_CSELECT_IN|CSELECT_OUT`
+# to mean "I still hold buffered input, run me and read it". `multi_socket()` then records
+# the event the application reports:
+#
+#     /* 8.6.0, lib/multi.c:3245 */   data->state.select_bits  = (unsigned char)ev_bitmask;
+#     /* 8.7.0, lib/multi.c:3170 */   data->state.select_bits |= (unsigned char)ev_bitmask;
+#
+# By that point libcurl has already drained the socket, so the kernel receive queue is empty
+# and the socket is only ever writable. The watcher task therefore reports CURL_CSELECT_OUT
+# alone, and on 8.6.0 that plain assignment overwrites the CURL_CSELECT_IN libcurl staked for
+# itself. `Curl_readwrite` runs the send half only, the buffered HTTP/2 input is never
+# surfaced, and every later writable wake-up overwrites the bit again. The transfer is stuck
+# for good, and because a TCP socket with room in its send buffer is always writable, the
+# watcher spins on it.
+#
+# Fixed upstream in 8.7.0 by the `|=` above: "multi: fix multi_sock handling of select_bits",
+# https://curl.se/bug/?i=12971. The range is closed at both ends and is 8.6.0 alone: 8.4.0
+# and 8.5.0 kept the drain signal in a separate field (`state.dselect_bits`, with the event
+# going to `conn->cselect_bits`), so no assignment could clobber it, and 8.6.0 is the release
+# that merged the two. Verified against the Go test server on Julia 1.11, on the shape that
+# fails 30/30 on 8.6.0: libcurl 7.84.0, 8.4.0, 8.5.0 and 8.7.1 are each 0/30.
+#
+# Julia 1.11 ships 8.6.0 and bundles libcurl as a stdlib, so it cannot simply be upgraded.
+# The workaround is in the watcher task: claim readability when the socket is writable and
+# not readable, so the socket action ORs in the bit libcurl wants rather than erasing it.
+const CURL_SELECT_BITS_CLOBBERED_FROM = v"8.6.0"
+const CURL_SELECT_BITS_CLOBBERED_BELOW = v"8.7.0"
+
 # Resolved in __init__ rather than read off the CURL_VERSION const above, because that const
 # is evaluated during precompilation and baked into the cache. Normally the two agree, since
 # libcurl is bundled with Julia, but they diverge when a different libcurl is loaded under an
 # existing cache, which is exactly how this workaround gets tested.
 const NEEDS_UNPAUSE_WORKAROUND = Ref(false)
+const NEEDS_SELECT_BITS_WORKAROUND = Ref(false)
 
 function _runtime_curl_version()
     m = match(r"^libcurl/(\d+\.\d+\.\d+)\b", unsafe_string(curl_version()))
@@ -1144,9 +1176,24 @@ function socket_callback(
                         FileWatching.FDEvent()
                     end
 
+                    readable = isreadable(events)
+                    writable = iswritable(events)
+
+                    # On a libcurl that clobbers its own select bits, a socket action
+                    # carrying only CURL_CSELECT_OUT throws away the CURL_CSELECT_IN that
+                    # libcurl staked for input it has already buffered internally, and the
+                    # transfer never surfaces it. Claim readability in exactly that case, so
+                    # the action ORs in the bit libcurl is waiting for instead of erasing it.
+                    # See CURL_SELECT_BITS_CLOBBERED_FROM. Costs one extra recv attempt on an
+                    # affected libcurl, which returns EAGAIN when there is genuinely nothing
+                    # to read, the same as any spurious wake-up.
+                    if NEEDS_SELECT_BITS_WORKAROUND[] && writable && !readable
+                        readable = true
+                    end
+
                     flags =
-                        CURL_CSELECT_IN * isreadable(events) +
-                        CURL_CSELECT_OUT * iswritable(events) +
+                        CURL_CSELECT_IN * readable +
+                        CURL_CSELECT_OUT * writable +
                         CURL_CSELECT_ERR * (events.disconnect || events.timedout)
 
                     lock(grpc.lock) do

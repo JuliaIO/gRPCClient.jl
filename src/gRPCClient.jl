@@ -110,6 +110,8 @@ function __init__()
     let curl = _runtime_curl_version()
         NEEDS_UNPAUSE_WORKAROUND[] =
             CURL_SEND_PAUSE_BLOCKS_RECV_FROM <= curl < CURL_SEND_PAUSE_BLOCKS_RECV_BELOW
+        NEEDS_SELECT_BITS_WORKAROUND[] =
+            CURL_SELECT_BITS_CLOBBERED_FROM <= curl < CURL_SELECT_BITS_CLOBBERED_BELOW
     end
     grpc_init()
     return grpc_register_service_codegen()
