@@ -179,7 +179,7 @@ module TestService
     function TestClientStreamRPC(host::AbstractString, port::Integer; kws...)
         TestClientStreamRPC(gRPCChannel(host, port); kws...)
     end
-    Base.put!(handle::gRPCClient.gRPCCallHandle{typeof(TestClientStreamRPC)}, msg::TestRequest) = gRPCClient._put!(handle, msg)
+    Base.put!(handle::gRPCClient.gRPCCallHandle{typeof(TestClientStreamRPC)}, msg::TestRequest; kws...) = gRPCClient._put!(handle, msg; kws...)
     @doc gRPCClient.grpc_generate_rpc_docstring(TestClientStreamRPC) TestClientStreamRPC
     gRPCClient.rpc_path(::Type{typeof(TestClientStreamRPC)}) = "/test.TestService/TestClientStreamRPC"
     gRPCClient.isstreaming_request(::Type{typeof(TestClientStreamRPC)}) = true
@@ -196,7 +196,7 @@ module TestService
     function TestBidirectionalStreamRPC(host::AbstractString, port::Integer; kws...)
         TestBidirectionalStreamRPC(gRPCChannel(host, port); kws...)
     end
-    Base.put!(handle::gRPCClient.gRPCCallHandle{typeof(TestBidirectionalStreamRPC)}, msg::TestRequest) = gRPCClient._put!(handle, msg)
+    Base.put!(handle::gRPCClient.gRPCCallHandle{typeof(TestBidirectionalStreamRPC)}, msg::TestRequest; kws...) = gRPCClient._put!(handle, msg; kws...)
     @doc gRPCClient.grpc_generate_rpc_docstring(TestBidirectionalStreamRPC) TestBidirectionalStreamRPC
     gRPCClient.rpc_path(::Type{typeof(TestBidirectionalStreamRPC)}) = "/test.TestService/TestBidirectionalStreamRPC"
     gRPCClient.isstreaming_request(::Type{typeof(TestBidirectionalStreamRPC)}) = true

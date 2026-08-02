@@ -127,7 +127,7 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
                 function $(rpc.name)(host::AbstractString, port::Integer; kws...)
                     $(rpc.name)(gRPCChannel(host, port); kws...)
                 end
-                Base.put!(handle::gRPCClient.gRPCCallHandle{typeof($(rpc.name))}, msg::$(request_type)) = gRPCClient._put!(handle, msg)
+                Base.put!(handle::gRPCClient.gRPCCallHandle{typeof($(rpc.name))}, msg::$(request_type); kws...) = gRPCClient._put!(handle, msg; kws...)
             """)
         elseif !rpc.request_stream && rpc.response_stream
             print(io, """
@@ -146,7 +146,7 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
                 function $(rpc.name)(host::AbstractString, port::Integer; kws...)
                     $(rpc.name)(gRPCChannel(host, port); kws...)
                 end
-                Base.put!(handle::gRPCClient.gRPCCallHandle{typeof($(rpc.name))}, msg::$(request_type)) = gRPCClient._put!(handle, msg)
+                Base.put!(handle::gRPCClient.gRPCCallHandle{typeof($(rpc.name))}, msg::$(request_type); kws...) = gRPCClient._put!(handle, msg; kws...)
             """)
         end
         println(io, """
@@ -218,8 +218,8 @@ function Base.show(io::IO, rpc::gRPCCallHandle)
         print(io, """
         $(typeof(rpc))(...) with:
          RPC           : $(parentmodule(f)).$(nameof(f))
-         Request type  : $(isstreaming_request(rpc) ? "stream" : "") $(request_type(rpc))
-         Response type : $(isstreaming_response(rpc) ? "stream" : "") $(response_type(rpc))
+         Request type  : $(isstreaming_request(rpc) ? "stream " : "unary ")$(request_type(rpc))
+         Response type : $(isstreaming_response(rpc) ? "stream " : "unary ")$(response_type(rpc))
          Status        : $(GRPC_CODE_TABLE[rpc.req.grpc_status])
          Completed     : $(rpc.req.completed)""")
     end
@@ -231,41 +231,110 @@ const UnaryResponseRPC = Union{gRPCUnaryHandle, gRPCStreamRequestHandle}
 const StreamingResponseRPC = Union{gRPCStreamResponseHandle, gRPCBidirectionalStreamHandle}
 
 """
-Block on RPCs with unary responses. 
+    close(rpc::gRPCCallHandle)
 
-Throws any error found during the call. Returns the result for 
-RPCs with unary responses. 
+Waits for `rpc` to be closed by the server and throw any exception caught. 
+
+Notice that `close(rpc)` may block forever on RPC's, as it depends on 
+the call being shut down by the server logic. In such cases, 
+`detach(rpc)` may be a better option. 
 """
 function Base.close(rpc::gRPCCallHandle)
     isstreaming_request(rpc) && close(rpc.request_channel)
-    return if isstreaming_response(rpc)
+    try
         grpc_async_await(rpc.req)
+    finally
         # this will be closed by a task anyway, but
         # its better to ensure it is closed before this 
         # function returns.
-        close(rpc.response_channel)
-    else
-        grpc_async_await(rpc.req, response_type(rpc))
+        if isstreaming_response(rpc)
+            close(rpc.response_channel)
+        end
     end
 end
-function Base.kill(rpc::gRPCCallHandle)
+
+"""
+    detach(rpc::gRPCCallHandle)
+
+Immediately cancels an RPC. 
+
+Most future operations `rpc` will throw an exception. 
+
+The server will be notified that the client is no longer 
+interested in further responses. 
+"""
+function Base.detach(rpc::gRPCCallHandle)
     isstreaming_request(rpc) && close(rpc.request_channel)
     grpc_cancel(rpc.req)# TODO: also close channels
     isstreaming_response(rpc) && close(rpc.response_channel)
     return nothing
 end
 
+"""
+    isopen(rpc::gRPCCallHandle)
+
+Tells whether `rpc` is still in a state where it may receive a response. 
+
+If false, either all responses have been received or an error has occured.
+"""
 function Base.isopen(rpc::gRPCCallHandle)
     lock(rpc.req.grpc.lock) do # TODO: What is the correct lock?
         !rpc.req.completed
     end
 end
 
-_put!(rpc::StreamingRequestRPC, msg) = put!(rpc.request_channel, msg)
+# Overload of Base.put! should be in generated code to  
+# enable IDE suggestions of msg type. 
+function _put!(rpc::StreamingRequestRPC, msg; done::Bool = false) 
+    put!(rpc.request_channel, msg)
+    # TODO: Show error if the channel was closed due to e.g. curl errors
+    done && close(rpc.request_channel)
+    return nothing
+end
+
+"""
+    put!(rpc::gRPCBidirectionalStreamHandle, msg[; done::Bool = false])
+    put!(rpc::gRPCStreamRequestHandle      , msg[; done::Bool = false])
+    put!(rpc::gRPCBidirectionalStreamHandle[; done::Bool = false])
+    put!(rpc::gRPCStreamRequestHandle      [; done::Bool = false])
+
+Sends a request message `msg` (if provided) over a client-streaming RPC. 
+
+If `done = true`, the server will be notified that the client is done
+sending more messages. Future calls to `put!` will result in an exception. 
+"""
+function Base.put!(rpc::StreamingRequestRPC; done::Bool = false)
+    done && close(rpc.request_channel)
+    return nothing
+end
+
+"""
+    isfull(rpc::gRPCStreamRequestHandle)
+    isfull(rpc::gRPCBidirectionalStreamHandle)
+
+Tells whether the request channel of `rpc` is full. 
+
+If `true`, a subsequent call to `put!` will likely be blocking.
+If `false`, a subsequent call to `put!` will not be blocking. 
+""" 
 @static if @isdefined(isfull) # Not available in 1.10
     Base.isfull(rpc::StreamingRequestRPC) = isfull(rpc.request_channel)
 end
-Base.detach(rpc::StreamingRequestRPC) = close(rpc.request_channel)
+
+"""
+    fetch(rpc::gRPCUnaryHandle)
+    fetch(rpc::gRPCStreamRequestHandle)
+
+Reads the response of `rpc`, cleanup resources and throw any exception caught. 
+
+If the response of `rpc` is not of interest, `close` may be used to avoid decoding. 
+"""
+function Base.fetch(rpc::UnaryResponseRPC)
+    if isstreaming_request(rpc)
+        put!(rpc, done = true)
+    end
+    grpc_async_await(rpc.req, response_type(rpc))
+end
 
 for f in (:take!, :wait, :fetch, :isready)
     eval(quote
@@ -287,6 +356,28 @@ for f in (:take!, :wait, :fetch, :isready)
         end
     end)
 end
+
+@doc """
+    take!(rpc::gRPCStreamResponseHandle)
+    take!(rpc::gRPCBidirectionalStreamHandle)
+
+Takes a response and removes it from the queue. 
+""" Base.take!
+
+@doc """
+    fetch(rpc::gRPCStreamResponseHandle)
+    fetch(rpc::gRPCBidirectionalStreamHandle)
+
+Takes a response and removes it from the queue. 
+""" Base.take!
+
+@doc """
+
+""" Base.take!
+
+@doc """
+
+""" Base.take!
 
 @inline function _client(chan, Trpc; kws...)
     return gRPCServiceClient{request_type(Trpc), isstreaming_request(Trpc), response_type(Trpc), isstreaming_response(Trpc)}(
