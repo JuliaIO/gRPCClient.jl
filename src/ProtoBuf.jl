@@ -149,13 +149,15 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
                 Base.put!(handle::gRPCClient.gRPCCallHandle{typeof($(rpc.name))}, msg::$(request_type); kws...) = gRPCClient._put!(handle, msg; kws...)
             """)
         end
-        println(io, """
-            @doc gRPCClient.grpc_generate_rpc_docstring($(rpc.name)) $(rpc.name)
+        print(io, """
             gRPCClient.rpc_path(::Type{typeof($(rpc.name))}) = "/$namespace.$service_name/$(rpc.name)"
             gRPCClient.isstreaming_request(::Type{typeof($(rpc.name))}) = $(rpc.request_stream)
             gRPCClient.isstreaming_response(::Type{typeof($(rpc.name))}) = $(rpc.response_stream)
             gRPCClient.request_type(::Type{typeof($(rpc.name))}) = $request_type
             gRPCClient.response_type(::Type{typeof($(rpc.name))}) = $response_type
+        """)
+        println(io, """
+            @doc gRPCClient.grpc_generate_rpc_docstring(typeof($(rpc.name)), "$(request_type)", "$(response_type)") $(rpc.name)
             export $(rpc.name)
 
         """)
@@ -231,13 +233,30 @@ const UnaryResponseRPC = Union{gRPCUnaryHandle, gRPCStreamRequestHandle}
 const StreamingResponseRPC = Union{gRPCStreamResponseHandle, gRPCBidirectionalStreamHandle}
 
 """
+    gRPCAsync()
+
+Singleton struct for flagging that a Unary RPC should be called asynchronously.
+
+# Example: 
+```
+chan = gRPCChannel(host, port)
+rpc = MyService.MyRPC(chan, RequestType(...), gRPCAsync())
+response = fetch(rpc)
+```
+"""
+struct gRPCAsync end
+export gRPCAsync
+function rpc_path end
+function request_type end
+function response_type end
+"""
     close(rpc::gRPCCallHandle)
 
 Waits for `rpc` to be closed by the server and throw any exception caught. 
 
 Notice that `close(rpc)` may block forever on RPC's, as it depends on 
 the call being shut down by the server logic. In such cases, 
-`detach(rpc)` may be a better option. 
+[`detach(rpc)`](@ref) may be a better option. 
 """
 function Base.close(rpc::gRPCCallHandle)
     isstreaming_request(rpc) && close(rpc.request_channel)
@@ -264,6 +283,9 @@ The server will be notified that the client is no longer
 interested in further responses. 
 """
 function Base.detach(rpc::gRPCCallHandle)
+    if rpc.req.completed && !isnothing(rpc.req.ex)
+        throw(rpc.req.ex)
+    end
     isstreaming_request(rpc) && close(rpc.request_channel)
     grpc_cancel(rpc.req)# TODO: also close channels
     isstreaming_response(rpc) && close(rpc.response_channel)
@@ -327,13 +349,37 @@ end
 
 Reads the response of `rpc`, cleanup resources and throw any exception caught. 
 
+If the `rpc` has streaming requests, the request stream will be closed.
+
 If the response of `rpc` is not of interest, `close` may be used to avoid decoding. 
 """
 function Base.fetch(rpc::UnaryResponseRPC)
     if isstreaming_request(rpc)
         put!(rpc, done = true)
     end
-    grpc_async_await(rpc.req, response_type(rpc))
+    return grpc_async_await(rpc.req, response_type(rpc))
+end
+
+"""
+    wait(rpc::gRPCUnaryHandle)
+    wait(rpc::gRPCStreamRequestHandle)
+
+Waits for an RPC with unary response to be ready to return its response. 
+"""
+function Base.wait(rpc::UnaryResponseRPC)
+    wait(rpc.req)
+    !isnothing(rpc.req.ex) && throw(rpc.req.ex)
+    return nothing
+end
+
+"""
+    isready(rpc::gRPCUnaryHandle)
+    isready(rpc::gRPCStreamRequestHandle)
+
+Check whether `fetch(rpc)` is ready to return a response (or throw an exception) once called. 
+"""
+function Base.isready(rpc::UnaryResponseRPC)
+    return rpc.req.completed && !isnothing(rpc.ret) && isnothing(rpc.ret)
 end
 
 for f in (:take!, :wait, :fetch, :isready)
@@ -361,23 +407,32 @@ end
     take!(rpc::gRPCStreamResponseHandle)
     take!(rpc::gRPCBidirectionalStreamHandle)
 
-Takes a response and removes it from the queue. 
+Remove and return a recevied response from a stream. Blocks unless a response is already available. 
 """ Base.take!
 
 @doc """
     fetch(rpc::gRPCStreamResponseHandle)
     fetch(rpc::gRPCBidirectionalStreamHandle)
 
-Takes a response and removes it from the queue. 
-""" Base.take!
+Return a recevied response from a response stream. Blocks unless a response is already available. 
+
+Note that `fetch` does not remove the response, so repeated calls will return the same
+value. In most scenarios, [`take!`](@ref) is the preferred option for response streams. 
+""" Base.fetch
 
 @doc """
+    wait(rpc::gRPCStreamResponseHandle)
+    wait(rpc::gRPCBidirectionalStreamHandle)
 
-""" Base.take!
+Wait until a response becomes available. 
+""" Base.wait
 
 @doc """
+    isready(rpc::gRPCStreamResponseHandle)
+    isready(rpc::gRPCBidirectionalStreamHandle)
 
-""" Base.take!
+Tells whether the response stream has a message available which has not yet been removed by `take!`.
+""" Base.isready
 
 @inline function _client(chan, Trpc; kws...)
     return gRPCServiceClient{request_type(Trpc), isstreaming_request(Trpc), response_type(Trpc), isstreaming_response(Trpc)}(
@@ -438,29 +493,131 @@ function grpc_call_bidirectional_stream(chan::gRPCChannel, ::Type{Trpc}; respons
     )
 end
 
-"""
-    gRPCAsync()
+function grpc_generate_rpc_docstring(Trpc::DataType, request_type_displayed::AbstractString, response_type_displayed::AbstractString)
+    # request_type_displayed & response_type_displayed should be the name of the 
+    # types with namespaces as it is printed where the function is defined. 
+    if !isstreaming_request(Trpc) && !isstreaming_response(Trpc)
+        return _docstring_unary(Trpc, request_type_displayed, response_type_displayed)
+    elseif isstreaming_request(Trpc) && !isstreaming_response(Trpc)
+        return _docstring_clientstream(Trpc, request_type_displayed, response_type_displayed)
+    elseif !isstreaming_request(Trpc) && isstreaming_response(Trpc)
+        return _docstring_serverstream(Trpc, request_type_displayed, response_type_displayed)
+    else # bidirectional
+        return _docstring_bidirectional(Trpc, request_type_displayed, response_type_displayed)
+    end
+end
 
-Singleton struct for flagging that a Unary RPC should be called asynchronously.
+function _docstring_unary(@nospecialize(Trpc), request_type_displayed, response_type_displayed)
+    fname = "$(nameof(parentmodule(Trpc.instance))).$(nameof(Trpc.instance))"
+    Treq = request_type(Trpc)
+    return """
+        $fname(chan::gRPCChannel, req::$(Treq))
 
-# Example: 
-```
-chan = gRPCChannel(host, port)
-rpc = MyService.MyRPC(chan, RequestType(...), gRPCAsync())
-response = close(rpc)
-```
-"""
-struct gRPCAsync end
-export gRPCAsync
-function rpc_path end
-function request_type end
-function response_type end
-@inline rpc_path(f::Function) = rpc_path(typeof(f))
-@inline isstreaming_request(f::Function) = isstreaming_request(typeof(f))
-@inline isstreaming_response(f::Function) = isstreaming_response(typeof(f))
-@inline request_type(f::Function) = request_type(typeof(f))
-@inline response_type(f::Function) = response_type(typeof(f))
+    Auto-generated remote procedure call (RPC) for use with `gRPCCLient.jl`. 
+    
+    # Signature
 
-function grpc_generate_rpc_docstring(rpc::Function)
-    return "This is the docstring for $(nameof(rpc))"
+    |                | Unary/stream  | Type  | 
+    |---------------|-------------|------|
+    | Request  | unary | $request_type_displayed |
+    | Response | unary | $response_type_displayed |
+
+    # Examples
+    #### Synchronous call
+    ```julia
+    using gRPCClient
+    
+    # Set up connection properties
+    chan = gRPCChannel(host, port)
+
+    # Request message
+    msg = $(Treq)($(join(fieldnames(Treq), ", ")))
+    
+    # Call and return the response
+    response = $fname(chan, msg)
+    ```
+    
+    #### Asynchronous call
+    ```julia
+    using gRPCClient
+    
+    # Set up connection properties
+    chan = gRPCChannel(host, port)
+
+    # Request message
+    msg = $(Treq)($(join(fieldnames(Treq), ", ")))
+    
+    # Initiate call
+    rpc = $fname(chan, msg, gRPCAsync())
+
+    # Optional
+    isready(rpc) # got the response yet?
+    isopen(rpc) # all communication done?
+    wait(rpc) # wait until response becomes available
+
+    # Wait for a response to become available, return it, clean up resources. 
+    response = fetch(rpc)
+    ```
+
+    #### Multiplexed asynchronous
+    Perform multiple calls and receive responses in any order. 
+    ```
+    TODO
+    ```
+    """
+end
+
+function _docstring_clientstream(@nospecialize(Trpc), request_type_displayed, response_type_displayed)
+    fname = "$(nameof(parentmodule(Trpc.instance))).$(nameof(Trpc.instance))"
+    Treq = request_type(Trpc)
+    return """
+        $fname(chan::gRPCChannel, req::$(Treq))
+
+    Auto-generated remote procedure call (RPC) for use with `gRPCCLient.jl`. 
+
+    # Signature
+    
+    |                | Unary/stream  | Type  | 
+    |---------------|-------------|------|
+    | Request  | stream | $request_type_displayed |
+    | Response | unary | $response_type_displayed |
+
+    TODO
+    """
+end
+
+function _docstring_serverstream(@nospecialize(Trpc), request_type_displayed, response_type_displayed)
+    fname = "$(nameof(parentmodule(Trpc.instance))).$(nameof(Trpc.instance))"
+    Treq = request_type(Trpc)
+    return """
+        $fname(chan::gRPCChannel, req::$(Treq))
+
+     # Signature
+    
+    |                | Unary/stream  | Type  | 
+    |---------------|-------------|------|
+    | Request  | unary | $request_type_displayed |
+    | Response | stream | $response_type_displayed |
+
+    TODO
+    """
+end
+
+function _docstring_bidirectional(@nospecialize(Trpc), request_type_displayed, response_type_displayed)
+    fname = "$(nameof(parentmodule(Trpc.instance))).$(nameof(Trpc.instance))"
+    Treq = request_type(Trpc)
+    return """
+        $fname(chan::gRPCChannel, req::$(Treq))
+
+    Auto-generated remote procedure call (RPC) for use with `gRPCCLient.jl`. 
+
+    # Signature
+    
+    |                | Unary/stream  | Type  | 
+    |---------------|-------------|------|
+    | Request  | stream | $request_type_displayed |
+    | Response | stream | $response_type_displayed |
+
+    TODO
+    """
 end
