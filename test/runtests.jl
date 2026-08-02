@@ -271,14 +271,14 @@ include("gen/test/test_pb.jl")
 
         # async
         rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
-        resp = close(rpc)
+        resp = fetch(rpc)
         @test resp.data == [1]
 
         # Killing
         rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
         @test !rpc.req.completed
-        kill(rpc)
-        @test_throws gRPCException close(rpc)
+        detach(rpc)
+        @test_throws gRPCException fetch(rpc)
         @test rpc.req.completed
 
         # store response in channel
@@ -300,59 +300,114 @@ include("gen/test/test_pb.jl")
         for i = 1:4
             put!(rpc, TestRequest(1, [1]))
         end
-        response = close(rpc)
+        response = fetch(rpc)
         @test response.data == 1:4
+
+        # detaching
+        rpc = TestService.TestClientStreamRPC(chan)
+        @test isopen(rpc)
+        detach(rpc)
+        timedwait(() -> !isopen(rpc), 0.01, pollint = 0.001)
+        @test !isopen(rpc)
+        @test rpc.req.ex.grpc_status == GRPC_CANCELLED
+        @test_throws Any put!(rpc, TestRequest(1, [1])) # TODO Exception type should be gRPCServiceCallException
+
+        # Ending request stream
+        rpc = TestService.TestClientStreamRPC(chan)
+        put!(rpc, TestRequest(1, [1]))
+        put!(rpc, TestRequest(1, [1]), done = true)
+        @test :ok == timedwait(() -> isopen(rpc), 0.01, pollint = 0.001)
+        
+        rpc = TestService.TestClientStreamRPC(chan)
+        put!(rpc, TestRequest(1, [1]))
+        put!(rpc, TestRequest(1, [1]))
+        put!(rpc, done = true)
+        @test :ok == timedwait(() -> isopen(rpc), 0.01, pollint = 0.001)
     end
 
-    @testset "Simple API: Streaming request" begin
+    @testset "Simple API: Streaming response" begin
         # Streaming response
         chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
         rpc = TestService.TestServerStreamRPC(chan, TestRequest(4, [1]))
+        @test isopen(rpc)
+        # Server should send 4 responses pretty immediately
         for i = 1:4
             resp = take!(rpc)
             @test length(resp.data) == i
         end
+        @test :ok == timedwait(() -> !isopen(rpc), 0.01, pollint = 0.001)
+        close(rpc)
+
+         # Testing fetch and take!
+        rpc = TestService.TestServerStreamRPC(chan, TestRequest(1, [1]))
+        waittask = Threads.@spawn wait(rpc) # Allows us to check if wait(rpc) is done
+        @test !istaskdone(waittask)
+        @test !isready(rpc) # If this runs immediately after put!, it should be true
+        # wait, but with a time limit to ensure CI ends quickly
+        @test :ok == timedwait(() -> istaskdone(waittask), 0.1, pollint = 0.001)
+        @test isready(rpc) # response stream should be ready
+        resp1 = fetch(rpc) # Get data without removing
+        resp2 = take!(rpc) # Get data again, also remove
+        @test resp1.data == resp2.data == [1]
+        @test !isopen(rpc)
     end
 
     @testset "Simple API: Bidirectional" begin
         chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
 
         # Minimal example
-        rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
+        rpc = TestService.TestBidirectionalStreamRPC(chan)
         put!(rpc, TestRequest(1, [1]))
         resp = take!(rpc)
         @test resp.data == [1]
-        close(rpc)
-
-        # Testing larger set of methods
-        rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
-        @test !isfull(rpc)
-        put!(rpc, TestRequest(1, [1]))
-        @test isfull(rpc) # If this runs immediately after put!, it should be true
-        @test !isready(rpc) # If this runs immediately after put!, it should be true
-        wait(rpc) # Wait until a response is available
-        @test !isfull(rpc) # If we got a response, the request stream should have been cleared
-        @test isready(rpc) # response stream should be ready
-        resp1 = fetch(rpc) # Get data without removing
-        resp2 = take!(rpc) # Get data again, also remove
-        @test resp1.data == resp2.data == [1]
-        @test !rpc.req.completed # The rpc should still be active and ready for new requests
-        @test isopen(rpc.response_channel)
-        kill(rpc)
-        @test rpc.req.completed # Stream should be done
-        # response stream should have been closed by the response task 
-        timedwait(() -> !isopen(rpc.response_channel), 0.01)
-        @test !isopen(rpc.response_channel) 
-        # Check that we get information about _why_ stream was killed
-        @test_throws gRPCException take!(rpc)
-
-        # Check that we can close immediately and 
-        rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
         close(rpc)
         @test rpc.req.completed # Stream should be done
         @test !isopen(rpc.response_channel) 
         # Check that we get information about _why_ stream was closed
         @test_throws gRPCException take!(rpc)
+
+        # detaching
+        rpc = TestService.TestBidirectionalStreamRPC(chan)
+        @test isopen(rpc)
+        detach(rpc)
+        timedwait(() -> !isopen(rpc.response_channel), 0.01, pollint = 0.001)
+        @test !isopen(rpc)
+        @test rpc.req.ex.grpc_status == GRPC_CANCELLED
+        @test_throws gRPCException take!(rpc)
+        
+        # Testing isfull
+        rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
+        @isdefined(isfull) && @test !isfull(rpc)
+        put!(rpc, TestRequest(1, [1]))
+        @test isfull(rpc) # If this runs immediately after put!, it should be true
+        @test :ok == timedwait(() -> !isfull(rpc), 0.01, pollint = 0.001) # Sooner or later, the request should have been handled
+        close(rpc)
+
+        # Ending request stream
+        rpc = TestService.TestBidirectionalStreamRPC(chan)
+        put!(rpc, TestRequest(1, [1]))
+        put!(rpc, TestRequest(1, [1]), done = true)
+        @test :ok == timedwait(() -> isopen(rpc), 0.1, pollint = 0.001)
+
+        rpc = TestService.TestBidirectionalStreamRPC(chan)
+        put!(rpc, TestRequest(1, [1]))
+        put!(rpc, TestRequest(1, [1]))
+        put!(rpc, done = true)
+        @test :ok == timedwait(() -> isopen(rpc), 0.1, pollint = 0.001)
+
+        # Testing fetch and take!
+        rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
+        waittask = Threads.@spawn wait(rpc) # Allows us to check if wait(rpc) is done
+        @test !istaskdone(waittask)
+        put!(rpc, TestRequest(1, [1]))
+        @test !isready(rpc) # If this runs immediately after put!, it should be true
+        # wait, but with a time limit to ensure CI ends quickly
+        @test :ok == timedwait(() -> istaskdone(waittask), 0.1, pollint = 0.001)
+        @test isready(rpc) # response stream should be ready
+        resp1 = fetch(rpc) # Get data without removing
+        resp2 = take!(rpc) # Get data again, also remove
+        @test resp1.data == resp2.data == [1]
+        @test !rpc.req.completed # The rpc should still be active and ready for new requests
     end
 
     # The streaming stress tests move ~1000 messages (or ~160MB) through a single
