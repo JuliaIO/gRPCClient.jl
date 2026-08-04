@@ -155,9 +155,11 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
             gRPCClient.isstreaming_response(::Type{typeof($(rpc.name))}) = $(rpc.response_stream)
             gRPCClient.request_type(::Type{typeof($(rpc.name))}) = $request_type
             gRPCClient.response_type(::Type{typeof($(rpc.name))}) = $response_type
+            gRPCClient.request_type_displayname(::Type{typeof($(rpc.name))}) = "$(request_type)"
+            gRPCClient.response_type_displayname(::Type{typeof($(rpc.name))}) = "$(response_type)"
         """)
         println(io, """
-            @doc gRPCClient.grpc_generate_rpc_docstring(typeof($(rpc.name)), "$(request_type)", "$(response_type)") $(rpc.name)
+            @doc gRPCClient.grpc_generate_rpc_docstring(typeof($(rpc.name))) $(rpc.name)
             export $(rpc.name)
 
         """)
@@ -180,11 +182,16 @@ grpc_register_service_codegen() = CodeGenerators.register_external_codegen_handl
     service_cb = service_cb,
 )
 
+"""
+    gRPCChannel(host::AbstractString, port::Integer[; grpc = gRPCCURL()])
+
+TODO
+"""
 struct gRPCChannel
     host::String
     port::Int
     grpc::gRPCCURL
-    function gRPCChannel(host::AbstractString, port::Integer; grpc = grpc_global_handle())
+    function gRPCChannel(host::AbstractString, port::Integer; grpc = gRPCCURL())
         new(host, port, grpc)
     end
 end
@@ -249,12 +256,15 @@ export gRPCAsync
 function rpc_path end
 function request_type end
 function response_type end
+function request_type_displayname end
+function response_type_displayname end
+
 """
     close(rpc::gRPCCallHandle)
 
 Waits for `rpc` to be closed by the server and throw any exception caught. 
 
-Notice that `close(rpc)` may block forever on RPC's, as it depends on 
+Note that `close(rpc)` may block forever, as it depends on 
 the call being shut down by the server logic. In such cases, 
 [`detach(rpc)`](@ref) may be a better option. 
 """
@@ -493,9 +503,12 @@ function grpc_call_bidirectional_stream(chan::gRPCChannel, ::Type{Trpc}; respons
     )
 end
 
-function grpc_generate_rpc_docstring(Trpc::DataType, request_type_displayed::AbstractString, response_type_displayed::AbstractString)
+function grpc_generate_rpc_docstring(Trpc::DataType)
     # request_type_displayed & response_type_displayed should be the name of the 
     # types with namespaces as it is printed where the function is defined. 
+    request_type_displayed = request_type_displayname(Trpc)
+    response_type_displayed = response_type_displayname(Trpc)
+
     if !isstreaming_request(Trpc) && !isstreaming_response(Trpc)
         return _docstring_unary(Trpc, request_type_displayed, response_type_displayed)
     elseif isstreaming_request(Trpc) && !isstreaming_response(Trpc)
@@ -527,11 +540,11 @@ function _docstring_unary(@nospecialize(Trpc), request_type_displayed, response_
     ```julia
     using gRPCClient
     
-    # Set up connection properties
+    # Set up connection properties (reusable)
     chan = gRPCChannel(host, port)
 
     # Request message
-    msg = $(Treq)($(join(fieldnames(Treq), ", ")))
+    msg = $(request_type_displayed)($(join(fieldnames(Treq), ", ")))
     
     # Call and return the response
     response = $fname(chan, msg)
@@ -541,29 +554,48 @@ function _docstring_unary(@nospecialize(Trpc), request_type_displayed, response_
     ```julia
     using gRPCClient
     
-    # Set up connection properties
+    # Set up connection properties (reusable)
     chan = gRPCChannel(host, port)
 
     # Request message
-    msg = $(Treq)($(join(fieldnames(Treq), ", ")))
+    msg = $(request_type_displayed)($(join(fieldnames(Treq), ", ")))
     
     # Initiate call
     rpc = $fname(chan, msg, gRPCAsync())
-
-    # Optional
-    isready(rpc) # got the response yet?
-    isopen(rpc) # all communication done?
-    wait(rpc) # wait until response becomes available
 
     # Wait for a response to become available, return it, clean up resources. 
     response = fetch(rpc)
     ```
 
-    #### Multiplexed asynchronous
-    Perform multiple calls and receive responses in any order. 
+    #### Out-of-order asynchronous
+    Perform multiple calls and read responses in the order in which they arrive. 
     ```
-    TODO
+    using gRPCClient
+    
+    # Set up connection properties (reusable)
+    chan = gRPCChannel(host, port)
+
+    # Set up channel for collecting responses
+    response_ch = Channel{gRPCAsyncChannelResponse{$(response_type_displayed)}}(16)
+
+    # Request message
+    msg = $(request_type_displayed)($(join(fieldnames(Treq), ", ")))
+
+    index = 1
+    rpc = $fname(chan, msg, ch, index)
+    index = 2
+    rpc = $fname(chan, msg, ch, index)
+
+    # Responses should now be stored in `response_ch` in the order of arrival
+    resp = take!(response_ch) 
+    resp.data # Response
+    resp.index # The associated index
+
+    # Cleanup
+    close(rpc)
     ```
+
+    See also [`isfull`](@ref), [`isopen`](@ref), [`wait`](@ref), [`isready`](@ref) and [`detach`](@ref).
     """
 end
 
@@ -582,7 +614,26 @@ function _docstring_clientstream(@nospecialize(Trpc), request_type_displayed, re
     | Request  | stream | $request_type_displayed |
     | Response | unary | $response_type_displayed |
 
-    TODO
+    # Example
+    ```julia
+    using gRPCClient
+    
+    # Set up connection properties (reusable)
+    chan = gRPCChannel(host, port)
+
+    # Initiate call
+    rpc = $fname(chan)
+
+    # Stream data
+    put!(rpc, $(request_type_displayed)($(join(fieldnames(Treq), ", ")))
+    put!(rpc, $(request_type_displayed)($(join(fieldnames(Treq), ", ")))
+    put!(rpc, done = true) # optional, signals to server that the request stream is closed. 
+    
+    # Wait for a response to become available, return it, clean up resources. 
+    response = fetch(rpc)
+    ```
+
+    See also [`isfull`](@ref), [`isopen`](@ref), [`wait`](@ref), [`isready`](@ref), [`close`](@ref) and [`detach`](@ref).
     """
 end
 
@@ -599,7 +650,30 @@ function _docstring_serverstream(@nospecialize(Trpc), request_type_displayed, re
     | Request  | unary | $request_type_displayed |
     | Response | stream | $response_type_displayed |
 
-    TODO
+    # Example
+
+    ```
+    using gRPCClient
+    # Set up connection properties (reusable)
+    chan = gRPCChannel(host, port)
+
+    # Request message
+    msg = $(request_type_displayed)($(join(fieldnames(Treq), ", ")))
+    
+    # Initiate call
+    rpc = $fname(chan, msg)
+
+    # Receive responses
+    resp1 = take!(rpc)
+    resp2 = take!(rpc)
+
+    # Wait for server to close the call
+    close(rpc)
+    # or cancel without waiting for the server
+    detach(rpc)
+    ```
+    
+    See also [`isfull`](@ref), [`isopen`](@ref), [`wait`](@ref), [`isready`](@ref) and [`fetch`](@ref).
     """
 end
 
@@ -618,6 +692,30 @@ function _docstring_bidirectional(@nospecialize(Trpc), request_type_displayed, r
     | Request  | stream | $request_type_displayed |
     | Response | stream | $response_type_displayed |
 
-    TODO
+    # Example
+
+    ```julia
+    using gRPCClient
+    
+    # Set up connection properties (reusable)
+    chan = gRPCChannel(host, port)
+
+    # Initiate call
+    rpc = $fname(chan)
+
+    # Stream and receive data (in any order)
+    put!(rpc, $(request_type_displayed)($(join(fieldnames(Treq), ", ")))
+    resp1 = take!(rpc)
+    put!(rpc, $(request_type_displayed)($(join(fieldnames(Treq), ", ")))
+    put!(rpc, done = true) # optional, signals to server that the request stream is closed. 
+    resp2 = take!(rpc)
+    
+    # Wait for server to close the call
+    close(rpc)
+    # or cancel without waiting for the server
+    detach(rpc)
+    ```
+
+    See also [`isfull`](@ref), [`isopen`](@ref), [`wait`](@ref), [`isready`](@ref) and [`fetch`](@ref).
     """
 end
