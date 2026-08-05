@@ -92,7 +92,7 @@ else
     @warn "Julia $(VERSION) <= 1.12, streaming support is disabled: https://github.com/JuliaIO/gRPCClient.jl/issues/68"
 end
 
-include("gRPCCallHandle.jl")
+include("CallHandles.jl")
 include("ProtoBuf.jl")
 
 export grpc_init

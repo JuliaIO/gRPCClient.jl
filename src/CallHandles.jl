@@ -19,35 +19,35 @@ Supertype for all call handles (stream/unary)
 
 TODO
 """ 
-abstract type gRPCCallHandle{Trpc} end
-isstreaming_request(::gRPCCallHandle{Trpc}) where Trpc = isstreaming_request(Trpc)
-isstreaming_response(::gRPCCallHandle{Trpc}) where Trpc = isstreaming_response(Trpc)
-request_type(::gRPCCallHandle{Trpc}) where Trpc = request_type(Trpc)
-response_type(::gRPCCallHandle{Trpc}) where Trpc = response_type(Trpc)
+abstract type AbstractgRPCCall{Trpc} end
+isstreaming_request(::AbstractgRPCCall{Trpc}) where Trpc = isstreaming_request(Trpc)
+isstreaming_response(::AbstractgRPCCall{Trpc}) where Trpc = isstreaming_response(Trpc)
+request_type(::AbstractgRPCCall{Trpc}) where Trpc = request_type(Trpc)
+response_type(::AbstractgRPCCall{Trpc}) where Trpc = response_type(Trpc)
 
-struct gRPCUnaryHandle{Trpc} <: gRPCCallHandle{Trpc}
+struct gRPCUnaryCall{Trpc} <: AbstractgRPCCall{Trpc}
     req::gRPCRequest
 end
-struct gRPCStreamRequestHandle{Trpc, TRequest} <: gRPCCallHandle{Trpc}
+struct gRPCClientStreamCall{Trpc, TRequest} <: AbstractgRPCCall{Trpc}
     req::gRPCRequest
     request_channel::Channel{TRequest}
 end
-struct gRPCStreamResponseHandle{Trpc, TResponse} <: gRPCCallHandle{Trpc}
+struct gRPCServerStreamCall{Trpc, TResponse} <: AbstractgRPCCall{Trpc}
     req::gRPCRequest
     response_channel::Channel{TResponse}
 end
-struct gRPCBidirectionalStreamHandle{Trpc, TRequest, TResponse} <: gRPCCallHandle{Trpc}
+struct gRPCBidirectionalStreamCall{Trpc, TRequest, TResponse} <: AbstractgRPCCall{Trpc}
     req::gRPCRequest
     request_channel::Channel{TRequest}
     response_channel::Channel{TResponse}
 end
 
-const UnaryRequestRPC = Union{gRPCUnaryHandle, gRPCStreamResponseHandle}
-const StreamingRequestRPC = Union{gRPCStreamRequestHandle, gRPCBidirectionalStreamHandle}
-const UnaryResponseRPC = Union{gRPCUnaryHandle, gRPCStreamRequestHandle}
-const StreamingResponseRPC = Union{gRPCStreamResponseHandle, gRPCBidirectionalStreamHandle}
+const UnaryRequestRPC = Union{gRPCUnaryCall, gRPCServerStreamCall}
+const StreamingRequestRPC = Union{gRPCClientStreamCall, gRPCBidirectionalStreamCall}
+const UnaryResponseRPC = Union{gRPCUnaryCall, gRPCClientStreamCall}
+const StreamingResponseRPC = Union{gRPCServerStreamCall, gRPCBidirectionalStreamCall}
 
-function Base.show(io::IO, rpc::gRPCCallHandle) 
+function Base.show(io::IO, rpc::AbstractgRPCCall) 
     f = typeof(rpc).parameters[1].instance
     if get(IOContext(io), :compact, false)
         print(io, "$(typeof(rpc))(...)")
@@ -63,7 +63,7 @@ function Base.show(io::IO, rpc::gRPCCallHandle)
 end
 
 """
-    close(rpc::gRPCCallHandle)
+    close(rpc::AbstractgRPCCall)
 
 Waits for `rpc` to be closed by the server and throw any exception caught. 
 
@@ -71,7 +71,7 @@ Note that `close(rpc)` may block forever, as it depends on
 the call being shut down by the server logic. In such cases, 
 [`detach(rpc)`](@ref) may be a better option. 
 """
-function Base.close(rpc::gRPCCallHandle)
+function Base.close(rpc::AbstractgRPCCall)
     isstreaming_request(rpc) && close(rpc.request_channel)
     try
         grpc_async_await(rpc.req)
@@ -84,7 +84,7 @@ function Base.close(rpc::gRPCCallHandle)
 end
 
 """
-    detach(rpc::gRPCCallHandle[; throws::Bool = false])
+    detach(rpc::AbstractgRPCCall[; throws::Bool = false])
 
 Gracefully cancel an in-flight request `rpc` and frees all associated resources. 
 
@@ -92,7 +92,7 @@ If `throws`, any exception caught during the lifetime of `rpc` will be thrown.
 The stored exception is replaced with  CANCELLED, which will be thrown on 
 future calls to `detach` or `close`. 
 """
-function Base.detach(rpc::gRPCCallHandle; throws::Bool = true)
+function Base.detach(rpc::AbstractgRPCCall; throws::Bool = true)
     grpc = rpc.req.grpc::gRPCCURL
     prev_ex = @lock grpc.lock rpc.req.ex
 
@@ -113,13 +113,13 @@ function Base.detach(rpc::gRPCCallHandle; throws::Bool = true)
 end
 
 """
-    isopen(rpc::gRPCCallHandle)
+    isopen(rpc::AbstractgRPCCall)
 
 Tells whether `rpc` is still open.
 
 If false, either all responses have been received or an error has occured.
 """
-Base.isopen(rpc::gRPCCallHandle) = isopen(rpc.req)
+Base.isopen(rpc::AbstractgRPCCall) = isopen(rpc.req)
 
 # Overload of Base.put! should be in generated code to  
 # enable IDE suggestions of msg type. 
@@ -146,10 +146,10 @@ function _put!(rpc::StreamingRequestRPC, msg; done::Bool = false)
 end
 
 """
-    put!(rpc::gRPCBidirectionalStreamHandle, msg[; done::Bool = false])
-    put!(rpc::gRPCStreamRequestHandle      , msg[; done::Bool = false])
-    put!(rpc::gRPCBidirectionalStreamHandle[; done::Bool = false])
-    put!(rpc::gRPCStreamRequestHandle      [; done::Bool = false])
+    put!(rpc::gRPCBidirectionalStreamCall, msg[; done::Bool = false])
+    put!(rpc::gRPCClientStreamCall      , msg[; done::Bool = false])
+    put!(rpc::gRPCBidirectionalStreamCall[; done::Bool = false])
+    put!(rpc::gRPCClientStreamCall      [; done::Bool = false])
 
 Sends a request message `msg` (if provided) over a client-streaming RPC. 
 
@@ -162,8 +162,8 @@ function Base.put!(rpc::StreamingRequestRPC; done::Bool = false)
 end
 
 """
-    isfull(rpc::gRPCStreamRequestHandle)
-    isfull(rpc::gRPCBidirectionalStreamHandle)
+    isfull(rpc::gRPCClientStreamCall)
+    isfull(rpc::gRPCBidirectionalStreamCall)
 
 Tells whether the request channel of `rpc` is full. 
 
@@ -175,8 +175,8 @@ If `false`, a subsequent call to `put!` will not be blocking.
 end
 
 """
-    fetch(rpc::gRPCUnaryHandle)
-    fetch(rpc::gRPCStreamRequestHandle)
+    fetch(rpc::gRPCUnaryCall)
+    fetch(rpc::gRPCClientStreamCall)
 
 Reads the response of `rpc`, cleanup resources and throw any exception caught. 
 
@@ -192,8 +192,8 @@ function Base.fetch(rpc::UnaryResponseRPC)
 end
 
 """
-    wait(rpc::gRPCUnaryHandle)
-    wait(rpc::gRPCStreamRequestHandle)
+    wait(rpc::gRPCUnaryCall)
+    wait(rpc::gRPCClientStreamCall)
 
 Waits for an RPC with unary response to be ready to return its response. 
 """
@@ -204,8 +204,8 @@ function Base.wait(rpc::UnaryResponseRPC)
 end
 
 """
-    isready(rpc::gRPCUnaryHandle)
-    isready(rpc::gRPCStreamRequestHandle)
+    isready(rpc::gRPCUnaryCall)
+    isready(rpc::gRPCClientStreamCall)
 
 Check whether `fetch(rpc)` or `take!` is ready to return a response (or throw an exception) once called. 
 """
@@ -239,15 +239,15 @@ for f in (:take!, :wait, :fetch, :isready)
 end
 
 @doc """
-    take!(rpc::gRPCStreamResponseHandle)
-    take!(rpc::gRPCBidirectionalStreamHandle)
+    take!(rpc::gRPCServerStreamCall)
+    take!(rpc::gRPCBidirectionalStreamCall)
 
 Remove and return a recevied response from a stream. Blocks unless a response is already available. 
 """ Base.take!
 
 @doc """
-    fetch(rpc::gRPCStreamResponseHandle)
-    fetch(rpc::gRPCBidirectionalStreamHandle)
+    fetch(rpc::gRPCServerStreamCall)
+    fetch(rpc::gRPCBidirectionalStreamCall)
 
 Return a recevied response from a response stream. Blocks unless a response is already available. 
 
@@ -256,15 +256,15 @@ value. In most scenarios, [`take!`](@ref) is the preferred option for response s
 """ Base.fetch
 
 @doc """
-    wait(rpc::gRPCStreamResponseHandle)
-    wait(rpc::gRPCBidirectionalStreamHandle)
+    wait(rpc::gRPCServerStreamCall)
+    wait(rpc::gRPCBidirectionalStreamCall)
 
 Wait until a response becomes available. 
 """ Base.wait
 
 @doc """
-    isready(rpc::gRPCStreamResponseHandle)
-    isready(rpc::gRPCBidirectionalStreamHandle)
+    isready(rpc::gRPCServerStreamCall)
+    isready(rpc::gRPCBidirectionalStreamCall)
 
 Tells whether the response stream has a message available which has not yet been removed by `take!`.
 """ Base.isready
