@@ -52,8 +52,9 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
     ###################
     println(io, """
 
-    module $service_name
-        import ..gRPCClient
+    baremodule $service_name
+        import gRPCClient
+        import Base
     """)
     
     # Import individual types from the parent module
@@ -71,9 +72,9 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
                 # Until julia gets a dedicated syntax for importing from parent module without
                 # knowing its name, we need to use `parentmodule`. Otherwise the generated file
                 # will only work if included from the correct generated toplevel package file. 
-                push!(import_mod_list, "const $(modname)::Module = Base.parentmodule(@__MODULE__).$(modname)")
+                push!(import_mod_list, "const $(modname)::Module = Base.parentmodule($service_name).$(modname)")
             else
-                push!(import_type_list, "const $(t.name)::DataType = Base.parentmodule(@__MODULE__).$(t.name)")
+                push!(import_type_list, "const $(t.name)::DataType = Base.parentmodule($service_name).$(t.name)")
             end
         end
     end
@@ -112,7 +113,7 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
                 function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type, ::gRPCClient.gRPCAsync; kws...) 
                     gRPCClient.grpc_call_unary_async(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.AbstractgRPCCall
                 end
-                function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type, response_ch::Channel, index::Integer; kws...)::Nothing
+                function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type, response_ch::Base.Channel, index::Integer; kws...)::Nothing
                     gRPCClient.grpc_call_unary_async(chan, typeof($(rpc.name)), req, response_ch, index; kws...)
                 end
                 function $(rpc.name)(host::AbstractString, port::Integer, req::$request_type, args...; kws...)
@@ -159,7 +160,7 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
             gRPCClient.response_type_displayname(::Type{typeof($(rpc.name))}) = "$(response_type)"
         """)
         println(io, """
-            @doc gRPCClient.grpc_generate_rpc_docstring(typeof($(rpc.name))) $(rpc.name)
+            Base.@doc gRPCClient.grpc_generate_rpc_docstring(typeof($(rpc.name))) $(rpc.name)
             export $(rpc.name)
 
         """)
