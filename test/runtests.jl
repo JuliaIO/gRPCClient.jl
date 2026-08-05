@@ -84,7 +84,7 @@ const _TEST_PORT = _get_test_port()
 include("gen/test/test_pb.jl")
 
 @testset "gRPCClient.jl" begin
-
+    gRPCClient.grpc_init()
     @testset "Code Generation" begin
         mktempdir() do tmpdir
             @test isnothing(protojl("proto/test.proto", @__DIR__, tmpdir))
@@ -271,15 +271,21 @@ include("gen/test/test_pb.jl")
 
         # async
         rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
+        @test !isready(rpc)
+        @test :ok == timedwait(() -> isready(rpc), 0.01, pollint = 0.001)
         resp = fetch(rpc)
         @test resp.data == [1]
 
-        # Killing
+        # Detaching
         rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
         @test !rpc.req.completed
         detach(rpc)
         @test_throws gRPCException fetch(rpc)
         @test rpc.req.completed
+        @test_throws "Request was cancelled by the client." detach(rpc)
+        @test_throws "Request was cancelled by the client." detach(rpc)
+        detach(rpc, throws = false) # does not throw
+        @test_throws "Request was cancelled by the client." close(rpc)
 
         # store response in channel
         responses = Channel{gRPCAsyncChannelResponse{TestResponse}}(Inf)
@@ -310,7 +316,7 @@ include("gen/test/test_pb.jl")
         timedwait(() -> !isopen(rpc), 0.01, pollint = 0.001)
         @test !isopen(rpc)
         @test rpc.req.ex.grpc_status == GRPC_CANCELLED
-        @test_throws Any put!(rpc, TestRequest(1, [1])) # TODO Exception type should be gRPCServiceCallException
+        @test_throws "Request was cancelled by the client" put!(rpc, TestRequest(1, [1])) 
 
         # Ending request stream
         rpc = TestService.TestClientStreamRPC(chan)
@@ -349,7 +355,9 @@ include("gen/test/test_pb.jl")
         resp1 = fetch(rpc) # Get data without removing
         resp2 = take!(rpc) # Get data again, also remove
         @test resp1.data == resp2.data == [1]
+        # The server should have shut down after sending us 1 response
         @test !isopen(rpc)
+        @test_throws "Call has already been completed" take!(rpc)
     end
 
     @testset "Simple API: Bidirectional" begin
@@ -364,7 +372,7 @@ include("gen/test/test_pb.jl")
         @test rpc.req.completed # Stream should be done
         @test !isopen(rpc.response_channel) 
         # Check that we get information about _why_ stream was closed
-        @test_throws gRPCException take!(rpc)
+        @test_throws "Call has already been completed" take!(rpc)
 
         # detaching
         rpc = TestService.TestBidirectionalStreamRPC(chan)
@@ -373,7 +381,7 @@ include("gen/test/test_pb.jl")
         timedwait(() -> !isopen(rpc.response_channel), 0.01, pollint = 0.001)
         @test !isopen(rpc)
         @test rpc.req.ex.grpc_status == GRPC_CANCELLED
-        @test_throws gRPCException take!(rpc)
+        @test_throws "Request was cancelled by the client" take!(rpc)
         
         # Testing isfull
         rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
@@ -387,13 +395,15 @@ include("gen/test/test_pb.jl")
         rpc = TestService.TestBidirectionalStreamRPC(chan)
         put!(rpc, TestRequest(1, [1]))
         put!(rpc, TestRequest(1, [1]), done = true)
-        @test :ok == timedwait(() -> isopen(rpc), 0.1, pollint = 0.001)
+        @test :ok == timedwait(() -> !isopen(rpc), 0.1, pollint = 0.001)
+        @test_throws "Call has already been completed." put!(rpc, TestRequest(1, [1]))
 
         rpc = TestService.TestBidirectionalStreamRPC(chan)
         put!(rpc, TestRequest(1, [1]))
         put!(rpc, TestRequest(1, [1]))
         put!(rpc, done = true)
-        @test :ok == timedwait(() -> isopen(rpc), 0.1, pollint = 0.001)
+        @test :ok == timedwait(() -> !isopen(rpc), 0.1, pollint = 0.001)
+        @test_throws "Call has already been completed." put!(rpc, TestRequest(1, [1]))
 
         # Testing fetch and take!
         rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
@@ -1612,4 +1622,4 @@ include("gen/test/test_pb.jl")
     end
 
     grpc_shutdown()
-end
+#end

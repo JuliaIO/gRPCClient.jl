@@ -230,7 +230,7 @@ function Base.show(io::IO, rpc::gRPCCallHandle)
          Request type  : $(isstreaming_request(rpc) ? "stream " : "unary ")$(request_type(rpc))
          Response type : $(isstreaming_response(rpc) ? "stream " : "unary ")$(response_type(rpc))
          Status        : $(GRPC_CODE_TABLE[rpc.req.grpc_status])
-         Completed     : $(rpc.req.completed)""")
+         Completed     : $(!isopen(rpc))""")
     end
 end
 
@@ -276,50 +276,68 @@ function Base.close(rpc::gRPCCallHandle)
         # this will be closed by a task anyway, but
         # its better to ensure it is closed before this 
         # function returns.
-        if isstreaming_response(rpc)
-            close(rpc.response_channel)
-        end
+        isstreaming_response(rpc) && close(rpc.response_channel)
     end
 end
 
 """
-    detach(rpc::gRPCCallHandle)
+    detach(rpc::gRPCCallHandle[; throws::Bool = false])
 
-Immediately cancels an RPC. 
+Gracefully cancel an in-flight request `rpc` and frees all associated resources. 
 
-Most future operations `rpc` will throw an exception. 
-
-The server will be notified that the client is no longer 
-interested in further responses. 
+If `throws`, any exception caught during the lifetime of `rpc` will be thrown. 
+The stored exception is replaced with  CANCELLED, which will be thrown on 
+future calls to `detach` or `close`. 
 """
-function Base.detach(rpc::gRPCCallHandle)
-    if rpc.req.completed && !isnothing(rpc.req.ex)
-        throw(rpc.req.ex)
-    end
+function Base.detach(rpc::gRPCCallHandle; throws::Bool = true)
+    grpc = rpc.req.grpc::gRPCCURL
+    prev_ex = @lock grpc.lock rpc.req.ex
+
+    grpc_cancel(rpc.req) 
+
+    # this will be closed by a task anyway, but
+    # its better to ensure it is closed before this 
+    # function returns.
     isstreaming_request(rpc) && close(rpc.request_channel)
-    grpc_cancel(rpc.req)# TODO: also close channels
     isstreaming_response(rpc) && close(rpc.response_channel)
+
+    # If the call got cancelled by this call to `detach`, we
+    # also want to throw any exception that already existed. 
+    if throws && !isnothing(prev_ex)
+        throw(prev_ex)
+    end
     return nothing
 end
 
 """
     isopen(rpc::gRPCCallHandle)
 
-Tells whether `rpc` is still in a state where it may receive a response. 
+Tells whether `rpc` is still open.
 
 If false, either all responses have been received or an error has occured.
 """
-function Base.isopen(rpc::gRPCCallHandle)
-    lock(rpc.req.grpc.lock) do # TODO: What is the correct lock?
-        !rpc.req.completed
-    end
-end
+Base.isopen(rpc::gRPCCallHandle) = isopen(rpc.req)
 
 # Overload of Base.put! should be in generated code to  
 # enable IDE suggestions of msg type. 
 function _put!(rpc::StreamingRequestRPC, msg; done::Bool = false) 
-    put!(rpc.request_channel, msg)
-    # TODO: Show error if the channel was closed due to e.g. curl errors
+    try
+        put!(rpc.request_channel, msg)
+    catch ex
+        if isa(ex, InvalidStateException) && ex.state === :closed
+            # The channel may have been closed before the shutdown procedure
+            # was complete. Obtain the lock for a correct diagnosis. 
+            grpc = rpc.req.grpc::gRPCCURL
+            lock(grpc.lock) do 
+                if !isopen(rpc.req) 
+                    if !isnothing(rpc.req.ex)
+                        throw(rpc.req.ex)
+                    end
+                    throw(gRPCServiceCallException(GRPC_OK, "Call has already been completed."))
+                end
+            end
+        end
+    end 
     done && close(rpc.request_channel)
     return nothing
 end
@@ -386,10 +404,10 @@ end
     isready(rpc::gRPCUnaryHandle)
     isready(rpc::gRPCStreamRequestHandle)
 
-Check whether `fetch(rpc)` is ready to return a response (or throw an exception) once called. 
+Check whether `fetch(rpc)` or `take!` is ready to return a response (or throw an exception) once called. 
 """
 function Base.isready(rpc::UnaryResponseRPC)
-    return rpc.req.completed && !isnothing(rpc.ret) && isnothing(rpc.ret)
+    return !isopen(rpc) && isnothing(rpc.req.ex)
 end
 
 for f in (:take!, :wait, :fetch, :isready)
@@ -399,12 +417,16 @@ for f in (:take!, :wait, :fetch, :isready)
                 $(f)(rpc.response_channel)
             catch ex
                 if isa(ex, InvalidStateException) && ex.state === :closed
-                    @lock rpc.req.lock if !isnothing(rpc.req.ex)
-                        throw(rpc.req.ex) # TODO: What is the correct lock?
-                    end
-                    @lock rpc.req.grpc.lock if rpc.req.completed
-                        @assert rpc.req.grpc_status == GRPC_OK "This should not happen, please file a bug report."
-                        throw(gRPCServiceCallException(GRPC_OK, "Request has already been closed"))
+                    # The channel may have been closed before the shutdown procedure
+                    # was complete. Obtain the lock for a correct diagnosis. 
+                    grpc = rpc.req.grpc::gRPCCURL
+                    lock(grpc.lock) do 
+                        if !isopen(rpc.req) 
+                            if !isnothing(rpc.req.ex)
+                                throw(rpc.req.ex)
+                            end
+                            throw(gRPCServiceCallException(GRPC_OK, "Call has already been completed and no more responses are available. "))
+                        end
                     end
                 end
                 rethrow()
