@@ -760,6 +760,8 @@ mutable struct gRPCRequest
     end
 end
 
+Base.isopen(req::gRPCRequest) = !(@atomic req.ready.set) # TODO  dont rely on fieldnames of Base.Event?
+
 function handle_exception(req::gRPCRequest, ex; notify_ready = false)
     # We want to record the *first* exception a request encounters
     # This helps identify the root cause of why something failed
