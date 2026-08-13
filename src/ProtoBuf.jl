@@ -1,4 +1,4 @@
-function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Context)
+function codegen_legacy(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Context)
     namespace = join(ctx.proto_file.preamble.namespace, ".")
     service_name = t.name
 
@@ -46,7 +46,11 @@ function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Conte
             println(io, "")
         end
     end
+end
 
+function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Context)
+    namespace = join(ctx.proto_file.preamble.namespace, ".")
+    service_name = t.name
     ###################
     # New API
     ###################
@@ -176,22 +180,27 @@ import_cb(io, ctx, definitions) =
     mapreduce(x -> x isa CodeGenerators.ServiceType ? 1 : 0, +, values(definitions)) > 0 &&
     println(io, "import gRPCClient")
 
-
-grpc_register_service_codegen() = CodeGenerators.register_external_codegen_handler(
-    "gRPCClient.jl";
-    import_cb = import_cb,
-    service_cb = service_cb,
-)
+function grpc_register_service_codegen(; legacy::Bool = true, servicemodule::Bool = true)
+    function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Context) 
+        legacy && codegen_legacy(io, t, ctx)
+        servicemodule && codegen_servicemodule(io, t, ctx)
+    end
+    CodeGenerators.register_external_codegen_handler(
+        "gRPCClient.jl";
+        import_cb = import_cb,
+        service_cb = service_cb,
+    )
+end
 
 """
     gRPCAsync()
 
-Singleton struct for flagging that a Unary RPC should be called asynchronously.
+Singleton struct for flagging that a unary RPC should be called asynchronously.
 
 # Example: 
 ```
 chan = gRPCChannel(host, port)
-rpc = MyService.MyRPC(chan, RequestType(...), gRPCAsync())
+rpc = MyService.MyUnaryRPC(chan, RequestType(...), gRPCAsync())
 response = fetch(rpc)
 ```
 """
