@@ -298,6 +298,13 @@ include("gen/test/test_pb.jl")
         r = take!(responses)
         rs[r.index] = r.response.data
         @test rs == [[1, 2], [1, 2, 3]]
+
+        # Connection options
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, max_send_message_length = 1024)
+        rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
+        @test rpc.req.max_send_message_length == 1024
+        rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync(), max_send_message_length = 2048)
+        @test rpc.req.max_send_message_length == 2048
     end
 
     @testset "Simple API: Streaming request" begin
@@ -329,6 +336,15 @@ include("gen/test/test_pb.jl")
         put!(rpc, TestRequest(1, [1]))
         put!(rpc, done = true)
         @test :ok == timedwait(() -> isopen(rpc), 0.01, pollint = 0.001)
+
+        # Connection options
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, max_send_message_length = 1024)
+        rpc = TestService.TestClientStreamRPC(chan)
+        @test rpc.req.max_send_message_length == 1024
+        close(rpc)
+        rpc = TestService.TestClientStreamRPC(chan, max_send_message_length = 2048)
+        @test rpc.req.max_send_message_length == 2048
+        close(rpc)
     end
 
     @testset "Simple API: Streaming response" begin
@@ -358,6 +374,15 @@ include("gen/test/test_pb.jl")
         # The server should have shut down after sending us 1 response
         @test !isopen(rpc)
         @test_throws "Call has already been completed" take!(rpc)
+
+        # Connection options
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, max_send_message_length = 1024)
+        rpc = TestService.TestServerStreamRPC(chan, TestRequest(4, [1]))
+        @test rpc.req.max_send_message_length == 1024
+        detach(rpc)
+        rpc = TestService.TestServerStreamRPC(chan, TestRequest(4, [1]), max_send_message_length = 2048)
+        @test rpc.req.max_send_message_length == 2048
+        detach(rpc)
     end
 
     @testset "Simple API: Bidirectional" begin
@@ -418,6 +443,15 @@ include("gen/test/test_pb.jl")
         resp2 = take!(rpc) # Get data again, also remove
         @test resp1.data == resp2.data == [1]
         @test !rpc.req.completed # The rpc should still be active and ready for new requests
+
+        # Connection options
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, max_send_message_length = 1024)
+        rpc = TestService.TestBidirectionalStreamRPC(chan)
+        @test rpc.req.max_send_message_length == 1024
+        detach(rpc)
+        rpc = TestService.TestBidirectionalStreamRPC(chan, max_send_message_length = 2048)
+        @test rpc.req.max_send_message_length == 2048
+        detach(rpc)
     end
 
     # The streaming stress tests move ~1000 messages (or ~160MB) through a single

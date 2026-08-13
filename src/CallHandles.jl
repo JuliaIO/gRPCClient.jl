@@ -1,24 +1,39 @@
 
 
 """
-    gRPCChannel(host::AbstractString, port::Integer[; grpc = gRPCCURL()])
+    gRPCChannel(host::AbstractString, port::Integer[; grpc::gRPCCURL = grpc_global_handle(), options...])
 
-TODO
+A lightweight description of the connection to a gRPC server. 
+
+The port and hostname are required. By default, a `gRPCChannel` will handle
+all communication to the server through its `gRPCCURL` instance, which defaults
+to the global default instance. Additional options for the connection may be provided
+as keyword arguments. Note that these settings only set the defaults when using a 
+`gRPCChannel`, but may be overridden in each call. 
+
+# Options
+
+$(_options_docstring)
+
+# Example
+
+In the example below, the setting `secure` will be overriden in the RPC call. 
+```
+chan = gRPCChannel("127.0.0.1", 12345, secure = true)
+
+response = MyService.MyUnaryRPC(chan, MyMessage(), secure = false)
+```
 """
 struct gRPCChannel
     host::String
     port::Int
     grpc::gRPCCURL
-    function gRPCChannel(host::AbstractString, port::Integer; grpc = gRPCCURL())
-        new(host, port, grpc)
+    options::gRPCConnectionOptions
+    function gRPCChannel(host::AbstractString, port::Integer; grpc::gRPCCURL = grpc_global_handle(), options...)
+        new(host, port, grpc, gRPCConnectionOptions(; options...))
     end
 end
 
-"""
-Supertype for all call handles (stream/unary)
-
-TODO
-""" 
 abstract type AbstractgRPCCall{Trpc} end
 isstreaming_request(::AbstractgRPCCall{Trpc}) where Trpc = isstreaming_request(Trpc)
 isstreaming_response(::AbstractgRPCCall{Trpc}) where Trpc = isstreaming_response(Trpc)
@@ -42,6 +57,7 @@ struct gRPCBidirectionalStreamCall{Trpc, TRequest, TResponse} <: AbstractgRPCCal
     response_channel::Channel{TResponse}
 end
 
+# Helpers for dispatching based on request or response types
 const UnaryRequestRPC = Union{gRPCUnaryCall, gRPCServerStreamCall}
 const StreamingRequestRPC = Union{gRPCClientStreamCall, gRPCBidirectionalStreamCall}
 const UnaryResponseRPC = Union{gRPCUnaryCall, gRPCClientStreamCall}
@@ -53,12 +69,12 @@ function Base.show(io::IO, rpc::AbstractgRPCCall)
         print(io, "$(typeof(rpc))(...)")
     else
         print(io, """
-        $(typeof(rpc))(...) with:
-         RPC           : $(parentmodule(f)).$(nameof(f))
-         Request type  : $(isstreaming_request(rpc) ? "stream " : "unary ")$(request_type(rpc))
-         Response type : $(isstreaming_response(rpc) ? "stream " : "unary ")$(response_type(rpc))
-         Status        : $(GRPC_CODE_TABLE[rpc.req.grpc_status])
-         Completed     : $(!isopen(rpc))""")
+        $(typeof(rpc))(...) with properties:
+          RPC           : $(parentmodule(f)).$(nameof(f))
+          Request type  : $(isstreaming_request(rpc) ? "stream " : "unary ")$(request_type(rpc))
+          Response type : $(isstreaming_response(rpc) ? "stream " : "unary ")$(response_type(rpc))
+          Status        : $(GRPC_CODE_TABLE[rpc.req.grpc_status])
+          Completed     : $(!isopen(rpc))""")
     end
 end
 
@@ -147,16 +163,16 @@ end
 
 """
     put!(rpc::gRPCBidirectionalStreamCall, msg[; done::Bool = false])
-    put!(rpc::gRPCClientStreamCall      , msg[; done::Bool = false])
-    put!(rpc::gRPCBidirectionalStreamCall[; done::Bool = false])
-    put!(rpc::gRPCClientStreamCall      [; done::Bool = false])
+    put!(rpc::gRPCBidirectionalStreamCall; done::Bool)
+    put!(rpc::gRPCClientStreamCall, msg[; done::Bool = false])
+    put!(rpc::gRPCClientStreamCall; done::Bool)
 
 Sends a request message `msg` (if provided) over a client-streaming RPC. 
 
 If `done = true`, the server will be notified that the client is done
 sending more messages. Future calls to `put!` will result in an exception. 
 """
-function Base.put!(rpc::StreamingRequestRPC; done::Bool = false)
+function Base.put!(rpc::StreamingRequestRPC; done::Bool)
     done && close(rpc.request_channel)
     return nothing
 end

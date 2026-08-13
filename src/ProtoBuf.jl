@@ -203,13 +203,13 @@ function response_type end
 function request_type_displayname end
 function response_type_displayname end
 
-@inline function _client(chan, Trpc; kws...)
+@inline function _client(chan, Trpc)
     return gRPCServiceClient{request_type(Trpc), isstreaming_request(Trpc), response_type(Trpc), isstreaming_response(Trpc)}(
         chan.host,
         chan.port,
-        rpc_path(Trpc);
+        rpc_path(Trpc),
+        chan.options;
         grpc=chan.grpc,
-        kws...
     )
 end
 
@@ -221,20 +221,20 @@ function grpc_call_unary_sync(chan::gRPCChannel, ::Type{Trpc}, req; kws...) wher
 end
 # Unary async
 function grpc_call_unary_async(chan::gRPCChannel, ::Type{Trpc}, req; kws...) where {Trpc <: Function}
-    client = _client(chan, Trpc; kws...)
+    client = _client(chan, Trpc)
     return gRPCUnaryCall{Trpc}(
         grpc_async_request(client, req; kws...)
     )
 end
 # Unary async channel
 function grpc_call_unary_async(chan::gRPCChannel, ::Type{Trpc}, req, ch::Channel, index::Integer; kws...) where {Trpc <: Function}
-    client = _client(chan, Trpc; kws...)
+    client = _client(chan, Trpc)
     grpc_async_request(client, req, ch, index; kws...)
     return nothing
 end
 # Stream request
 function grpc_call_stream_request(chan::gRPCChannel, ::Type{Trpc}; request_channel_size::Int = 16, kws...) where {Trpc <: Function}
-    client = _client(chan, Trpc; kws...)
+    client = _client(chan, Trpc)
     request_c = Channel{request_type(Trpc)}(request_channel_size)
     return gRPCClientStreamCall{Trpc, request_type(Trpc)}(
         grpc_async_request(client, request_c; kws...), 
@@ -243,7 +243,7 @@ function grpc_call_stream_request(chan::gRPCChannel, ::Type{Trpc}; request_chann
 end
 # Stream response
 function grpc_call_stream_response(chan::gRPCChannel, ::Type{Trpc}, req; response_channel_size::Int = 16, kws...) where {Trpc <: Function}
-    client = _client(chan, Trpc; kws...)
+    client = _client(chan, Trpc)
     response_c = Channel{response_type(Trpc)}(response_channel_size)
     return gRPCServerStreamCall{Trpc, response_type(Trpc)}(
         grpc_async_request(client, req, response_c; kws...), 
@@ -252,7 +252,7 @@ function grpc_call_stream_response(chan::gRPCChannel, ::Type{Trpc}, req; respons
 end
 # Bidirectional
 function grpc_call_bidirectional_stream(chan::gRPCChannel, ::Type{Trpc}; response_channel_size::Int = 16, request_channel_size::Int = 16, kws...) where {Trpc <: Function}
-    client = _client(chan, Trpc; kws...)
+    client = _client(chan, Trpc)
     request_c = Channel{request_type(Trpc)}(request_channel_size)
     response_c = Channel{response_type(Trpc)}(response_channel_size)
     return gRPCBidirectionalStreamCall{Trpc, request_type(Trpc), response_type(Trpc)}(
@@ -283,16 +283,20 @@ function _docstring_unary(@nospecialize(Trpc), request_type_displayed, response_
     fname = "$(nameof(parentmodule(Trpc.instance))).$(nameof(Trpc.instance))"
     Treq = request_type(Trpc)
     return """
-        $fname(chan::gRPCChannel, req::$(Treq))
+        $fname(chan::gRPCChannel, req::$(Treq); options...)
 
     Auto-generated remote procedure call (RPC) for use with `gRPCCLient.jl`. 
     
-    # Signature
+    # RPC Signature
 
     |                | Unary/stream  | Type  | 
     |---------------|-------------|------|
     | Request  | unary | $request_type_displayed |
     | Response | unary | $response_type_displayed |
+
+    # Options
+
+    $(_options_docstring)
 
     # Examples
     #### Synchronous call
@@ -362,16 +366,20 @@ function _docstring_clientstream(@nospecialize(Trpc), request_type_displayed, re
     fname = "$(nameof(parentmodule(Trpc.instance))).$(nameof(Trpc.instance))"
     Treq = request_type(Trpc)
     return """
-        $fname(chan::gRPCChannel, req::$(Treq))
+        $fname(chan::gRPCChannel, req::$(Treq); options...)
 
     Auto-generated remote procedure call (RPC) for use with `gRPCCLient.jl`. 
 
-    # Signature
+    # RPC Signature
     
     |                | Unary/stream  | Type  | 
     |---------------|-------------|------|
     | Request  | stream | $request_type_displayed |
     | Response | unary | $response_type_displayed |
+
+    # Options
+
+    $(_options_docstring)
 
     # Example
     ```julia
@@ -400,14 +408,18 @@ function _docstring_serverstream(@nospecialize(Trpc), request_type_displayed, re
     fname = "$(nameof(parentmodule(Trpc.instance))).$(nameof(Trpc.instance))"
     Treq = request_type(Trpc)
     return """
-        $fname(chan::gRPCChannel, req::$(Treq))
+        $fname(chan::gRPCChannel, req::$(Treq); options...)
 
-     # Signature
+     # RPC Signature
     
     |                | Unary/stream  | Type  | 
     |---------------|-------------|------|
     | Request  | unary | $request_type_displayed |
     | Response | stream | $response_type_displayed |
+
+    # Options
+
+    $(_options_docstring)
 
     # Example
 
@@ -440,16 +452,20 @@ function _docstring_bidirectional(@nospecialize(Trpc), request_type_displayed, r
     fname = "$(nameof(parentmodule(Trpc.instance))).$(nameof(Trpc.instance))"
     Treq = request_type(Trpc)
     return """
-        $fname(chan::gRPCChannel, req::$(Treq))
+        $fname(chan::gRPCChannel, req::$(Treq); options...)
 
     Auto-generated remote procedure call (RPC) for use with `gRPCCLient.jl`. 
 
-    # Signature
+    # RPC Signature
     
     |                | Unary/stream  | Type  | 
     |---------------|-------------|------|
     | Request  | stream | $request_type_displayed |
     | Response | stream | $response_type_displayed |
+
+    # Options
+
+    $(_options_docstring)
 
     # Example
 
