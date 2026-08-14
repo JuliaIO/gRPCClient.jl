@@ -165,6 +165,27 @@ function grpc_async_stream_response(
             end
             response = _decode_message(response_buf, TResponse)
             put!(channel, response)
+
+            # A slot just freed up, so if the receive direction was paused for
+            # backpressure (handle_streaming_write found the channel full), resume
+            # it. Nothing here may block: the whole point of the pause is that the
+            # callback never waits on this channel.
+            #
+            # curl_easy_pause may synchronously re-enter write_callback "before this
+            # function returns", per its documentation, to re-deliver the paused chunk;
+            # that is safe because it runs under req.lock, which we hold here, and the
+            # frame-boundary gate re-checks fullness so a still-slow consumer simply
+            # pauses again. The req.completed / easy == C_NULL guards keep the FFI call
+            # off a cleaned-up handle, the same guards the request pump uses before its
+            # curl_easy_pause.
+            if req.recv_paused
+                lock(req.lock) do
+                    req.recv_paused = false
+                    if !req.completed && req.easy != C_NULL
+                        curl_easy_pause(req.easy, CURLPAUSE_CONT)
+                    end
+                end
+            end
         end
     catch ex
         if !isa(ex, InvalidStateException)
@@ -289,6 +310,9 @@ function grpc_async_request(
         Channel{IOBuffer}(16),
         options
     )
+    # cleanup_request reaches the caller's channel through this to unblock a
+    # stalled pump on cancellation / shutdown; see the field's comment
+    req.response_user_c = response
 
     response_task = _spawn(() -> grpc_async_stream_response(req, response), client)
     errormonitor(response_task)
@@ -350,6 +374,9 @@ function grpc_async_request(
         Channel{IOBuffer}(16),
         _merge_options(client.options, options)
     )
+    # cleanup_request reaches the caller's channel through this to unblock a
+    # stalled pump on cancellation / shutdown; see the field's comment
+    req.response_user_c = response
 
     request_task = _spawn(() -> grpc_async_stream_request(req, request), client)
     errormonitor(request_task)

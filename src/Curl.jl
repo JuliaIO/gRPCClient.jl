@@ -101,6 +101,111 @@ Base.close(req::NoChannel) = false
 Base.iterate(req::NoChannel) =
     Iterators.Stateful(Iterators.flatten(Iterators.repeated(nothing, 0)))
 
+# Is the response pump's channel full?
+#
+# Uses Base.isfull where it exists (Julia 1.12+) and falls back to reading the
+# channel's internal fields on versions without it (1.10/1.11). Both are
+# equivalent and non-blocking: 1.12's isfull is exactly `n_avail(c) ≥ c.sz_max`
+# and documents "Returns immediately, does not block". Reading without the
+# channel's own lock is safe because the caller (write_callback, under
+# grpc.lock) is the channel's sole producer: between this check and the put! in
+# handle_write nothing can grow it, and a concurrent take! by the pump can only
+# shrink it, turning "full" into "has room" after the pause decision has
+# already been made.
+@static if isdefined(Base, :isfull)
+    _response_c_full(req) = isfull(req.response_c)
+else
+    _response_c_full(req) = length(req.response_c.data) >= req.response_c.sz_max
+end
+
+# Streaming-response body of write_callback.
+#
+# This path must never block. The original code called put! on req.response_c from
+# inside the callback, which runs while the watcher task holds grpc.lock across
+# curl_multi_socket_action; once a slow consumer stalled the response pump behind a
+# full user channel, req.response_c filled, the put! blocked with the transport lock
+# held, and every request on the handle froze. Worse, grpc_cancel and close(grpc)
+# need that same lock, so "take one response, then cancel" deadlocked permanently.
+#
+# Instead, when the pump's channel is full we pause at a frame boundary by returning
+# CURL_WRITEFUNC_PAUSE, which unblocks the callback immediately and pauses only this
+# transfer's receive direction. With the receive direction paused libcurl stops
+# granting HTTP/2 window, so the server is throttled by flow control and memory stays
+# bounded per stream, which is the gRPC-correct backpressure semantic, the mirror
+# image of the send side's CURL_READFUNC_PAUSE design. The response pump resumes the
+# transfer with curl_easy_pause(req.easy, CURLPAUSE_CONT) once it has drained a slot.
+#
+# Re-delivery contract: per curl_easy_pause's documentation, a write callback that
+# returns pause "could not take care of any data at all, and that data is then
+# delivered again to the callback when the transfer is unpaused". curl therefore
+# hands us back the entire paused chunk from its first byte, even bytes we had
+# already parsed. chunk_skip records how many bytes of the re-delivered data were
+# already handled, so the parser resumes mid-chunk. It is a byte offset into the
+# logical re-delivered stream rather than a saved buffer, which keeps it correct
+# even if curl re-chunks: a chunk lying entirely inside the consumed prefix is
+# consumed whole and the remainder carries forward.
+function handle_streaming_write(req, data::Ptr{Cchar}, n::Csize_t)::Csize_t
+    buf = unsafe_wrap(Array, convert(Ptr{UInt8}, data), (n,))
+
+    prefix = 0
+    if req.chunk_skip > 0
+        prefix = min(req.chunk_skip, length(buf))
+        req.chunk_skip -= prefix
+        # The whole chunk lies inside the already-parsed prefix: nothing new in it
+        prefix == length(buf) && return Csize_t(n)
+        buf = unsafe_wrap(Array, pointer(buf) + prefix, (length(buf) - prefix,))
+    end
+
+    target = length(buf)
+    handled = 0
+    while !isnothing(buf) && handled < target
+        # The gate: hand messages to the pump only at frame boundaries and only
+        # when it has room, and pause with ZERO bytes of the remaining chunk
+        # consumed. Pausing mid-parse would report "no data consumed" to curl, so
+        # the re-delivered chunk would replay bytes handle_write already accepted
+        # and duplicate them in the user's stream; chunk_skip exists precisely to
+        # re-sync the two views, and gating here is what keeps it exact.
+        if _response_c_full(req)
+            req.recv_paused = true
+            req.chunk_skip = prefix + handled
+            return Csize_t(CURL_WRITEFUNC_PAUSE)
+        end
+
+        try
+            # A zero-byte return with data still left over means handle_write made
+            # no progress and looping again would spin forever inside a curl
+            # callback, so break and let the byte-count check below report it.
+            handled_n_bytes, buf = handle_write(req, buf)
+            handled += handled_n_bytes
+            handled_n_bytes == 0 && !isnothing(buf) && break
+        catch ex
+            # Eat InvalidStateException raised on put! to closed channel
+            !isa(ex, InvalidStateException) && rethrow(ex)
+        end
+    end
+
+    !isnothing(req.ex) && return typemax(Csize_t)
+
+    # Check that we handled the correct number of bytes. With no exception in
+    # handle_write this only fires on the zero-progress break above: every other
+    # exit has consumed the chunk whole (into the current message buffer or into
+    # complete messages), and the pause path has already returned.
+    if handled != target
+        handle_exception(
+            req,
+            gRPCServiceCallException(
+                GRPC_INTERNAL,
+                "Recieved $(target) bytes from curl but only handled $(handled)",
+            ),
+        )
+
+        # Unblock the task waiting on response_c
+        close(req.response_c)
+        return typemax(Csize_t)
+    end
+
+    return Csize_t(prefix + handled)
+end
 
 function write_callback(
         data::Ptr{Cchar},
@@ -114,6 +219,14 @@ function write_callback(
         !isnothing(req.ex) && return typemax(Csize_t)
 
         n = size * count
+
+        # Response streaming goes through the backpressure-aware path, which must
+        # never block in here. Unary responses are a single message, bounded at
+        # length-prefix parse by max_recieve_message_length and drained by
+        # grpc_async_await rather than a channel, so the direct path below is
+        # unchanged.
+        isstreaming_response(req) && return handle_streaming_write(req, data, n)
+
         buf = unsafe_wrap(Array, convert(Ptr{UInt8}, data), (n,))
 
         handled_n_bytes_total = 0
@@ -500,6 +613,19 @@ mutable struct gRPCRequest
 
     response_length::UInt32
 
+    # Set by handle_streaming_write when it returned CURL_WRITEFUNC_PAUSE because
+    # the response pump's channel was full; cleared by the pump when it drains a
+    # slot and resumes the receive direction with curl_easy_pause. See the comment
+    # on handle_streaming_write for the full protocol. Occupies padding next to the
+    # other Bools, like request_eof.
+    recv_paused::Bool
+
+    # Bytes at the front of the next re-delivered chunk that were already parsed
+    # before the last CURL_WRITEFUNC_PAUSE. curl re-delivers the entire paused
+    # chunk from its first byte, so this offset is how the parser resumes
+    # mid-chunk. Only meaningful between a pause and the re-delivery it produced.
+    chunk_skip::Int64
+
     # Set by read_callback once curl has taken every byte of the request upload buffer, so
     # the request pump knows the buffer is free and it may stage the next batch. Flow
     # control only: what keeps the pump's write from racing a read_callback is `lock`
@@ -531,6 +657,21 @@ mutable struct gRPCRequest
     # transfer down at CURLOPT_TIMEOUT_MS it usually reports CURLE_OPERATION_TIMEDOUT,
     # but on some platforms the socket error from the teardown surfaces first instead.
     expiry::Float64
+
+    # The caller's response channel, set by grpc_async_request right after
+    # construction for the variants that spawn a response pump, NOCHANNEL
+    # everywhere else. Typed Any rather than a Union to keep it out of the
+    # positional constructors above: only cleanup_request reads it.
+    #
+    # Exists so an abnormal end (cancellation, deadline, handle shutdown) can
+    # unblock a response pump that is stuck in put! to a channel the caller
+    # stopped draining — grpc_cancel's documented "all tasks waiting on the
+    # request (including streaming channels) are unblocked". Closing the user
+    # channel wakes that put! with InvalidStateException, which the pump treats
+    # as its normal exit. A normal completion must NOT close it from here: the
+    # pump still has to deliver everything it buffered, and only then closes
+    # the channel itself in its finally block.
+    response_user_c::Any
 
     function gRPCRequest(
             grpc,
@@ -750,6 +891,8 @@ mutable struct gRPCRequest
             false,
             false,
             0,
+            false,
+            0,
             curl_done_reading,
             GRPC_OK,
             "",
@@ -758,6 +901,7 @@ mutable struct gRPCRequest
             watchdog,
             nothing,
             expiry,
+            NOCHANNEL,
         )
         preserve_handle(req)
 
@@ -883,6 +1027,8 @@ mutable struct gRPCRequest
             false,
             true,
             0,
+            false,
+            0,
             Event(),
             GRPC_OK,
             "",
@@ -891,6 +1037,7 @@ mutable struct gRPCRequest
             nothing,
             nothing,
             expiry,
+            NOCHANNEL,
         )
 
         # Unblock stream pumps and anything already waiting on the request. The pumps
@@ -1483,6 +1630,13 @@ function cleanup_request(grpc::gRPCCURL, req::gRPCRequest)
     # Close streaming channels
     close(req.response_c)
     close(req.request_c)
+    # An abnormal end (cancellation, deadline expiry, handle shutdown) must also
+    # unblock a response pump stalled in put! to a caller channel nobody is
+    # draining: closing it wakes the pump, which exits through its InvalidStateException
+    # path and closes the channel itself in its finally. A normal completion leaves the
+    # caller's channel alone so the pump can deliver everything it buffered first.
+    # grpc.running is already false by the time close(grpc) reaches here.
+    (!isnothing(req.ex) || !grpc.running) && close(req.response_user_c)
     # Increment the request semaphore to allow more requests through
     max_reqs_inc(grpc, req)
     # Unblock anything waiting on the request
