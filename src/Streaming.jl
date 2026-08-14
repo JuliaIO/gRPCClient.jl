@@ -178,11 +178,22 @@ function grpc_async_stream_response(
             # pauses again. The req.completed / easy == C_NULL guards keep the FFI call
             # off a cleaned-up handle, the same guards the request pump uses before its
             # curl_easy_pause.
-            if req.recv_paused
+            #
+            # We do NOT resume on every drained message: a resume is expensive and
+            # resuming per message pins the transfer in a pause→resume→re-deliver
+            # ping-pong. Instead wait until the pump has drained the intermediate
+            # channel below its low watermark, so pauses are amortized over a whole
+            # channel's worth of messages (see _response_c_drained). recv_paused is
+            # re-verified under req.lock here, so a racing drain that happens between
+            # the heuristic check and the lock can only help (the channel is even
+            # emptier).
+            if req.recv_paused && _response_c_drained(req)
                 lock(req.lock) do
-                    req.recv_paused = false
-                    if !req.completed && req.easy != C_NULL
-                        curl_easy_pause(req.easy, CURLPAUSE_CONT)
+                    if req.recv_paused
+                        req.recv_paused = false
+                        if !req.completed && req.easy != C_NULL
+                            curl_easy_pause(req.easy, CURLPAUSE_CONT)
+                        end
                     end
                 end
             end

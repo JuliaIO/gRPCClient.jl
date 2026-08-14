@@ -118,6 +118,22 @@ else
     _response_c_full(req) = length(req.response_c.data) >= req.response_c.sz_max
 end
 
+# Has the response pump drained enough buffered messages to make a resume worth
+# it? The pump calls curl_easy_pause(CURLPAUSE_CONT) to unpause the receive
+# direction after a backpressure pause, and a resume is expensive: per libcurl it
+# may synchronously re-enter write_callback to re-deliver the paused chunk, and
+# it re-grants HTTP/2 flow-control window. Resuming after *every* drained message
+# therefore pins the transfer in a pause→resume→re-deliver→pause ping-pong that
+# fires roughly once per message (measured ~1989 pauses for a 2000-message
+# bidirectional stream), crushing throughput. Instead we only resume once the
+# intermediate channel has drained below a low watermark (a quarter of its
+# capacity), so pauses happen about once per channel's worth of messages and the
+# expensive cycle is amortized. The check is a heuristic read of channel state;
+# the authoritative recv_paused flag is re-verified under req.lock by the caller
+# before it actually resumes.
+_response_c_drained(req) =
+    Base.n_avail(req.response_c) <= max(1, req.response_c.sz_max ÷ 4)
+
 # Streaming-response body of write_callback.
 #
 # This path must never block. The original code called put! on req.response_c from
