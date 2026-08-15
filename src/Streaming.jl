@@ -163,13 +163,22 @@ function grpc_async_stream_response(
             if response_buf === nothing
                 continue
             end
+            # Credit the message's bytes back to the backpressure budget as soon
+            # as the pump owns it, before decoding and before delivering to the
+            # user's channel (which may block on a slow consumer): the resume
+            # decision is about how much is buffered ahead of the pump, not how
+            # much has reached the application. Atomic and lock-free because the
+            # increments run under grpc.lock inside write_callback; this side
+            # never holds that lock, so atomicity is what keeps the accounting
+            # exact across the two.
+            atomic_sub!(req.recv_queued_bytes, Int64(response_buf.size))
             response = _decode_message(response_buf, TResponse)
             put!(channel, response)
 
-            # A slot just freed up, so if the receive direction was paused for
-            # backpressure (handle_streaming_write found the channel full), resume
-            # it. Nothing here may block: the whole point of the pause is that the
-            # callback never waits on this channel.
+            # The backpressure budget has drained far enough that a resume is
+            # worth its cost (see _response_c_drained). Nothing here may block:
+            # the whole point of the pause is that the callback never waits on
+            # this channel.
             #
             # curl_easy_pause may synchronously re-enter write_callback "before this
             # function returns", per its documentation, to re-deliver the paused chunk;
@@ -318,7 +327,9 @@ function grpc_async_request(
         request_buf,
         IOBuffer(),
         NOCHANNEL,
-        Channel{IOBuffer}(16),
+        # Unbounded on purpose: a blocking put! here is what write_callback must
+        # never do (that was the deadlock). recv_queued_bytes is what bounds it.
+        Channel{IOBuffer}(typemax(Int)),
         options
     )
     # cleanup_request reaches the caller's channel through this to unblock a
@@ -382,7 +393,9 @@ function grpc_async_request(
         IOBuffer(),
         IOBuffer(),
         Channel{IOBuffer}(16),
-        Channel{IOBuffer}(16),
+        # Unbounded on purpose: a blocking put! here is what write_callback must
+        # never do (that was the deadlock). recv_queued_bytes is what bounds it.
+        Channel{IOBuffer}(typemax(Int)),
         _merge_options(client.options, options)
     )
     # cleanup_request reaches the caller's channel through this to unblock a

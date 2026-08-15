@@ -425,7 +425,13 @@ include("gen/test/test_pb.jl")
         # grpc_cancel / grpc_shutdown (they need that same lock). Now the receive
         # direction pauses at a frame boundary (CURL_WRITEFUNC_PAUSE) and the
         # response pump resumes it with curl_easy_pause once a slot frees.
-        N = 100
+        # N is large enough that the response stream exceeds
+        # RECV_BACKPRESSURE_BYTES (message i encodes to ~3i bytes of protobuf —
+        # one tag plus one-or-two varint bytes per uint64 — so N=1500 ≈ 3.4 MB),
+        # so with the consumer stalled the receive direction is paused in flight
+        # and the request is still open when the cancel lands: the exact state
+        # that used to deadlock
+        N = 1500
 
         client = TestService_TestServerStreamRPC_Client(
             _TEST_HOST,
@@ -492,8 +498,11 @@ include("gen/test/test_pb.jl")
     @testset "Response Streaming backpressure: shutdown with stalled consumer" begin
         # grpc_shutdown must complete even while a streaming response is wedged
         # behind a consumer that never drains: cleanup closes the channels, which
-        # ends the pump, and the callback is not blocking on any of them.
-        N = 50
+        # ends the pump, and the callback is not blocking on any of them. N is
+        # large enough (~3.4 MB, see the stalled-consumer testset) to exceed
+        # RECV_BACKPRESSURE_BYTES so the transfer is paused in flight when the
+        # shutdown lands.
+        N = 1500
 
         client = TestService_TestServerStreamRPC_Client(
             _TEST_HOST,
