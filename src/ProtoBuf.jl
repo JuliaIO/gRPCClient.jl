@@ -205,6 +205,18 @@ import_cb(io, ctx, definitions) =
     mapreduce(x -> x isa CodeGenerators.ServiceType ? 1 : 0, +, values(definitions)) > 0 &&
     println(io, "import gRPCClient")
 
+"""
+    grpc_register_service_codegen(; legacy::Bool = true, servicemodule::Bool = true)
+
+Registers `gRPCClient` for code generation of services in `ProtoBuf.jl`. 
+
+Can generate code either for the legacy API (`legacy` = true) or for the
+new API where each service is represented as a module. Both options
+are enabled by default, but setting `legacy = false` is recommended for
+new applications. Setting `legacy = false` will enable better support 
+for syntax hints. The legacy API may be disable by default or removed in
+a future version. 
+"""
 function grpc_register_service_codegen(; legacy::Bool = true, servicemodule::Bool = true)
     function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Context) 
         legacy && codegen_legacy(io, t, ctx)
@@ -232,7 +244,13 @@ end
 
 Singleton struct for flagging that a unary RPC should be called asynchronously.
 
-# Example: 
+If a `gRPCAsync()` is not passed as an argument when invoking an RPC, 
+the call will block until a response is ready and immediately return the 
+response. If `gRPCAsync()` is provided, the call will instead return a
+handle to the call immediately and the response can be obtained with A
+subsequent call to `fetch`. 
+
+# Example
 ```
 chan = gRPCChannel(host, port)
 rpc = MyService.MyUnaryRPC(chan, RequestType(...), gRPCAsync())
