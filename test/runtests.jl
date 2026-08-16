@@ -3,6 +3,7 @@ using ProtoBuf
 using gRPCClient
 using Base.Threads
 using Sockets
+import REPL # Must be loaded in order to retreive auto-generated docstrings
 
 # Import the timeout header formatting function for testing
 import gRPCClient:
@@ -160,6 +161,87 @@ include("gen/test/test_pb.jl")
             # Service client constructors are present
             @test contains(generated, "ExtService_ExtRPC_Client(")
             @test contains(generated, "ExtService_ExtStreamRPC_Client(")
+        end
+
+        @testset "Codegen: New API" begin
+            @testset "compatguard" begin
+                mktempdir() do tmpdir
+                    grpc_register_service_codegen(legacy = true, servicemodule = true)
+                    @test isnothing(protojl("proto/test.proto", @__DIR__, tmpdir))
+                    generated = read(joinpath(tmpdir, "test", "test_pb.jl"), String)
+                    @test contains(generated, "Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNumber(\"1.2.0-rc1\")))")
+                    @test contains(generated, "This file contains code generated with `gRPCClient.jl`")
+                    @test contains(generated, "baremodule TestService")
+                    # More tests are done only with legacy = false
+                end
+
+                mktempdir() do tmpdir
+                    grpc_register_service_codegen(legacy = false, servicemodule = true)
+                    @test isnothing(protojl("proto/test.proto", @__DIR__, tmpdir))
+                    generated = read(joinpath(tmpdir, "test", "test_pb.jl"), String)
+                    @test !contains(generated, "Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNumber(\"1.2.0-rc1\")))")
+                    @test !contains(generated, "This file contains code generated with `gRPCClient.jl`")
+                    @test contains(generated, "const TestResponse::DataType = Base.parentmodule(TestService).TestResponse")
+                    @test contains(generated, "const TestRequest::DataType = Base.parentmodule(TestService).TestRequest") 
+                    # Count number of methods defined for each RPC
+                    @test count("function TestRPC", generated) == 4
+                    @test count("function TestClientStreamRPC", generated) == 2
+                    @test count("function TestServerStreamRPC", generated) == 2
+                    @test count("function TestBidirectionalStreamRPC", generated) == 2
+                end
+
+                mktempdir() do tmpdir
+                    grpc_register_service_codegen(legacy = true, servicemodule = false)
+                    @test isnothing(protojl("proto/test.proto", @__DIR__, tmpdir))
+                    generated = read(joinpath(tmpdir, "test", "test_pb.jl"), String)
+                    @test !contains(generated, "Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNumber(\"1.2.0-rc1\")))")
+                    @test !contains(generated, "This file contains code generated with `gRPCClient.jl`")
+                end
+            end
+
+            @testset "Traits" begin
+                @test gRPCClient.isstreaming_request(typeof(TestService.TestRPC)) == false
+                @test gRPCClient.isstreaming_request(typeof(TestService.TestClientStreamRPC)) == true
+                @test gRPCClient.isstreaming_request(typeof(TestService.TestServerStreamRPC)) == false
+                @test gRPCClient.isstreaming_request(typeof(TestService.TestBidirectionalStreamRPC)) == true
+
+                @test gRPCClient.isstreaming_response(typeof(TestService.TestRPC)) == false
+                @test gRPCClient.isstreaming_response(typeof(TestService.TestClientStreamRPC)) == false
+                @test gRPCClient.isstreaming_response(typeof(TestService.TestServerStreamRPC)) == true
+                @test gRPCClient.isstreaming_response(typeof(TestService.TestBidirectionalStreamRPC)) == true
+                
+                @test gRPCClient.request_type(typeof(TestService.TestRPC)) == TestRequest
+                @test gRPCClient.request_type(typeof(TestService.TestClientStreamRPC)) == TestRequest
+                @test gRPCClient.request_type(typeof(TestService.TestServerStreamRPC)) == TestRequest
+                @test gRPCClient.request_type(typeof(TestService.TestBidirectionalStreamRPC)) == TestRequest 
+
+                @test gRPCClient.response_type(typeof(TestService.TestRPC)) == TestResponse
+                @test gRPCClient.response_type(typeof(TestService.TestClientStreamRPC)) == TestResponse
+                @test gRPCClient.response_type(typeof(TestService.TestServerStreamRPC)) == TestResponse
+                @test gRPCClient.response_type(typeof(TestService.TestBidirectionalStreamRPC)) == TestResponse
+
+                @test gRPCClient.request_type_displayname(typeof(TestService.TestRPC)) == "TestRequest"
+                @test gRPCClient.request_type_displayname(typeof(TestService.TestClientStreamRPC)) == "TestRequest"
+                @test gRPCClient.request_type_displayname(typeof(TestService.TestServerStreamRPC)) == "TestRequest"
+                @test gRPCClient.request_type_displayname(typeof(TestService.TestBidirectionalStreamRPC)) == "TestRequest"
+
+                @test gRPCClient.response_type_displayname(typeof(TestService.TestRPC)) == "TestResponse"
+                @test gRPCClient.response_type_displayname(typeof(TestService.TestClientStreamRPC)) == "TestResponse"
+                @test gRPCClient.response_type_displayname(typeof(TestService.TestServerStreamRPC)) == "TestResponse"
+                @test gRPCClient.response_type_displayname(typeof(TestService.TestBidirectionalStreamRPC)) == "TestResponse"
+
+                @test gRPCClient.rpc_path(typeof(TestService.TestRPC)) == "/test.TestService/TestRPC"
+                @test gRPCClient.rpc_path(typeof(TestService.TestClientStreamRPC)) == "/test.TestService/TestClientStreamRPC"
+                @test gRPCClient.rpc_path(typeof(TestService.TestServerStreamRPC)) == "/test.TestService/TestServerStreamRPC"
+                @test gRPCClient.rpc_path(typeof(TestService.TestBidirectionalStreamRPC)) == "/test.TestService/TestBidirectionalStreamRPC"
+            end
+
+            @testset "docstrings" begin
+                @test contains(string(@doc TestService.TestRPC), "Request |        unary |  TestRequest |\n| Response |        unary | TestResponse |\n")
+                @test contains(string(@doc TestService.TestClientStreamRPC), "Request |       stream |  TestRequest |\n| Response |        unary | TestResponse |\n")
+                @test contains(string(@doc TestService.TestServerStreamRPC), "Request |        unary |  TestRequest |\n| Response |       stream | TestResponse |\n")
+                @test contains(string(@doc TestService.TestBidirectionalStreamRPC), "Request |       stream |  TestRequest |\n| Response |       stream | TestResponse |\n")
+            end
         end
     end
 
