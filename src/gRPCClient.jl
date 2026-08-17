@@ -107,6 +107,30 @@ export gRPCAsyncChannelResponse
 export gRPCException
 export gRPCServiceCallException
 
+macro public(ex)
+    if VERSION >= v"1.11.0-DEV.469"
+        args = ex isa Symbol ? (ex,) : ex.args
+        esc(Expr(:public, args...))
+    else
+        nothing
+    end
+end
+@public check_codegen_compat
+@public grpc_generate_rpc_docstring
+@public grpc_call_bidirectional_stream
+@public grpc_call_unary_sync
+@public grpc_call_unary_async
+@public grpc_call_stream_request
+@public grpc_call_stream_response
+@public grpc_call_bidirectional_stream
+@public rpc_path
+@public isstreaming_request
+@public isstreaming_request
+@public request_type
+@public response_type
+@public request_type_displayname
+@public response_type_displayname
+
 function __init__()
     let curl = _runtime_curl_version()
         NEEDS_UNPAUSE_WORKAROUND[] =
