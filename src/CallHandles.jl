@@ -47,14 +47,14 @@ struct gRPCClientStreamCall{Trpc, TRequest} <: AbstractgRPCCall{Trpc}
     req::gRPCRequest
     request_channel::Channel{TRequest}
 end
-struct gRPCServerStreamCall{Trpc, TResponse} <: AbstractgRPCCall{Trpc}
+struct gRPCServerStreamCall{Trpc} <: AbstractgRPCCall{Trpc}
     req::gRPCRequest
-    response_channel::Channel{TResponse}
+    response_channel::Channel{IOBuffer}
 end
-struct gRPCBidirectionalStreamCall{Trpc, TRequest, TResponse} <: AbstractgRPCCall{Trpc}
+struct gRPCBidirectionalStreamCall{Trpc, TRequest} <: AbstractgRPCCall{Trpc}
     req::gRPCRequest
     request_channel::Channel{TRequest}
-    response_channel::Channel{TResponse}
+    response_channel::Channel{IOBuffer}
 end
 
 # Helpers for dispatching based on request or response types
@@ -204,7 +204,15 @@ function Base.fetch(rpc::UnaryResponseRPC)
     if isstreaming_request(rpc)
         put!(rpc, done = true)
     end
-    return grpc_async_await(rpc.req, response_type(rpc))
+    return decode(ProtoDecoder(grpc_async_await(rpc.req, IOBuffer)), response_type(rpc))
+end
+
+function Base.fetch(rpc::UnaryResponseRPC, ::Type{Vector{UInt8}})
+    if isstreaming_request(rpc)
+        put!(rpc, done = true)
+    end
+    io = grpc_async_await(rpc.req, IOBuffer)
+    return read(seekstart(io))
 end
 
 """
@@ -229,7 +237,7 @@ function Base.isready(rpc::UnaryResponseRPC)
     return !isopen(rpc) && isnothing(rpc.req.ex)
 end
 
-for f in (:take!, :wait, :fetch, :isready)
+for f in (:wait, :isready)
     eval(quote
         function Base.$f(rpc::StreamingResponseRPC)
             try
@@ -250,6 +258,33 @@ for f in (:take!, :wait, :fetch, :isready)
                 end
                 rethrow()
             end 
+        end
+    end)
+end
+
+for f in (:take!, :fetch)
+    eval(quote
+        function Base.$f(rpc::StreamingResponseRPC)
+            try
+                io = $(f)(rpc.response_channel)
+                seekstart(io)
+                decode(ProtoDecoder(io), response_type(rpc))
+            catch ex
+                if isa(ex, InvalidStateException) && ex.state === :closed
+                    # The channel may have been closed before the shutdown procedure
+                    # was complete. Obtain the lock for a correct diagnosis. 
+                    grpc = rpc.req.grpc::gRPCCURL
+                    lock(grpc.lock) do 
+                        if !isopen(rpc.req) 
+                            if !isnothing(rpc.req.ex)
+                                throw(rpc.req.ex)
+                            end
+                            throw(gRPCServiceCallException(GRPC_OK, "Call has already been completed and no more responses are available. "))
+                        end
+                    end
+                end
+                rethrow()
+            end
         end
     end)
 end

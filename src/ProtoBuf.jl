@@ -151,6 +151,7 @@ function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGener
                     $(rpc.name)(gRPCChannel(host, port); kws...)
                 end
                 Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof($(rpc.name))}, msg::$(request_type); kws...) = gRPCClient._put!(handle, msg; kws...)
+                Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof($(rpc.name))}, msg::Base.Vector{UInt8}; kws...) = gRPCClient._put!(handle, msg; kws...)
             """)
         elseif !rpc.request_stream && rpc.response_stream
             print(io, """
@@ -170,6 +171,7 @@ function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGener
                     $(rpc.name)(gRPCChannel(host, port); kws...)
                 end
                 Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof($(rpc.name))}, msg::$(request_type); kws...) = gRPCClient._put!(handle, msg; kws...)
+                Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof($(rpc.name))}, msg::Base.Vector{UInt8}; kws...) = gRPCClient._put!(handle, msg; kws...)
             """)
         end
         print(io, """
@@ -265,8 +267,8 @@ function response_type end
 function request_type_displayname end
 function response_type_displayname end
 
-@inline function _client(chan, Trpc)
-    return gRPCServiceClient{request_type(Trpc), isstreaming_request(Trpc), response_type(Trpc), isstreaming_response(Trpc)}(
+@inline function _client(chan, Trpc, TRequest = request_type(Trpc), TResponse = IOBuffer)
+    return gRPCServiceClient{TRequest, isstreaming_request(Trpc), TResponse, isstreaming_response(Trpc)}(
         chan.host,
         chan.port,
         rpc_path(Trpc),
@@ -279,7 +281,7 @@ end
 # Unary sync
 function grpc_call_unary_sync(chan::gRPCChannel, ::Type{Trpc}, req; kws...) where {Trpc <: Function}
     client = _client(chan, Trpc)
-    grpc_sync_request(client, req)
+    decode(ProtoDecoder(grpc_sync_request(client, req)), response_type(Trpc))
 end
 # Unary async
 function grpc_call_unary_async(chan::gRPCChannel, ::Type{Trpc}, req; kws...) where {Trpc <: Function}
@@ -289,16 +291,17 @@ function grpc_call_unary_async(chan::gRPCChannel, ::Type{Trpc}, req; kws...) whe
     )
 end
 # Unary async channel
-function grpc_call_unary_async(chan::gRPCChannel, ::Type{Trpc}, req, ch::Channel, index::Integer; kws...) where {Trpc <: Function}
-    client = _client(chan, Trpc)
+function grpc_call_unary_async(chan::gRPCChannel, ::Type{Trpc}, req, ch::Channel{gRPCAsyncChannelResponse{TResponse}}, index::Integer; kws...) where {Trpc <: Function, TResponse}
+    client = _client(chan, Trpc, request_type(Trpc), TResponse)
     grpc_async_request(client, req, ch, index; kws...)
     return nothing
 end
 # Stream request
 function grpc_call_stream_request(chan::gRPCChannel, ::Type{Trpc}; request_channel_size::Int = 16, kws...) where {Trpc <: Function}
-    client = _client(chan, Trpc)
-    request_c = Channel{request_type(Trpc)}(request_channel_size)
-    return gRPCClientStreamCall{Trpc, request_type(Trpc)}(
+    TRequest = Union{request_type(Trpc), Vector{UInt8}}
+    client = _client(chan, Trpc, TRequest)
+    request_c = Channel{TRequest}(request_channel_size)
+    return gRPCClientStreamCall{Trpc, TRequest}(
         grpc_async_request(client, request_c; kws...), 
         request_c
     )
@@ -306,18 +309,19 @@ end
 # Stream response
 function grpc_call_stream_response(chan::gRPCChannel, ::Type{Trpc}, req; response_channel_size::Int = 16, kws...) where {Trpc <: Function}
     client = _client(chan, Trpc)
-    response_c = Channel{response_type(Trpc)}(response_channel_size)
-    return gRPCServerStreamCall{Trpc, response_type(Trpc)}(
+    response_c = Channel{IOBuffer}(response_channel_size)
+    return gRPCServerStreamCall{Trpc}(
         grpc_async_request(client, req, response_c; kws...), 
         response_c
     )
 end
 # Bidirectional
 function grpc_call_bidirectional_stream(chan::gRPCChannel, ::Type{Trpc}; response_channel_size::Int = 16, request_channel_size::Int = 16, kws...) where {Trpc <: Function}
-    client = _client(chan, Trpc)
-    request_c = Channel{request_type(Trpc)}(request_channel_size)
-    response_c = Channel{response_type(Trpc)}(response_channel_size)
-    return gRPCBidirectionalStreamCall{Trpc, request_type(Trpc), response_type(Trpc)}(
+    TRequest = Union{request_type(Trpc), Vector{UInt8}}
+    client = _client(chan, Trpc, TRequest)
+    request_c = Channel{TRequest}(request_channel_size)
+    response_c = Channel{IOBuffer}(response_channel_size)
+    return gRPCBidirectionalStreamCall{Trpc, TRequest}(
         grpc_async_request(client, request_c, response_c; kws...), 
         request_c, 
         response_c
@@ -472,7 +476,9 @@ function _docstring_serverstream(@nospecialize(Trpc), request_type_displayed, re
     return """
         $fname(chan::gRPCChannel, req::$(Treq); options...)
 
-     # RPC Signature
+    Auto-generated remote procedure call (RPC) for use with `gRPCCLient.jl`. 
+    
+    # RPC Signature
     
     |                | Unary/stream  | Type  | 
     |---------------|-------------|------|

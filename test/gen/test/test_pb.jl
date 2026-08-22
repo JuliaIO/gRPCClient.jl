@@ -190,6 +190,7 @@ Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNum
         TestClientStreamRPC(gRPCChannel(host, port); kws...)
     end
     Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof(TestClientStreamRPC)}, msg::TestRequest; kws...) = gRPCClient._put!(handle, msg; kws...)
+    Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof(TestClientStreamRPC)}, msg::Base.Vector{UInt8}; kws...) = gRPCClient._put!(handle, msg; kws...)
     gRPCClient.rpc_path(::Type{typeof(TestClientStreamRPC)}) = "/test.TestService/TestClientStreamRPC"
     gRPCClient.isstreaming_request(::Type{typeof(TestClientStreamRPC)}) = true
     gRPCClient.isstreaming_response(::Type{typeof(TestClientStreamRPC)}) = false
@@ -209,6 +210,7 @@ Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNum
         TestBidirectionalStreamRPC(gRPCChannel(host, port); kws...)
     end
     Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof(TestBidirectionalStreamRPC)}, msg::TestRequest; kws...) = gRPCClient._put!(handle, msg; kws...)
+    Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof(TestBidirectionalStreamRPC)}, msg::Base.Vector{UInt8}; kws...) = gRPCClient._put!(handle, msg; kws...)
     gRPCClient.rpc_path(::Type{typeof(TestBidirectionalStreamRPC)}) = "/test.TestService/TestBidirectionalStreamRPC"
     gRPCClient.isstreaming_request(::Type{typeof(TestBidirectionalStreamRPC)}) = true
     gRPCClient.isstreaming_response(::Type{typeof(TestBidirectionalStreamRPC)}) = true

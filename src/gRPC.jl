@@ -204,6 +204,7 @@ end
 # the raw protobuf payload, enabling raw / partial-decode responses.
 _decode_message(io, ::Type{T}) where {T} = decode(ProtoDecoder(io), T)
 _decode_message(io, ::Type{Vector{UInt8}}) = read(seekstart(io))
+_decode_message(io, ::Type{IOBuffer}) = io
 
 function grpc_async_await(req::gRPCRequest, TResponse)
     grpc_async_await(req)
