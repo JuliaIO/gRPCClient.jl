@@ -87,7 +87,7 @@ Note that `close(rpc)` may block forever, as it depends on
 the call being shut down by the server logic. In such cases, 
 [`detach(rpc)`](@ref) may be a better option. 
 """
-function Base.close(rpc::AbstractgRPCCall)
+@inline function Base.close(rpc::AbstractgRPCCall)
     isstreaming_request(rpc) && close(rpc.request_channel)
     try
         grpc_async_await(rpc.req)
@@ -108,7 +108,7 @@ If `throws`, any exception caught during the lifetime of `rpc` will be thrown.
 The stored exception is replaced with  CANCELLED, which will be thrown on 
 future calls to `detach` or `close`. 
 """
-function Base.detach(rpc::AbstractgRPCCall; throws::Bool = true)
+@inline function Base.detach(rpc::AbstractgRPCCall; throws::Bool = true)
     grpc = rpc.req.grpc::gRPCCURL
     prev_ex = @lock grpc.lock rpc.req.ex
 
@@ -135,11 +135,11 @@ Tells whether `rpc` is still open.
 
 If false, either all responses have been received or an error has occured.
 """
-Base.isopen(rpc::AbstractgRPCCall) = isopen(rpc.req)
+@inline Base.isopen(rpc::AbstractgRPCCall) = isopen(rpc.req)
 
 # Overload of Base.put! should be in generated code to  
 # enable IDE suggestions of msg type. 
-function _put!(rpc::StreamingRequestRPC, msg; done::Bool = false) 
+@inline function _put!(rpc::StreamingRequestRPC, msg; done::Bool = false) 
     try
         put!(rpc.request_channel, msg)
     catch ex
@@ -172,7 +172,7 @@ Sends a request message `msg` (if provided) over a client-streaming RPC.
 If `done = true`, the server will be notified that the client is done
 sending more messages. Future calls to `put!` will result in an exception. 
 """
-function Base.put!(rpc::StreamingRequestRPC; done::Bool)
+@inline function Base.put!(rpc::StreamingRequestRPC; done::Bool)
     done && close(rpc.request_channel)
     return nothing
 end
@@ -187,7 +187,7 @@ If `true`, a subsequent call to `put!` will likely be blocking.
 If `false`, a subsequent call to `put!` will not be blocking. 
 """ 
 @static if @isdefined(isfull) # Not available in 1.10
-    Base.isfull(rpc::StreamingRequestRPC) = isfull(rpc.request_channel)
+    @inline Base.isfull(rpc::StreamingRequestRPC) = isfull(rpc.request_channel)
 end
 
 """
@@ -200,16 +200,16 @@ If the `rpc` has streaming requests, the request stream will be closed.
 
 If the response of `rpc` is not of interest, `close` may be used to avoid decoding. 
 """
-function Base.fetch(rpc::UnaryResponseRPC)
+@inline function Base.fetch(rpc::UnaryResponseRPC)
     if isstreaming_request(rpc)
         put!(rpc, done = true)
     end
     return decode(ProtoDecoder(grpc_async_await(rpc.req, IOBuffer)), response_type(rpc))
 end
 
-function Base.fetch(rpc::UnaryResponseRPC, ::Type{Vector{UInt8}})
+@inline function Base.fetch(rpc::UnaryResponseRPC, ::Type{Vector{UInt8}})
     if isstreaming_request(rpc)
-        put!(rpc, done = true)
+        put!(rpc)
     end
     io = grpc_async_await(rpc.req, IOBuffer)
     return read(seekstart(io))
@@ -221,7 +221,7 @@ end
 
 Waits for an RPC with unary response to be ready to return its response. 
 """
-function Base.wait(rpc::UnaryResponseRPC)
+@inline function Base.wait(rpc::UnaryResponseRPC)
     wait(rpc.req)
     !isnothing(rpc.req.ex) && throw(rpc.req.ex)
     return nothing
@@ -233,13 +233,13 @@ end
 
 Check whether `fetch(rpc)` or `take!` is ready to return a response (or throw an exception) once called. 
 """
-function Base.isready(rpc::UnaryResponseRPC)
+@inline function Base.isready(rpc::UnaryResponseRPC)
     return !isopen(rpc) && isnothing(rpc.req.ex)
 end
 
 for f in (:wait, :isready)
     eval(quote
-        function Base.$f(rpc::StreamingResponseRPC)
+        @inline function Base.$f(rpc::StreamingResponseRPC)
             try
                 $(f)(rpc.response_channel)
             catch ex
@@ -264,7 +264,7 @@ end
 
 for f in (:take!, :fetch)
     eval(quote
-        function Base.$f(rpc::StreamingResponseRPC)
+        @inline function Base.$f(rpc::StreamingResponseRPC)
             try
                 io = $(f)(rpc.response_channel)
                 seekstart(io)

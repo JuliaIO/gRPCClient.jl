@@ -141,16 +141,16 @@ Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNum
     const TestRequest::DataType = Base.parentmodule(TestService).TestRequest
 
     # TestService.TestRPC
-    function TestRPC(chan::gRPCClient.gRPCChannel, req::TestRequest; kws...)
+    Base.@inline function TestRPC(chan::gRPCClient.gRPCChannel, req::TestRequest; kws...)
         gRPCClient.grpc_call_unary_sync(chan, typeof(TestRPC), req; kws...)::TestResponse
     end
-    function TestRPC(chan::gRPCClient.gRPCChannel, req::TestRequest, ::gRPCClient.gRPCAsync; kws...) 
+    Base.@inline function TestRPC(chan::gRPCClient.gRPCChannel, req::TestRequest, ::gRPCClient.gRPCAsync; kws...) 
         gRPCClient.grpc_call_unary_async(chan, typeof(TestRPC), req; kws...)::gRPCClient.AbstractgRPCCall
     end
-    function TestRPC(chan::gRPCClient.gRPCChannel, req::TestRequest, response_ch::Base.Channel, index::Integer; kws...)::Nothing
+    Base.@inline function TestRPC(chan::gRPCClient.gRPCChannel, req::TestRequest, response_ch::Base.Channel, index::Integer; kws...)::Nothing
         gRPCClient.grpc_call_unary_async(chan, typeof(TestRPC), req, response_ch, index; kws...)
     end
-    function TestRPC(host::AbstractString, port::Integer, req::TestRequest, args...; kws...)
+    Base.@inline function TestRPC(host::AbstractString, port::Integer, req::TestRequest, args...; kws...)
         TestRPC(gRPCChannel(host, port), req::TestRequest, args...; kws...)
     end
     gRPCClient.rpc_path(::Type{typeof(TestRPC)}) = "/test.TestService/TestRPC"
@@ -165,10 +165,10 @@ Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNum
 
 
     # TestService.TestServerStreamRPC
-    function TestServerStreamRPC(chan::gRPCClient.gRPCChannel, req::TestRequest; kws...)
+    Base.@inline function TestServerStreamRPC(chan::gRPCClient.gRPCChannel, req::TestRequest; kws...)
         gRPCClient.grpc_call_stream_response(chan, typeof(TestServerStreamRPC), req; kws...)::gRPCClient.AbstractgRPCCall
     end
-    function TestServerStreamRPC(host::AbstractString, port::Integer, req::TestRequest; kws...)
+    Base.@inline function TestServerStreamRPC(host::AbstractString, port::Integer, req::TestRequest; kws...)
         TestServerStreamRPC(gRPCChannel(host, port), req; kws...)
     end
     gRPCClient.rpc_path(::Type{typeof(TestServerStreamRPC)}) = "/test.TestService/TestServerStreamRPC"
@@ -183,14 +183,14 @@ Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNum
 
 
     # TestService.TestClientStreamRPC
-    function TestClientStreamRPC(chan::gRPCClient.gRPCChannel; kws...)
+    Base.@inline function TestClientStreamRPC(chan::gRPCClient.gRPCChannel; kws...)
         gRPCClient.grpc_call_stream_request(chan, typeof(TestClientStreamRPC); kws...)::gRPCClient.AbstractgRPCCall
     end
-    function TestClientStreamRPC(host::AbstractString, port::Integer; kws...)
+    Base.@inline function TestClientStreamRPC(host::AbstractString, port::Integer; kws...)
         TestClientStreamRPC(gRPCChannel(host, port); kws...)
     end
-    Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof(TestClientStreamRPC)}, msg::TestRequest; kws...) = gRPCClient._put!(handle, msg; kws...)
-    Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof(TestClientStreamRPC)}, msg::Base.Vector{UInt8}; kws...) = gRPCClient._put!(handle, msg; kws...)
+    Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof(TestClientStreamRPC)}, msg::TestRequest; kws...) = gRPCClient._put!(handle, msg; kws...)
+    Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof(TestClientStreamRPC)}, msg::Base.Vector{UInt8}; kws...) = gRPCClient._put!(handle, msg; kws...)
     gRPCClient.rpc_path(::Type{typeof(TestClientStreamRPC)}) = "/test.TestService/TestClientStreamRPC"
     gRPCClient.isstreaming_request(::Type{typeof(TestClientStreamRPC)}) = true
     gRPCClient.isstreaming_response(::Type{typeof(TestClientStreamRPC)}) = false
@@ -203,14 +203,14 @@ Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNum
 
 
     # TestService.TestBidirectionalStreamRPC
-    function TestBidirectionalStreamRPC(chan::gRPCClient.gRPCChannel; kws...)
+    Base.@inline function TestBidirectionalStreamRPC(chan::gRPCClient.gRPCChannel; kws...)
         gRPCClient.grpc_call_bidirectional_stream(chan, typeof(TestBidirectionalStreamRPC); kws...)::gRPCClient.AbstractgRPCCall
     end
-    function TestBidirectionalStreamRPC(host::AbstractString, port::Integer; kws...)
+    Base.@inline function TestBidirectionalStreamRPC(host::AbstractString, port::Integer; kws...)
         TestBidirectionalStreamRPC(gRPCChannel(host, port); kws...)
     end
-    Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof(TestBidirectionalStreamRPC)}, msg::TestRequest; kws...) = gRPCClient._put!(handle, msg; kws...)
-    Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof(TestBidirectionalStreamRPC)}, msg::Base.Vector{UInt8}; kws...) = gRPCClient._put!(handle, msg; kws...)
+    Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof(TestBidirectionalStreamRPC)}, msg::TestRequest; kws...) = gRPCClient._put!(handle, msg; kws...)
+    Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof(TestBidirectionalStreamRPC)}, msg::Base.Vector{UInt8}; kws...) = gRPCClient._put!(handle, msg; kws...)
     gRPCClient.rpc_path(::Type{typeof(TestBidirectionalStreamRPC)}) = "/test.TestService/TestBidirectionalStreamRPC"
     gRPCClient.isstreaming_request(::Type{typeof(TestBidirectionalStreamRPC)}) = true
     gRPCClient.isstreaming_response(::Type{typeof(TestBidirectionalStreamRPC)}) = true
