@@ -78,6 +78,23 @@ function Base.show(io::IO, rpc::AbstractgRPCCall)
     end
 end
 
+function handle_channel_exception(ex, rpc, newex)
+    if isa(ex, InvalidStateException) && ex.state === :closed
+        # The channel may have been closed before the shutdown procedure
+        # was complete. Obtain the lock for a correct diagnosis. 
+        grpc = rpc.req.grpc::gRPCCURL
+        lock(grpc.lock) do 
+            if !isopen(rpc.req) 
+                if !isnothing(rpc.req.ex)
+                    throw(rpc.req.ex)
+                end
+                throw(newex)
+            end
+        end
+    end
+    rethrow()
+end
+
 """
     close(rpc::AbstractgRPCCall)
 
@@ -143,28 +160,16 @@ If false, either all responses have been received or an error has occured.
     try
         put!(rpc.request_channel, msg)
     catch ex
-        if isa(ex, InvalidStateException) && ex.state === :closed
-            # The channel may have been closed before the shutdown procedure
-            # was complete. Obtain the lock for a correct diagnosis. 
-            grpc = rpc.req.grpc::gRPCCURL
-            lock(grpc.lock) do 
-                if !isopen(rpc.req) 
-                    if !isnothing(rpc.req.ex)
-                        throw(rpc.req.ex)
-                    end
-                    throw(gRPCServiceCallException(GRPC_OK, "Call has already been completed."))
-                end
-            end
-        end
+        handle_channel_exception(ex, rpc, gRPCServiceCallException(GRPC_OK, "Call has already been completed."))
     end 
     done && close(rpc.request_channel)
     return nothing
 end
 
 """
-    put!(rpc::gRPCBidirectionalStreamCall, msg[; done::Bool = false])
-    put!(rpc::gRPCBidirectionalStreamCall; done::Bool)
+    put!(rpc::gRPCBidirectionalStreamCall, msg[; done::Bool = false])    
     put!(rpc::gRPCClientStreamCall, msg[; done::Bool = false])
+    put!(rpc::gRPCBidirectionalStreamCall; done::Bool)
     put!(rpc::gRPCClientStreamCall; done::Bool)
 
 Sends a request message `msg` (if provided) over a client-streaming RPC. 
@@ -193,10 +198,14 @@ end
 """
     fetch(rpc::gRPCUnaryCall)
     fetch(rpc::gRPCClientStreamCall)
+    fetch(..., Vector{UInt8})
 
 Reads the response of `rpc`, cleanup resources and throw any exception caught. 
 
 If the `rpc` has streaming requests, the request stream will be closed.
+
+If `Vector{UInt8}` is provided as the second argument, the response 
+will be returned without decoding the proto format. 
 
 If the response of `rpc` is not of interest, `close` may be used to avoid decoding. 
 """
@@ -209,7 +218,7 @@ end
 
 @inline function Base.fetch(rpc::UnaryResponseRPC, ::Type{Vector{UInt8}})
     if isstreaming_request(rpc)
-        put!(rpc)
+        put!(rpc, done = true)
     end
     io = grpc_async_await(rpc.req, IOBuffer)
     return read(seekstart(io))
@@ -237,85 +246,93 @@ Check whether `fetch(rpc)` or `take!` is ready to return a response (or throw an
     return !isopen(rpc) && isnothing(rpc.req.ex)
 end
 
-for f in (:wait, :isready)
-    eval(quote
-        @inline function Base.$f(rpc::StreamingResponseRPC)
-            try
-                $(f)(rpc.response_channel)
-            catch ex
-                if isa(ex, InvalidStateException) && ex.state === :closed
-                    # The channel may have been closed before the shutdown procedure
-                    # was complete. Obtain the lock for a correct diagnosis. 
-                    grpc = rpc.req.grpc::gRPCCURL
-                    lock(grpc.lock) do 
-                        if !isopen(rpc.req) 
-                            if !isnothing(rpc.req.ex)
-                                throw(rpc.req.ex)
-                            end
-                            throw(gRPCServiceCallException(GRPC_OK, "Call has already been completed and no more responses are available. "))
-                        end
-                    end
-                end
-                rethrow()
-            end 
-        end
-    end)
-end
-
-for f in (:take!, :fetch)
-    eval(quote
-        @inline function Base.$f(rpc::StreamingResponseRPC)
-            try
-                io = $(f)(rpc.response_channel)
-                seekstart(io)
-                decode(ProtoDecoder(io), response_type(rpc))
-            catch ex
-                if isa(ex, InvalidStateException) && ex.state === :closed
-                    # The channel may have been closed before the shutdown procedure
-                    # was complete. Obtain the lock for a correct diagnosis. 
-                    grpc = rpc.req.grpc::gRPCCURL
-                    lock(grpc.lock) do 
-                        if !isopen(rpc.req) 
-                            if !isnothing(rpc.req.ex)
-                                throw(rpc.req.ex)
-                            end
-                            throw(gRPCServiceCallException(GRPC_OK, "Call has already been completed and no more responses are available. "))
-                        end
-                    end
-                end
-                rethrow()
-            end
-        end
-    end)
-end
-
-@doc """
-    take!(rpc::gRPCServerStreamCall)
-    take!(rpc::gRPCBidirectionalStreamCall)
-
-Remove and return a recevied response from a stream. Blocks unless a response is already available. 
-""" Base.take!
-
-@doc """
-    fetch(rpc::gRPCServerStreamCall)
-    fetch(rpc::gRPCBidirectionalStreamCall)
-
-Return a recevied response from a response stream. Blocks unless a response is already available. 
-
-Note that `fetch` does not remove the response, so repeated calls will return the same
-value. In most scenarios, [`take!`](@ref) is the preferred option for response streams. 
-""" Base.fetch
-
-@doc """
+"""
     wait(rpc::gRPCServerStreamCall)
     wait(rpc::gRPCBidirectionalStreamCall)
 
 Wait until a response becomes available. 
-""" Base.wait
+"""
+@inline function Base.wait(rpc::StreamingResponseRPC)
+    try
+        wait(rpc.response_channel)
+    catch ex
+        handle_channel_exception(ex, rpc, gRPCServiceCallException(GRPC_OK, "Call has already been completed and no more responses are available. "))
+    end 
+end
 
-@doc """
+"""
     isready(rpc::gRPCServerStreamCall)
     isready(rpc::gRPCBidirectionalStreamCall)
 
 Tells whether the response stream has a message available which has not yet been removed by `take!`.
-""" Base.isready
+"""
+@inline function Base.isready(rpc::StreamingResponseRPC)
+    try
+        isready(rpc.response_channel)
+    catch ex
+        handle_channel_exception(ex, rpc, gRPCServiceCallException(GRPC_OK, "Call has already been completed and no more responses are available. "))
+    end 
+end
+
+"""
+    take!(rpc::gRPCServerStreamCall)
+    take!(rpc::gRPCBidirectionalStreamCall)
+    take!(..., Vector{UInt8})
+
+Remove and return a recevied response from a stream. Blocks unless a response is already available. 
+
+If `Vector{UInt8}` is provided as the second argument, the response 
+will be returned without decoding the proto format. 
+"""
+@inline function Base.take!(rpc::StreamingResponseRPC)
+    try
+        io = take!(rpc.response_channel)
+        seekstart(io)
+        decode(ProtoDecoder(io), response_type(rpc))
+    catch ex
+        handle_channel_exception(ex, rpc, gRPCServiceCallException(GRPC_OK, "Call has already been completed and no more responses are available. "))
+    end
+end
+
+@inline function Base.take!(rpc::StreamingResponseRPC, ::Type{Vector{UInt8}})
+    try
+        io = take!(rpc.response_channel)
+        seekstart(io)
+        read(io)::Vector{UInt8}
+    catch ex
+        handle_channel_exception(ex, rpc, gRPCServiceCallException(GRPC_OK, "Call has already been completed and no more responses are available. "))
+    end
+end
+
+"""
+    fetch(rpc::gRPCServerStreamCall)
+    fetch(rpc::gRPCBidirectionalStreamCall)
+    fetch(..., Vector{UInt8})
+
+Return a recevied response from a response stream. Blocks unless a response is already available. 
+
+If `Vector{UInt8}` is provided as the second argument, the response 
+will be returned without decoding the proto format. 
+
+Note that `fetch` does not remove the response, so repeated calls will return the same
+value. In most scenarios, [`take!`](@ref) is the preferred option for response streams. 
+"""
+@inline function Base.fetch(rpc::StreamingResponseRPC)
+    try
+        io = fetch(rpc.response_channel)
+        seekstart(io)
+        decode(ProtoDecoder(io), response_type(rpc))
+    catch ex
+        handle_channel_exception(ex, rpc, gRPCServiceCallException(GRPC_OK, "Call has already been completed and no more responses are available. "))
+    end
+end
+
+@inline function Base.fetch(rpc::StreamingResponseRPC, ::Type{Vector{UInt8}})
+    try
+        io = fetch(rpc.response_channel)
+        seekstart(io)
+        read(io)::Vector{UInt8}
+    catch ex
+        handle_channel_exception(ex, rpc, gRPCServiceCallException(GRPC_OK, "Call has already been completed and no more responses are available. "))
+    end
+end

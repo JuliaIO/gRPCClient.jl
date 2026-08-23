@@ -127,19 +127,16 @@ function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGener
             # $service_name.$(rpc.name)
         """)
 
-        if !rpc.request_stream && !rpc.response_stream
+        if !rpc.request_stream && !rpc.response_stream 
             print(io, """
-                Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type; kws...)
-                    gRPCClient.grpc_call_unary_sync(chan, typeof($(rpc.name)), req; kws...)::$response_type
+                Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type, args...; kws...)
+                    gRPCClient.grpc_call_unary(chan, typeof($(rpc.name)), req, args...; kws...)
                 end
-                Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type, ::gRPCClient.gRPCAsync; kws...) 
-                    gRPCClient.grpc_call_unary_async(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.AbstractgRPCCall
+                Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::Base.Vector{UInt8}, args...; kws...)
+                    gRPCClient.grpc_call_unary(chan, typeof($(rpc.name)), req, args...; kws...)
                 end
-                Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type, response_ch::Base.Channel, index::Integer; kws...)::Nothing
-                    gRPCClient.grpc_call_unary_async(chan, typeof($(rpc.name)), req, response_ch, index; kws...)
-                end
-                Base.@inline function $(rpc.name)(host::AbstractString, port::Integer, req::$request_type, args...; kws...)
-                    $(rpc.name)(gRPCChannel(host, port), req::$request_type, args...; kws...)
+                Base.@inline function $(rpc.name)(host::AbstractString, port::Integer, args...; kws...)
+                    $(rpc.name)(gRPCChannel(host, port), args...; kws...)
                 end
             """)
         elseif rpc.request_stream && !rpc.response_stream
@@ -158,7 +155,10 @@ function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGener
                 Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type; kws...)
                     gRPCClient.grpc_call_stream_response(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.AbstractgRPCCall
                 end
-                Base.@inline function $(rpc.name)(host::AbstractString, port::Integer, req::$request_type; kws...)
+                Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::Base.Vector{UInt8}; kws...)
+                    gRPCClient.grpc_call_stream_response(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.AbstractgRPCCall
+                end
+                Base.@inline function $(rpc.name)(host::AbstractString, port::Integer, req; kws...)
                     $(rpc.name)(gRPCChannel(host, port), req; kws...)
                 end
             """)
@@ -279,20 +279,28 @@ end
 
 # Methods to be called from generated code only
 # Unary sync
-@inline function grpc_call_unary_sync(chan::gRPCChannel, ::Type{Trpc}, req; kws...) where {Trpc <: Function}
-    client = _client(chan, Trpc)
-    decode(ProtoDecoder(grpc_sync_request(client, req)), response_type(Trpc))
+@inline function grpc_call_unary(chan::gRPCChannel, ::Type{Trpc}, req::TRequest; kws...) where {Trpc <: Function, TRequest}
+    @assert TRequest in (Vector{UInt8}, request_type(Trpc))
+    client = _client(chan, Trpc, TRequest, response_type(Trpc))
+    grpc_sync_request(client, req)
+end
+@inline function grpc_call_unary(chan::gRPCChannel, ::Type{Trpc}, req::TRequest, ::Type{Vector{UInt8}}; kws...) where {Trpc <: Function, TRequest}
+    @assert TRequest in (Vector{UInt8}, request_type(Trpc))
+    client = _client(chan, Trpc, TRequest, Vector{UInt8})
+    grpc_sync_request(client, req)
 end
 # Unary async
-@inline function grpc_call_unary_async(chan::gRPCChannel, ::Type{Trpc}, req; kws...) where {Trpc <: Function}
-    client = _client(chan, Trpc)
+@inline function grpc_call_unary(chan::gRPCChannel, ::Type{Trpc}, req::TRequest, ::gRPCAsync; kws...) where {Trpc <: Function, TRequest}
+    @assert TRequest in (Vector{UInt8}, request_type(Trpc))
+    client = _client(chan, Trpc, TRequest)
     return gRPCUnaryCall{Trpc}(
         grpc_async_request(client, req; kws...)
     )
 end
 # Unary async channel
-@inline function grpc_call_unary_async(chan::gRPCChannel, ::Type{Trpc}, req, ch::Channel{gRPCAsyncChannelResponse{TResponse}}, index::Integer; kws...) where {Trpc <: Function, TResponse}
-    client = _client(chan, Trpc, request_type(Trpc), TResponse)
+@inline function grpc_call_unary(chan::gRPCChannel, ::Type{Trpc}, req::TRequest, ch::Channel{gRPCAsyncChannelResponse{TResponse}}, index::Integer; kws...) where {Trpc <: Function, TRequest, TResponse}
+    @assert TRequest in (Vector{UInt8}, request_type(Trpc))
+    client = _client(chan, Trpc, TRequest, TResponse)
     grpc_async_request(client, req, ch, index; kws...)
     return nothing
 end
@@ -307,8 +315,9 @@ end
     )
 end
 # Stream response
-@inline function grpc_call_stream_response(chan::gRPCChannel, ::Type{Trpc}, req; response_channel_size::Int = 16, kws...) where {Trpc <: Function}
-    client = _client(chan, Trpc)
+@inline function grpc_call_stream_response(chan::gRPCChannel, ::Type{Trpc}, req::TRequest; response_channel_size::Int = 16, kws...) where {Trpc <: Function, TRequest}
+    @assert TRequest in (Vector{UInt8}, request_type(Trpc))
+    client = _client(chan, Trpc, TRequest)
     response_c = Channel{IOBuffer}(response_channel_size)
     return gRPCServerStreamCall{Trpc}(
         grpc_async_request(client, req, response_c; kws...), 
@@ -350,6 +359,11 @@ function _docstring_unary(@nospecialize(Trpc), request_type_displayed, response_
     Treq = request_type(Trpc)
     return """
         $fname(chan::gRPCChannel, req::$(Treq); options...)
+        $fname(chan::gRPCChannel, req::Vector{UInt8}; options...)
+        $fname(chan::gRPCChannel, req, Vector{UInt8}; options...)
+        $fname(chan::gRPCChannel, req, gRPCAsync(); options...)
+        $fname(chan::gRPCChannel, req, ch::Channel{gRPCAsyncChannelResponse}, idx::Integer; options...)
+        $fname(host::String, port::Integer, args...; options...)
 
     Auto-generated remote procedure call (RPC) for use with `gRPCCLient.jl`. 
     
@@ -359,6 +373,17 @@ function _docstring_unary(@nospecialize(Trpc), request_type_displayed, response_
     |---------------|-------------|------|
     | Request  | unary | $request_type_displayed |
     | Response | unary | $response_type_displayed |
+
+    # Syntax
+
+    The request message may be either a `$(request_type_displayed)` or a `Vector{UInt8}` 
+    containing already proto encoded data. 
+
+    The response can handled in different ways:
+    * Wait for a result and return it immediately (default).
+    * Return a handle which can be used to `fetch` the result later (provide `gRPCAsync()` as an extra argument).
+    * Return a partially encoded result (provide `Vector{UInt8}` as an extra argument). 
+    * Store results from multiple calls in the order in which they arrive (provide a `Channel{gRPCAsyncChannelResponse}` and an index as extra arguments). 
 
     # Options
 
@@ -475,6 +500,7 @@ function _docstring_serverstream(@nospecialize(Trpc), request_type_displayed, re
     Treq = request_type(Trpc)
     return """
         $fname(chan::gRPCChannel, req::$(Treq); options...)
+        $fname(chan::gRPCChannel, req::Vector{UInt8}; options...)
 
     Auto-generated remote procedure call (RPC) for use with `gRPCCLient.jl`. 
     

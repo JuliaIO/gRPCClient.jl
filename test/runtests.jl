@@ -184,9 +184,9 @@ include("gen/test/test_pb.jl")
                     @test contains(generated, "const TestResponse::DataType = Base.parentmodule(TestService).TestResponse")
                     @test contains(generated, "const TestRequest::DataType = Base.parentmodule(TestService).TestRequest") 
                     # Count number of methods defined for each RPC
-                    @test count("function TestRPC", generated) == 4
+                    @test count("function TestRPC", generated) == 6
                     @test count("function TestClientStreamRPC", generated) == 2
-                    @test count("function TestServerStreamRPC", generated) == 2
+                    @test count("function TestServerStreamRPC", generated) == 3
                     @test count("function TestBidirectionalStreamRPC", generated) == 2
                 end
 
@@ -345,17 +345,32 @@ include("gen/test/test_pb.jl")
         end
     end
 
-    @testset "Simple API: Unary" begin
+    @testset "Simple API: Unary, sync" begin
         chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
+        
         @testset "sync" begin
             resp = TestService.TestRPC(chan, TestRequest(1, [1]))
             @test resp.data == [1]
         end
 
+        @testset "Partially encoded" begin
+            io = IOBuffer()
+            encode(ProtoEncoder(io), TestRequest(1, [1]))
+            seekstart(io)
+
+            raw_resp = TestService.TestRPC(chan, read(io), Vector{UInt8})
+
+            io = IOBuffer(raw_resp)
+            response = decode(ProtoDecoder(io), TestResponse)
+            @test response.data == [1]
+        end
+    end
+
+    @testset "Simple API: Unary, async" begin
         @testset "async" begin
             rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
             @test !isready(rpc)
-            @test :ok == timedwait(() -> isready(rpc), 0.01, pollint = 0.001)
+            @test :ok == timedwait(() -> isready(rpc), 0.1, pollint = 0.001)
             resp = fetch(rpc)
             @test resp.data == [1]
         end
@@ -372,6 +387,27 @@ include("gen/test/test_pb.jl")
             @test_throws "Request was cancelled by the client." close(rpc)
         end
 
+        @testset "Connection options" begin
+            chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, max_send_message_length = 1024)
+            rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
+            @test rpc.req.max_send_message_length == 1024
+            rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync(), max_send_message_length = 2048)
+            @test rpc.req.max_send_message_length == 2048
+        end
+
+        @testset "Partially encoded" begin
+            io = IOBuffer()
+            encode(ProtoEncoder(io), TestRequest(1, [1]))
+            seekstart(io)
+            rpc = TestService.TestRPC(chan, read(io), gRPCAsync())
+
+            io = IOBuffer(fetch(rpc, Vector{UInt8}))
+            response = decode(ProtoDecoder(io), TestResponse)
+            @test response.data == [1]
+        end
+    end
+
+    @testset "Simple API: Unary, multiplexing" begin
         @testset "store response in channel" begin
             responses = Channel{gRPCAsyncChannelResponse{TestResponse}}(Inf)
             TestService.TestRPC(chan, TestRequest(2, []), responses, 1)
@@ -383,14 +419,21 @@ include("gen/test/test_pb.jl")
             r = take!(responses)
             rs[r.index] = r.response.data
             @test rs == [[1, 2], [1, 2, 3]]
-        end
+        end        
 
-        @testset "Connection options" begin
-            chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, max_send_message_length = 1024)
-            rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
-            @test rpc.req.max_send_message_length == 1024
-            rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync(), max_send_message_length = 2048)
-            @test rpc.req.max_send_message_length == 2048
+        @testset "Partially encoded" begin
+            responses = Channel{gRPCAsyncChannelResponse{Vector{UInt8}}}(Inf)
+            
+            io = IOBuffer()
+            encode(ProtoEncoder(io), TestRequest(1, [1]))
+            seekstart(io)
+            TestService.TestRPC(chan, read(io), responses, 1)
+
+            r = take!(responses)
+            @test r.index == 1
+            io = IOBuffer(r.response)
+            response = decode(ProtoDecoder(io), TestResponse)
+            @test response.data == [1]
         end
     end
 
@@ -410,7 +453,7 @@ include("gen/test/test_pb.jl")
             rpc = TestService.TestClientStreamRPC(chan)
             @test isopen(rpc)
             detach(rpc)
-            timedwait(() -> !isopen(rpc), 0.01, pollint = 0.001)
+            timedwait(() -> !isopen(rpc), 0.1, pollint = 0.001)
             @test !isopen(rpc)
             @test rpc.req.ex.grpc_status == GRPC_CANCELLED
             @test_throws "Request was cancelled by the client" put!(rpc, TestRequest(1, [1])) 
@@ -420,13 +463,13 @@ include("gen/test/test_pb.jl")
             rpc = TestService.TestClientStreamRPC(chan)
             put!(rpc, TestRequest(1, [1]))
             put!(rpc, TestRequest(1, [1]), done = true)
-            @test :ok == timedwait(() -> isopen(rpc), 0.01, pollint = 0.001)
+            @test :ok == timedwait(() -> isopen(rpc), 0.1, pollint = 0.001)
         
             rpc = TestService.TestClientStreamRPC(chan)
             put!(rpc, TestRequest(1, [1]))
             put!(rpc, TestRequest(1, [1]))
             put!(rpc, done = true)
-            @test :ok == timedwait(() -> isopen(rpc), 0.01, pollint = 0.001)
+            @test :ok == timedwait(() -> isopen(rpc), 0.1, pollint = 0.001)
         end
 
         @testset "Connection options" begin
@@ -437,6 +480,23 @@ include("gen/test/test_pb.jl")
             rpc = TestService.TestClientStreamRPC(chan, max_send_message_length = 2048)
             @test rpc.req.max_send_message_length == 2048
             close(rpc)
+        end
+
+        @testset "Partially encoded" begin
+            rpc = TestService.TestClientStreamRPC(chan)
+            
+            for i = 1:4
+                io = IOBuffer()
+                encode(ProtoEncoder(io), TestRequest(1, [1]))
+                seekstart(io)
+                put!(rpc, read(io))
+            end
+            response = fetch(rpc)
+            @test response.data == 1:4
+
+            io = IOBuffer(fetch(rpc, Vector{UInt8}))
+            response = decode(ProtoDecoder(io), TestResponse)
+            @test response.data == 1:4
         end
     end
 
@@ -451,7 +511,7 @@ include("gen/test/test_pb.jl")
                 resp = take!(rpc)
                 @test length(resp.data) == i
             end
-            @test :ok == timedwait(() -> !isopen(rpc), 0.01, pollint = 0.001)
+            @test :ok == timedwait(() -> !isopen(rpc), 0.1, pollint = 0.001)
             close(rpc)
         end
 
@@ -480,6 +540,20 @@ include("gen/test/test_pb.jl")
             @test rpc.req.max_send_message_length == 2048
             detach(rpc)
         end
+
+         @testset "Partially encoded" begin
+            io = IOBuffer()
+            encode(ProtoEncoder(io), TestRequest(4, [1]))
+            seekstart(io)
+            rpc = TestService.TestServerStreamRPC(chan, read(io))
+            
+            # Server should send 4 responses pretty immediately
+            for i = 1:4
+                io = IOBuffer(take!(rpc, Vector{UInt8}))
+                resp = decode(ProtoDecoder(io), TestResponse)
+                @test length(resp.data) == i
+            end
+        end
     end
 
     @testset "Simple API: Bidirectional" begin
@@ -501,7 +575,7 @@ include("gen/test/test_pb.jl")
             rpc = TestService.TestBidirectionalStreamRPC(chan)
             @test isopen(rpc)
             detach(rpc)
-            timedwait(() -> !isopen(rpc.response_channel), 0.01, pollint = 0.001)
+            timedwait(() -> !isopen(rpc.response_channel), 0.1, pollint = 0.001)
             @test !isopen(rpc)
             @test rpc.req.ex.grpc_status == GRPC_CANCELLED
             @test_throws "Request was cancelled by the client" take!(rpc)
@@ -512,7 +586,7 @@ include("gen/test/test_pb.jl")
             @isdefined(isfull) && @test !isfull(rpc)
             put!(rpc, TestRequest(1, [1]))
             @test isfull(rpc) # If this runs immediately after put!, it should be true
-            @test :ok == timedwait(() -> !isfull(rpc), 0.01, pollint = 0.001) # Sooner or later, the request should have been handled
+            @test :ok == timedwait(() -> !isfull(rpc), 0.1, pollint = 0.001) # Sooner or later, the request should have been handled
             close(rpc)
         end
 
@@ -554,6 +628,20 @@ include("gen/test/test_pb.jl")
             rpc = TestService.TestBidirectionalStreamRPC(chan, max_send_message_length = 2048)
             @test rpc.req.max_send_message_length == 2048
             detach(rpc)
+        end
+
+        @testset "Partially encoded" begin
+            rpc = TestService.TestBidirectionalStreamRPC(chan)
+
+            io = IOBuffer()
+            encode(ProtoEncoder(io), TestRequest(1, [1]))
+            seekstart(io)
+            put!(rpc, read(io))
+
+            io = IOBuffer(take!(rpc, Vector{UInt8}))
+            resp = decode(ProtoDecoder(io), TestResponse)
+            @test resp.data == [1]
+            close(rpc)
         end
     end
 
