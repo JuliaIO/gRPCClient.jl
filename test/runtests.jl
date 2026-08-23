@@ -184,7 +184,7 @@ include("gen/test/test_pb.jl")
                     @test contains(generated, "const TestResponse::DataType = Base.parentmodule(TestService).TestResponse")
                     @test contains(generated, "const TestRequest::DataType = Base.parentmodule(TestService).TestRequest") 
                     # Count number of methods defined for each RPC
-                    @test count("function TestRPC", generated) == 6
+                    @test count("function TestRPC", generated) == 3
                     @test count("function TestClientStreamRPC", generated) == 2
                     @test count("function TestServerStreamRPC", generated) == 3
                     @test count("function TestBidirectionalStreamRPC", generated) == 2
@@ -367,6 +367,8 @@ include("gen/test/test_pb.jl")
     end
 
     @testset "Simple API: Unary, async" begin
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
+
         @testset "async" begin
             rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
             @test !isready(rpc)
@@ -408,6 +410,8 @@ include("gen/test/test_pb.jl")
     end
 
     @testset "Simple API: Unary, multiplexing" begin
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
+        
         @testset "store response in channel" begin
             responses = Channel{gRPCAsyncChannelResponse{TestResponse}}(Inf)
             TestService.TestRPC(chan, TestRequest(2, []), responses, 1)
