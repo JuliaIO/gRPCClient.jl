@@ -12,10 +12,10 @@ export TestResponse, TestRequest
 struct TestResponse
     data::Vector{UInt64}
 end
-PB.default_values(::Type{TestResponse}) = (; data = Vector{UInt64}())
-PB.field_numbers(::Type{TestResponse}) = (; data = 1)
+PB.default_values(::Type{TestResponse}) = (;data = Vector{UInt64}())
+PB.field_numbers(::Type{TestResponse}) = (;data = 1)
 
-function PB.decode(d::PB.AbstractProtoDecoder, ::Type{<:TestResponse}, _endpos::Int = 0, _group::Bool = false)
+function PB.decode(d::PB.AbstractProtoDecoder, ::Type{<:TestResponse}, _endpos::Int=0, _group::Bool=false)
     data = PB.BufferedVector{UInt64}()
     while !PB.message_done(d, _endpos, _group)
         field_number, wire_type = PB.decode_tag(d)
@@ -43,10 +43,10 @@ struct TestRequest
     test_response_sz::UInt64
     data::Vector{UInt64}
 end
-PB.default_values(::Type{TestRequest}) = (; test_response_sz = zero(UInt64), data = Vector{UInt64}())
-PB.field_numbers(::Type{TestRequest}) = (; test_response_sz = 1, data = 2)
+PB.default_values(::Type{TestRequest}) = (;test_response_sz = zero(UInt64), data = Vector{UInt64}())
+PB.field_numbers(::Type{TestRequest}) = (;test_response_sz = 1, data = 2)
 
-function PB.decode(d::PB.AbstractProtoDecoder, ::Type{<:TestRequest}, _endpos::Int = 0, _group::Bool = false)
+function PB.decode(d::PB.AbstractProtoDecoder, ::Type{<:TestRequest}, _endpos::Int=0, _group::Bool=false)
     test_response_sz = zero(UInt64)
     data = PB.BufferedVector{UInt64}()
     while !PB.message_done(d, _endpos, _group)
@@ -77,54 +77,134 @@ end
 
 # gRPCClient.jl BEGIN
 TestService_TestRPC_Client(
-    host, port;
-    TRequest = TestRequest,
-    TResponse = TestResponse,
-    grpc = gRPCClient.grpc_global_handle(),
-    options...
+	host, port;
+	TRequest=TestRequest,
+	TResponse=TestResponse,
+	grpc=gRPCClient.grpc_global_handle(),
+	options...
 ) = gRPCClient.gRPCServiceClient{TRequest, false, TResponse, false}(
-    host, port, "/test.TestService/TestRPC";
-    grpc = grpc,
-    options...
+	host, port, "/test.TestService/TestRPC";
+	grpc=grpc,
+	options...
 )
 export TestService_TestRPC_Client
 
 TestService_TestServerStreamRPC_Client(
-    host, port;
-    TRequest = TestRequest,
-    TResponse = TestResponse,
-    grpc = gRPCClient.grpc_global_handle(),
-    options...
+	host, port;
+	TRequest=TestRequest,
+	TResponse=TestResponse,
+	grpc=gRPCClient.grpc_global_handle(),
+	options...
 ) = gRPCClient.gRPCServiceClient{TRequest, false, TResponse, true}(
-    host, port, "/test.TestService/TestServerStreamRPC";
-    grpc = grpc,
-    options...
+	host, port, "/test.TestService/TestServerStreamRPC";
+	grpc=grpc,
+	options...
 )
 export TestService_TestServerStreamRPC_Client
 
 TestService_TestClientStreamRPC_Client(
-    host, port;
-    TRequest = TestRequest,
-    TResponse = TestResponse,
-    grpc = gRPCClient.grpc_global_handle(),
-    options...
+	host, port;
+	TRequest=TestRequest,
+	TResponse=TestResponse,
+	grpc=gRPCClient.grpc_global_handle(),
+	options...
 ) = gRPCClient.gRPCServiceClient{TRequest, true, TResponse, false}(
-    host, port, "/test.TestService/TestClientStreamRPC";
-    grpc = grpc,
-    options...
+	host, port, "/test.TestService/TestClientStreamRPC";
+	grpc=grpc,
+	options...
 )
 export TestService_TestClientStreamRPC_Client
 
 TestService_TestBidirectionalStreamRPC_Client(
-    host, port;
-    TRequest = TestRequest,
-    TResponse = TestResponse,
-    grpc = gRPCClient.grpc_global_handle(),
-    options...
+	host, port;
+	TRequest=TestRequest,
+	TResponse=TestResponse,
+	grpc=gRPCClient.grpc_global_handle(),
+	options...
 ) = gRPCClient.gRPCServiceClient{TRequest, true, TResponse, true}(
-    host, port, "/test.TestService/TestBidirectionalStreamRPC";
-    grpc = grpc,
-    options...
+	host, port, "/test.TestService/TestBidirectionalStreamRPC";
+	grpc=grpc,
+	options...
 )
 export TestService_TestBidirectionalStreamRPC_Client
+
+module TestService
+    import ..gRPCClient
+
+    const TestResponse::DataType = Base.parentmodule(@__MODULE__).TestResponse
+    const TestRequest::DataType = Base.parentmodule(@__MODULE__).TestRequest
+
+    # TestService.TestRPC
+    function TestRPC(chan::gRPCClient.gRPCChannel, req::TestRequest; kws...)
+        gRPCClient.grpc_call_unary_sync(chan, typeof(TestRPC), req; kws...)::TestResponse
+    end
+    function TestRPC(chan::gRPCClient.gRPCChannel, req::TestRequest, ::gRPCClient.gRPCAsync; kws...) 
+        gRPCClient.grpc_call_unary_async(chan, typeof(TestRPC), req; kws...)::gRPCClient.gRPCUnaryHandle{typeof(TestRPC)}
+    end
+    function TestRPC(chan::gRPCClient.gRPCChannel, req::TestRequest, response_ch::Channel{gRPCClient.gRPCAsyncChannelResponse{TestResponse}}, index::Integer; kws...)::Nothing
+        gRPCClient.grpc_call_unary_async(chan, typeof(TestRPC), req, response_ch, index; kws...)
+    end
+    function TestRPC(host::AbstractString, port::Integer, req::TestRequest, args...; kws...)
+        TestRPC(gRPCChannel(host, port), req::TestRequest, args...; kws...)
+    end
+    @doc gRPCClient.grpc_generate_rpc_docstring(TestRPC) TestRPC
+    gRPCClient.rpc_path(::Type{typeof(TestRPC)}) = "/test.TestService/TestRPC"
+    gRPCClient.isstreaming_request(::Type{typeof(TestRPC)}) = false
+    gRPCClient.isstreaming_response(::Type{typeof(TestRPC)}) = false
+    gRPCClient.request_type(::Type{typeof(TestRPC)}) = TestRequest
+    gRPCClient.response_type(::Type{typeof(TestRPC)}) = TestResponse
+    export TestRPC
+
+
+    # TestService.TestServerStreamRPC
+    function TestServerStreamRPC(chan::gRPCClient.gRPCChannel, req::TestRequest; kws...)
+        gRPCClient.grpc_call_stream_response(chan, typeof(TestServerStreamRPC), req; kws...)::gRPCClient.gRPCStreamResponseHandle{typeof(TestServerStreamRPC), TestResponse}
+    end
+    function TestServerStreamRPC(host::AbstractString, port::Integer, req::TestRequest; kws...)
+        TestServerStreamRPC(gRPCChannel(host, port), req; kws...)
+    end
+    @doc gRPCClient.grpc_generate_rpc_docstring(TestServerStreamRPC) TestServerStreamRPC
+    gRPCClient.rpc_path(::Type{typeof(TestServerStreamRPC)}) = "/test.TestService/TestServerStreamRPC"
+    gRPCClient.isstreaming_request(::Type{typeof(TestServerStreamRPC)}) = false
+    gRPCClient.isstreaming_response(::Type{typeof(TestServerStreamRPC)}) = true
+    gRPCClient.request_type(::Type{typeof(TestServerStreamRPC)}) = TestRequest
+    gRPCClient.response_type(::Type{typeof(TestServerStreamRPC)}) = TestResponse
+    export TestServerStreamRPC
+
+
+    # TestService.TestClientStreamRPC
+    function TestClientStreamRPC(chan::gRPCClient.gRPCChannel; kws...)
+        gRPCClient.grpc_call_stream_request(chan, typeof(TestClientStreamRPC); kws...)::gRPCClient.gRPCStreamRequestHandle{typeof(TestClientStreamRPC), TestRequest}
+    end
+    function TestClientStreamRPC(host::AbstractString, port::Integer; kws...)
+        TestClientStreamRPC(gRPCChannel(host, port); kws...)
+    end
+    @doc gRPCClient.grpc_generate_rpc_docstring(TestClientStreamRPC) TestClientStreamRPC
+    gRPCClient.rpc_path(::Type{typeof(TestClientStreamRPC)}) = "/test.TestService/TestClientStreamRPC"
+    gRPCClient.isstreaming_request(::Type{typeof(TestClientStreamRPC)}) = true
+    gRPCClient.isstreaming_response(::Type{typeof(TestClientStreamRPC)}) = false
+    gRPCClient.request_type(::Type{typeof(TestClientStreamRPC)}) = TestRequest
+    gRPCClient.response_type(::Type{typeof(TestClientStreamRPC)}) = TestResponse
+    export TestClientStreamRPC
+
+
+    # TestService.TestBidirectionalStreamRPC
+    function TestBidirectionalStreamRPC(chan::gRPCClient.gRPCChannel; kws...)
+        gRPCClient.grpc_call_bidirectional_stream(chan, typeof(TestBidirectionalStreamRPC); kws...)::gRPCClient.gRPCBidirectionalStreamHandle{typeof(TestBidirectionalStreamRPC), TestRequest, TestResponse}
+    end
+    function TestBidirectionalStreamRPC(host::AbstractString, port::Integer; kws...)
+        TestBidirectionalStreamRPC(gRPCChannel(host, port); kws...)
+    end
+    @doc gRPCClient.grpc_generate_rpc_docstring(TestBidirectionalStreamRPC) TestBidirectionalStreamRPC
+    gRPCClient.rpc_path(::Type{typeof(TestBidirectionalStreamRPC)}) = "/test.TestService/TestBidirectionalStreamRPC"
+    gRPCClient.isstreaming_request(::Type{typeof(TestBidirectionalStreamRPC)}) = true
+    gRPCClient.isstreaming_response(::Type{typeof(TestBidirectionalStreamRPC)}) = true
+    gRPCClient.request_type(::Type{typeof(TestBidirectionalStreamRPC)}) = TestRequest
+    gRPCClient.response_type(::Type{typeof(TestBidirectionalStreamRPC)}) = TestResponse
+    export TestBidirectionalStreamRPC
+
+
+end # module TestService
+export TestService
+
 # gRPCClient.jl END
