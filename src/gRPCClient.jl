@@ -86,7 +86,7 @@ include("gRPC.jl")
 include("Unary.jl")
 
 include("Streaming.jl")
-include("gRPCCallHandle.jl")
+include("CallHandles.jl")
 include("ProtoBuf.jl")
 
 export grpc_init
