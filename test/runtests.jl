@@ -345,6 +345,27 @@ include("gen/test/test_pb.jl")
         end
     end
 
+    @testset "Simple API: Generics" begin
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
+        rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
+        @test gRPCClient.request_type(rpc) == TestRequest
+        @test gRPCClient.response_type(rpc) == TestResponse
+        @test gRPCClient.isstreaming_request(rpc) == false
+        @test gRPCClient.isstreaming_response(rpc) == false
+
+        io = IOBuffer()
+        show(io, rpc)
+        str = String(take!(io))
+        @test str == """
+        gRPCClient.gRPCUnaryCall{typeof(Main.TestService.TestRPC)}(...) with properties:
+          RPC           : Main.TestService.TestRPC
+          Request type  : unary TestRequest
+          Response type : unary TestResponse
+          Status        : OK
+          Completed     : false"""
+        close(rpc)
+    end
+
     @testset "Simple API: Unary, sync" begin
         chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
         
@@ -387,6 +408,7 @@ include("gen/test/test_pb.jl")
             @test_throws "Request was cancelled by the client." detach(rpc)
             detach(rpc, throws = false) # does not throw
             @test_throws "Request was cancelled by the client." close(rpc)
+            @test_throws "Request was cancelled by the client." wait(rpc)
         end
 
         @testset "Connection options" begin
@@ -533,6 +555,11 @@ include("gen/test/test_pb.jl")
             # The server should have shut down after sending us 1 response
             @test !isopen(rpc)
             @test_throws "Call has already been completed" take!(rpc)
+            @test_throws "Call has already been completed" take!(rpc, Vector{UInt8})
+            @test_throws "Call has already been completed" fetch(rpc)
+            @test_throws "Call has already been completed" fetch(rpc, Vector{UInt8})
+            @test_throws "Call has already been completed" wait(rpc)
+            @test !isready(rpc)
         end
 
         @testset "Connection options" begin

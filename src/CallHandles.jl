@@ -267,11 +267,7 @@ end
 Tells whether the response stream has a message available which has not yet been removed by `take!`.
 """
 @inline function Base.isready(rpc::StreamingResponseRPC)
-    try
-        isready(rpc.response_channel)
-    catch ex
-        handle_channel_exception(ex, rpc, gRPCServiceCallException(GRPC_OK, "Call has already been completed and no more responses are available. "))
-    end 
+    isready(rpc.response_channel)
 end
 
 """
