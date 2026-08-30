@@ -7,3 +7,4 @@ Manifest.toml
 grpc_test_server
 *.gz 
 *.vscode
+.scratch/

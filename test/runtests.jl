@@ -417,6 +417,129 @@ include("gen/test/test_pb.jl")
         grpc_async_await(req)
     end
 
+    @testset "Response Streaming backpressure: stalled consumer" begin
+        # Regression test for the write_callback blocking deadlock: the streaming
+        # write path must never block inside the curl callback. A consumer that
+        # stops draining used to wedge write_callback in put! while it held the
+        # transport lock, which froze every request on the handle and deadlocked
+        # grpc_cancel / grpc_shutdown (they need that same lock). Now the receive
+        # direction pauses at a frame boundary (CURL_WRITEFUNC_PAUSE) and the
+        # response pump resumes it with curl_easy_pause once a slot frees.
+        # N is large enough that the response stream exceeds
+        # RECV_BACKPRESSURE_BYTES (message i encodes to ~3i bytes of protobuf —
+        # one tag plus one-or-two varint bytes per uint64 — so N=1500 ≈ 3.4 MB),
+        # so with the consumer stalled the receive direction is paused in flight
+        # and the request is still open when the cancel lands: the exact state
+        # that used to deadlock
+        N = 1500
+
+        client = TestService_TestServerStreamRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            deadline = stream_test_deadline,
+        )
+
+        # Capacity 1, and we take exactly one message before stopping: the
+        # "I have what I need, now cancel" pattern that used to hang forever
+        response_c = Channel{TestResponse}(1)
+        req = grpc_async_request(client, TestRequest(N, zeros(UInt64, 1)), response_c)
+        response = take!(response_c)
+        @test length(response.data) == 1
+        sleep(1)   # let the pipe back up behind the stalled consumer
+
+        # grpc_cancel must return promptly instead of waiting on the transport
+        # lock, and an unrelated request on the same handle must proceed
+        cancel_task = @async grpc_cancel(req)
+        other_client = TestService_TestRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            deadline = stream_test_deadline,
+        )
+        other_response = grpc_sync_request(
+            other_client,
+            TestRequest(1, zeros(UInt64, 1)),
+        )
+        @test length(other_response.data) == 1
+        sleep(2)
+        @test istaskdone(cancel_task)
+        @test fetch(cancel_task)
+
+        # await reports the cancellation, and the consumer's channel closes
+        @test_throws gRPCServiceCallException grpc_async_await(req, TestResponse)
+        @test !isopen(response_c)
+    end
+
+    @testset "Response Streaming backpressure: slow consumer, in-order delivery" begin
+        # A consumer slower than the producer forces repeated pause / re-delivery
+        # cycles, including mid-chunk re-delivery (chunk_skip). Every message must
+        # still arrive exactly once, in order, byte-exact.
+        N = 50
+
+        client = TestService_TestServerStreamRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            deadline = stream_test_deadline,
+        )
+
+        response_c = Channel{TestResponse}(1)
+        req = grpc_async_request(client, TestRequest(N, zeros(UInt64, 1)), response_c)
+
+        i = 0
+        for response in response_c
+            i += 1
+            @test length(response.data) == i
+            @test response.data == UInt64.(1:i)
+            i % 7 == 0 && sleep(0.01)   # vary the drain rate
+        end
+        @test i == N
+        grpc_async_await(req)
+    end
+
+    @testset "Response Streaming backpressure: shutdown with stalled consumer" begin
+        # grpc_shutdown must complete even while a streaming response is wedged
+        # behind a consumer that never drains: cleanup closes the channels, which
+        # ends the pump, and the callback is not blocking on any of them. N is
+        # large enough (~3.4 MB, see the stalled-consumer testset) to exceed
+        # RECV_BACKPRESSURE_BYTES so the transfer is paused in flight when the
+        # shutdown lands.
+        N = 1500
+
+        client = TestService_TestServerStreamRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            deadline = stream_test_deadline,
+        )
+
+        response_c = Channel{TestResponse}(1)
+        req = grpc_async_request(client, TestRequest(N, zeros(UInt64, 1)), response_c)
+        response = take!(response_c)
+        @test length(response.data) == 1
+        sleep(1)   # let the pipe back up behind the stalled consumer
+
+        shutdown_task = @async grpc_shutdown()
+        sleep(2)
+        @test istaskdone(shutdown_task)
+        fetch(shutdown_task)
+
+        # cleanup_request on shutdown does not set req.ex (grpc_cancel does), so
+        # await must simply return rather than block forever on req.ready
+        grpc_async_await(req, TestResponse)
+        @test !isopen(response_c)
+
+        # The global handle must be usable again after re-init
+        grpc_init()
+        revived_client = TestService_TestRPC_Client(
+            _TEST_HOST,
+            _TEST_PORT;
+            deadline = stream_test_deadline,
+        )
+        revived_response = grpc_sync_request(
+            revived_client,
+            TestRequest(1, zeros(UInt64, 1)),
+        )
+        @test length(revived_response.data) == 1
+    end
+
     @testset "Deadline Exceeded" begin
         client = TestService_TestClientStreamRPC_Client(
             _TEST_HOST,
@@ -1194,14 +1317,14 @@ include("gen/test/test_pb.jl")
         t0 = time()
         tasks = [
             @spawn begin
-                    try
-                        request = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
-                        grpc_async_await(client, request)
-                        nothing
+                try
+                    request = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+                    grpc_async_await(client, request)
+                    nothing
                 catch ex
-                        ex
+                    ex
                 end
-                end for _ in 1:N
+            end for _ in 1:N
         ]
         results = fetch.(tasks)
         elapsed = time() - t0

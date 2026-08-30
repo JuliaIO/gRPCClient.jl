@@ -30,22 +30,20 @@ against an environment you have added Runic to.
 CI runs the same check on every pull request that touches a `.jl` file, so an unformatted branch
 shows up as a red Format job.
 
-If you would rather catch it before pushing, Runic ships editor integrations, and a git hook is a
-few lines. Put this in `.git/hooks/pre-commit` and make it executable; the file is local to your
-clone and is not tracked:
+If you would rather catch it before pushing, Runic ships editor integrations, and the repository
+ships a pre-commit hook in `scripts/pre-commit-runic`. Install it into your clone with:
 
 ```bash
-#!/usr/bin/env bash
-exec 1>&2
-set -o pipefail
-git diff --cached -z --name-only --diff-filter=ACM -- '*.jl' \
-    | xargs -0 --no-run-if-empty runic --check --diff
+cp scripts/pre-commit-runic .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 ```
 
-Then `chmod +x .git/hooks/pre-commit`. The hook prints a diff and aborts the commit when a staged
-Julia file is unformatted; `runic --inplace .` fixes it, and `git commit --no-verify` skips the check
-for a single commit. Note that it reads the working tree copy rather than the staged blob, so a
-partially staged file is judged by its full contents.
+`.git/hooks/` is local to your clone and not tracked, so the hook is opt-in. It formats the `.jl`
+files staged for the commit with `runic --inplace` and re-stages the result, so what you commit
+always passes the check; unrelated work-in-progress files are left alone. One edge case to be
+aware of: a partially staged file that needs formatting cannot be re-staged without pulling its
+unstaged hunks into the commit, so the hook refuses and asks you to `git add` the whole file and
+retry. If the `runic` CLI is missing the hook skips silently, and `git commit --no-verify` bypasses
+it for a single commit.
 
 ## Tests
 

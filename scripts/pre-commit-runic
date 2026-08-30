@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Runic pre-commit hook: format the Julia files staged for this commit with
+# Runic and re-stage the result, so what gets committed is always formatted.
+#
+# Only formats the staged .jl files: it never touches (or blocks on) unrelated
+# work-in-progress files, and everything committed here passed the formatter,
+# which is what the Format workflow checks on pull requests.
+#
+# Requires the `runic` CLI:
+#     julia -e 'using Pkg; Pkg.Apps.add("Runic")'
+#
+# .git/hooks/ is machine-local and not versioned, so this is an opt-in
+# convenience, not something contributors are forced to use. Install it in a
+# fresh clone with (the script is committed with the executable bit set):
+#     cp scripts/pre-commit-runic .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+set -u
+
+# Blob hash of a file's staged (index) copy, for the partial-staging check.
+index_hash() {
+    git ls-files -s -- "$1" | awk '{print $2}'
+}
+
+staged=()
+while IFS= read -r -d '' f; do
+    staged+=("$f")
+done < <(git diff --cached --name-only -z --diff-filter=ACM -- '*.jl')
+
+if [ ${#staged[@]} -eq 0 ]; then
+    exit 0
+fi
+
+echo "pre-commit: formatting ${#staged[@]} staged .jl file(s) with Runic..." >&2
+
+# Snapshot the worktree blobs so the re-stage below can tell which files runic
+# actually rewrote, rather than which files merely differ from the index (a
+# partially staged file always differs from the index, and must not have its
+# unstaged hunks swept into the commit). Plain indexed arrays to stay
+# compatible with the bash 3.2 that macOS still ships.
+before=()
+for f in "${staged[@]}"; do
+    before+=("$(git hash-object -- "$f")")
+done
+
+# Give runic a real terminal-less stdin so it never mistakes git's own (piped)
+# stdin for input to format; --inplace rejects stdin input, which would
+# otherwise error out under `git commit`.
+runic --inplace --diff "${staged[@]}" < /dev/null
+status=$?
+
+# Re-stage exactly the files runic rewrote. A file that was partially staged
+# (its worktree differed from the index before formatting) would have its
+# unstaged hunks swept into the commit by a whole-file re-add, so refuse and
+# let the user resolve that deliberately.
+fail=0
+for i in "${!staged[@]}"; do
+    f="${staged[$i]}"
+    if [ "${before[$i]}" != "$(git hash-object -- "$f")" ]; then
+        if [ "${before[$i]}" != "$(index_hash "$f")" ]; then
+            echo "pre-commit: $f is partially staged and needed formatting." >&2
+            echo "  Its unstaged hunks cannot be re-staged automatically; run 'git add $f' and retry." >&2
+            fail=1
+        else
+            git add -- "$f"
+        fi
+    fi
+done
+
+[ $fail -eq 1 ] && exit 1
+exit $status

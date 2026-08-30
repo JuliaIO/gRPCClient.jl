@@ -163,8 +163,28 @@ function grpc_async_stream_response(
             if response_buf === nothing
                 continue
             end
+            # Credit the bytes back to the budget as soon as the pump owns the
+            # message, before put! can block on a slow consumer
+            atomic_sub!(req.recv_queued_bytes, Int64(response_buf.size))
             response = _decode_message(response_buf, TResponse)
             put!(channel, response)
+
+            # Resume once drained to the low watermark (_response_c_drained).
+            # curl_easy_pause may synchronously re-enter write_callback, which
+            # is safe under the req.lock held here; recv_paused is re-checked
+            # inside it, and the frame-boundary gate re-pauses if the consumer
+            # is still slow. The completed/easy guards keep the FFI call off a
+            # cleaned-up handle.
+            if req.recv_paused && _response_c_drained(req)
+                lock(req.lock) do
+                    if req.recv_paused
+                        req.recv_paused = false
+                        if !req.completed && req.easy != C_NULL
+                            curl_easy_pause(req.easy, CURLPAUSE_CONT)
+                        end
+                    end
+                end
+            end
         end
     catch ex
         if !isa(ex, InvalidStateException)
@@ -286,9 +306,14 @@ function grpc_async_request(
         request_buf,
         IOBuffer(),
         NOCHANNEL,
-        Channel{IOBuffer}(16),
+        # Unbounded on purpose: write_callback must never block on it; the byte
+        # budget bounds it instead
+        Channel{IOBuffer}(typemax(Int)),
         options
     )
+    # Let cleanup_request reach the caller's channel on abnormal ends; see
+    # response_user_c
+    req.response_user_c = response
 
     response_task = _spawn(() -> grpc_async_stream_response(req, response), client)
     errormonitor(response_task)
@@ -347,9 +372,14 @@ function grpc_async_request(
         IOBuffer(),
         IOBuffer(),
         Channel{IOBuffer}(16),
-        Channel{IOBuffer}(16),
+        # Unbounded on purpose: write_callback must never block on it; the byte
+        # budget bounds it instead
+        Channel{IOBuffer}(typemax(Int)),
         _merge_options(client.options, options)
     )
+    # Let cleanup_request reach the caller's channel on abnormal ends; see
+    # response_user_c
+    req.response_user_c = response
 
     request_task = _spawn(() -> grpc_async_stream_request(req, request), client)
     errormonitor(request_task)
