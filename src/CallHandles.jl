@@ -65,7 +65,8 @@ const StreamingResponseRPC = Union{gRPCServerStreamCall, gRPCBidirectionalStream
 
 function Base.show(io::IO, rpc::AbstractgRPCCall) 
     f = typeof(rpc).parameters[1].instance
-    if get(IOContext(io), :compact, false)
+    # If typeinfo is set, we know the rpc is shown as part of some container. 
+    if get(io, :compact, false) || haskey(io, :typeinfo)
         print(io, "$(typeof(rpc))(...)")
     else
         print(io, """

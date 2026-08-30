@@ -354,7 +354,7 @@ include("gen/test/test_pb.jl")
         @test gRPCClient.isstreaming_response(rpc) == false
 
         io = IOBuffer()
-        show(io, rpc)
+        show(io, MIME"text/plain"(), rpc)
         str = String(take!(io))
         @test str == """
         gRPCClient.gRPCUnaryCall{typeof(Main.TestService.TestRPC)}(...) with properties:
@@ -363,6 +363,13 @@ include("gen/test/test_pb.jl")
           Response type : unary TestResponse
           Status        : OK
           Completed     : false"""
+
+        io = IOBuffer()
+        show(io, MIME"text/plain"(), [rpc])
+        str = String(take!(io))
+        @test str == """
+        1-element Vector{gRPCClient.gRPCUnaryCall{typeof(Main.TestService.TestRPC)}}:
+         gRPCClient.gRPCUnaryCall{typeof(Main.TestService.TestRPC)}(...)"""
         close(rpc)
     end
 
