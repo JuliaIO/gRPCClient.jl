@@ -588,10 +588,18 @@ include("gen/test/test_pb.jl")
         @testset "Testing isfull" begin
             if @isdefined(isfull)
                 rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
-                @test !isfull(rpc)
-                put!(rpc, TestRequest(1, [1]))
-                @test isfull(rpc) # If this runs immediately after put!, it should be true
-                @test :ok == timedwait(() -> !isfull(rpc), 0.1, pollint = 0.001) # Sooner or later, the request should have been handled
+                lock(rpc.req.grpc.lock) do # Prevent the request channel from being drained
+                    # one request should be passed to the Channel{IOBuffer}
+                    # Sooner or later, the request should have been handled                    
+                    put!(rpc, TestRequest(1, [1])) 
+                    @test :ok == timedwait(() -> !isfull(rpc), 0.1, pollint = 0.001) 
+
+                    # Next request request does not propagate forward due to the lock, so the channel is full even after some wait. 
+                    put!(rpc, TestRequest(1, [1]))
+                    @test :timed_out == timedwait(() -> !isfull(rpc), 0.01, pollint = 0.001)
+                end
+                # Request propagates once we release the lock
+                @test :ok == timedwait(() -> !isfull(rpc), 0.1, pollint = 0.001) 
                 close(rpc)
             end
         end
