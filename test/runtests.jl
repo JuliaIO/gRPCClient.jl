@@ -586,12 +586,14 @@ include("gen/test/test_pb.jl")
         end
         
         @testset "Testing isfull" begin
-            rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
-            @isdefined(isfull) && @test !isfull(rpc)
-            put!(rpc, TestRequest(1, [1]))
-            @test isfull(rpc) # If this runs immediately after put!, it should be true
-            @test :ok == timedwait(() -> !isfull(rpc), 0.1, pollint = 0.001) # Sooner or later, the request should have been handled
-            close(rpc)
+            if @isdefined(isfull)
+                rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
+                @test !isfull(rpc)
+                put!(rpc, TestRequest(1, [1]))
+                @test isfull(rpc) # If this runs immediately after put!, it should be true
+                @test :ok == timedwait(() -> !isfull(rpc), 0.1, pollint = 0.001) # Sooner or later, the request should have been handled
+                close(rpc)
+            end
         end
 
         @testset "Ending request stream" begin

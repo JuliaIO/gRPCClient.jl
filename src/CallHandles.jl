@@ -182,6 +182,7 @@ sending more messages. Future calls to `put!` will result in an exception.
     return nothing
 end
 
+@static if @isdefined(isfull) # Not available in 1.10
 """
     isfull(rpc::gRPCClientStreamCall)
     isfull(rpc::gRPCBidirectionalStreamCall)
@@ -190,10 +191,9 @@ Tells whether the request channel of `rpc` is full.
 
 If `true`, a subsequent call to `put!` will likely be blocking.
 If `false`, a subsequent call to `put!` will not be blocking. 
-""" 
-@static if @isdefined(isfull) # Not available in 1.10
-    @inline Base.isfull(rpc::StreamingRequestRPC) = isfull(rpc.request_channel)
-end
+"""
+@inline Base.isfull(rpc::StreamingRequestRPC) = isfull(rpc.request_channel)
+end # @static if @isdefined(isfull)
 
 """
     fetch(rpc::gRPCUnaryCall)
