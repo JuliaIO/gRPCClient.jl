@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Runic pre-commit hook: format the Julia files staged for this commit with
+# Runic and re-stage the result, so what gets committed is always formatted.
+#
+# Only formats the staged .jl files: it never touches (or blocks on) unrelated
+# work-in-progress files, and everything committed here passed the formatter,
+# which is what the Format workflow checks on pull requests.
+#
+# Requires the `runic` CLI:
+#     julia -e 'using Pkg; Pkg.Apps.add("Runic")'
+#
+# .git/hooks/ is machine-local and not versioned, so this is an opt-in
+# convenience, not something contributors are forced to use. Install it in a
+# fresh clone with:
+#     cp scripts/pre-commit-runic .git/hooks/pre-commit && chmod +x scripts/pre-commit-runic
+set -u
+
+staged=()
+while IFS= read -r -d '' f; do
+    staged+=("$f")
+done < <(git diff --cached --name-only -z -- '*.jl')
+
+if [ ${#staged[@]} -eq 0 ]; then
+    exit 0
+fi
+
+echo "pre-commit: formatting ${#staged[@]} staged .jl file(s) with Runic..." >&2
+# Give runic a real terminal-less stdin so it never mistakes git's own (piped)
+# stdin for input to format; --inplace rejects stdin input, which would
+# otherwise error out under `git commit`.
+runic --inplace --diff "${staged[@]}" < /dev/null
+status=$?
+
+# Re-stage the files runic rewrote: after formatting they differ from the
+# index (git hash-object compares the worktree file to the staged blob).
+for f in "${staged[@]}"; do
+    if [ "$(git rev-parse -- ":$f")" != "$(git hash-object -- "$f")" ]; then
+        git add -- "$f"
+    fi
+done
+
+exit $status
