@@ -163,39 +163,18 @@ function grpc_async_stream_response(
             if response_buf === nothing
                 continue
             end
-            # Credit the message's bytes back to the backpressure budget as soon
-            # as the pump owns it, before decoding and before delivering to the
-            # user's channel (which may block on a slow consumer): the resume
-            # decision is about how much is buffered ahead of the pump, not how
-            # much has reached the application. Atomic and lock-free because the
-            # increments run under grpc.lock inside write_callback; this side
-            # never holds that lock, so atomicity is what keeps the accounting
-            # exact across the two.
+            # Credit the bytes back to the budget as soon as the pump owns the
+            # message, before put! can block on a slow consumer
             atomic_sub!(req.recv_queued_bytes, Int64(response_buf.size))
             response = _decode_message(response_buf, TResponse)
             put!(channel, response)
 
-            # The backpressure budget has drained far enough that a resume is
-            # worth its cost (see _response_c_drained). Nothing here may block:
-            # the whole point of the pause is that the callback never waits on
-            # this channel.
-            #
-            # curl_easy_pause may synchronously re-enter write_callback "before this
-            # function returns", per its documentation, to re-deliver the paused chunk;
-            # that is safe because it runs under req.lock, which we hold here, and the
-            # frame-boundary gate re-checks fullness so a still-slow consumer simply
-            # pauses again. The req.completed / easy == C_NULL guards keep the FFI call
-            # off a cleaned-up handle, the same guards the request pump uses before its
-            # curl_easy_pause.
-            #
-            # We do NOT resume on every drained message: a resume is expensive and
-            # resuming per message pins the transfer in a pause→resume→re-deliver
-            # ping-pong. Instead wait until the pump has drained the intermediate
-            # channel below its low watermark, so pauses are amortized over a whole
-            # channel's worth of messages (see _response_c_drained). recv_paused is
-            # re-verified under req.lock here, so a racing drain that happens between
-            # the heuristic check and the lock can only help (the channel is even
-            # emptier).
+            # Resume once drained to the low watermark (_response_c_drained).
+            # curl_easy_pause may synchronously re-enter write_callback, which
+            # is safe under the req.lock held here; recv_paused is re-checked
+            # inside it, and the frame-boundary gate re-pauses if the consumer
+            # is still slow. The completed/easy guards keep the FFI call off a
+            # cleaned-up handle.
             if req.recv_paused && _response_c_drained(req)
                 lock(req.lock) do
                     if req.recv_paused
@@ -327,13 +306,13 @@ function grpc_async_request(
         request_buf,
         IOBuffer(),
         NOCHANNEL,
-        # Unbounded on purpose: a blocking put! here is what write_callback must
-        # never do (that was the deadlock). recv_queued_bytes is what bounds it.
+        # Unbounded on purpose: write_callback must never block on it; the byte
+        # budget bounds it instead
         Channel{IOBuffer}(typemax(Int)),
         options
     )
-    # cleanup_request reaches the caller's channel through this to unblock a
-    # stalled pump on cancellation / shutdown; see the field's comment
+    # Let cleanup_request reach the caller's channel on abnormal ends; see
+    # response_user_c
     req.response_user_c = response
 
     response_task = _spawn(() -> grpc_async_stream_response(req, response), client)
@@ -393,13 +372,13 @@ function grpc_async_request(
         IOBuffer(),
         IOBuffer(),
         Channel{IOBuffer}(16),
-        # Unbounded on purpose: a blocking put! here is what write_callback must
-        # never do (that was the deadlock). recv_queued_bytes is what bounds it.
+        # Unbounded on purpose: write_callback must never block on it; the byte
+        # budget bounds it instead
         Channel{IOBuffer}(typemax(Int)),
         _merge_options(client.options, options)
     )
-    # cleanup_request reaches the caller's channel through this to unblock a
-    # stalled pump on cancellation / shutdown; see the field's comment
+    # Let cleanup_request reach the caller's channel on abnormal ends; see
+    # response_user_c
     req.response_user_c = response
 
     request_task = _spawn(() -> grpc_async_stream_request(req, request), client)

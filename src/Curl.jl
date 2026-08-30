@@ -101,67 +101,33 @@ Base.close(req::NoChannel) = false
 Base.iterate(req::NoChannel) =
     Iterators.Stateful(Iterators.flatten(Iterators.repeated(nothing, 0)))
 
-# Backpressure for a streaming response is measured in BYTES of undelivered
-# messages, not in message count. The pump's intermediate channel is unbounded
-# (a blocking put! in write_callback is the deadlock this design fixes), so
-# something else must bound how much can pile up behind a slow consumer, and a
-# slot count is the wrong unit: 16 slots bounds memory nicely for large
-# messages but trips constantly for tiny ones (16 seven-byte messages is 112
-# bytes, so a 1000-message stream of them pauses ~60 times, and each
-# pause→resume→re-deliver cycle is expensive — this cost ~10% of bidirectional
-# throughput before the byte gate), while 256 slots bounds memory at
-# 256 * max_recieve_message_length for large ones. A byte budget bounds memory
-# independently of message size and never engages for streams smaller than the
-# budget. Measured: a 256 MB stream against a stalled consumer holds ~18 MiB
-# resident, flat, where an ungated unbounded channel grew past +119 MiB and was
-# still climbing 15 seconds in.
+# Cap on undelivered streaming-response bytes. The pump's channel is unbounded
+# (see handle_streaming_write), so this budget is what bounds memory when the
+# consumer is slow. Bytes rather than message count: a slot count either bounds
+# memory only in messages (too loose for large ones) or trips constantly for
+# small ones, and each pause/resume cycle is expensive.
 const RECV_BACKPRESSURE_BYTES = 1 * 1024 * 1024
 
-# Should the receive direction pause? Called from handle_streaming_write under
-# grpc.lock. The counter is atomic because the pump decrements it without
-# holding that lock; a racing read can only see a value mid-decrement, which
-# makes the gate trip slightly early, never late.
+# Over budget: pause receiving. Racy against the pump's decrements, so it can
+# trip slightly early, never late.
 _response_c_backpressured(req) = req.recv_queued_bytes[] >= RECV_BACKPRESSURE_BYTES
 
-# Has the response pump drained enough buffered bytes to make a resume worth
-# it? A resume is expensive: per libcurl it may synchronously re-enter
-# write_callback to re-deliver the paused chunk, and it re-grants HTTP/2
-# flow-control window. Resuming after *every* drained message therefore pins
-# the transfer in a pause→resume→re-deliver→pause ping-pong (measured ~1989
-# pauses for a 2000-message bidirectional stream). Resuming only below a
-# quarter of the backpressure budget amortizes the cycle. Heuristic read; the
-# authoritative recv_paused flag is re-verified under req.lock by the pump
-# before it actually resumes.
+# Drained well below budget: worth resuming. Resumes are expensive — each may
+# synchronously re-enter write_callback — so waiting for the low watermark
+# amortizes a pause over many messages instead of ping-ponging per message.
 _response_c_drained(req) = req.recv_queued_bytes[] <= RECV_BACKPRESSURE_BYTES ÷ 4
 
 # Streaming-response body of write_callback.
 #
-# This path must never block. The original code called put! on req.response_c from
-# inside the callback, which runs while the watcher task holds grpc.lock across
-# curl_multi_socket_action; once a slow consumer stalled the response pump behind a
-# full user channel, req.response_c filled, the put! blocked with the transport lock
-# held, and every request on the handle froze. Worse, grpc_cancel and close(grpc)
-# need that same lock, so "take one response, then cancel" deadlocked permanently.
+# Must never block — it runs under grpc.lock, where blocking would deadlock the
+# whole handle (grpc_cancel and close need that lock too). When the
+# undelivered-byte budget is exceeded it returns CURL_WRITEFUNC_PAUSE at a
+# frame boundary instead: libcurl pauses this transfer's receive direction,
+# HTTP/2 flow control throttles the server, and the pump resumes with
+# curl_easy_pause(CURLPAUSE_CONT) once the budget drains.
 #
-# Instead, when the undelivered-byte budget (see RECV_BACKPRESSURE_BYTES) is
-# exceeded we pause at a frame boundary by returning CURL_WRITEFUNC_PAUSE, which
-# unblocks the callback immediately and pauses only this transfer's receive
-# direction. With the receive direction paused libcurl stops granting HTTP/2
-# window, so the server is throttled by flow control and memory stays bounded
-# per stream, which is the gRPC-correct backpressure semantic, the mirror image
-# of the send side's CURL_READFUNC_PAUSE design. The response pump resumes the
-# transfer with curl_easy_pause(req.easy, CURLPAUSE_CONT) once the byte budget
-# has drained below its low watermark.
-#
-# Re-delivery contract: per curl_easy_pause's documentation, a write callback that
-# returns pause "could not take care of any data at all, and that data is then
-# delivered again to the callback when the transfer is unpaused". curl therefore
-# hands us back the entire paused chunk from its first byte, even bytes we had
-# already parsed. chunk_skip records how many bytes of the re-delivered data were
-# already handled, so the parser resumes mid-chunk. It is a byte offset into the
-# logical re-delivered stream rather than a saved buffer, which keeps it correct
-# even if curl re-chunks: a chunk lying entirely inside the consumed prefix is
-# consumed whole and the remainder carries forward.
+# On resume curl re-delivers the entire paused chunk, including bytes already
+# parsed; chunk_skip is how the parser skips that prefix.
 function handle_streaming_write(req, data::Ptr{Cchar}, n::Csize_t)::Csize_t
     buf = unsafe_wrap(Array, convert(Ptr{UInt8}, data), (n,))
 
@@ -177,13 +143,9 @@ function handle_streaming_write(req, data::Ptr{Cchar}, n::Csize_t)::Csize_t
     target = length(buf)
     handled = 0
     while !isnothing(buf) && handled < target
-        # The gate: hand messages to the pump only at frame boundaries and only
-        # while the undelivered-byte budget has room, and pause with ZERO bytes
-        # of the remaining chunk consumed. Pausing mid-parse would report "no
-        # data consumed" to curl, so the re-delivered chunk would replay bytes
-        # handle_write already accepted and duplicate them in the user's stream;
-        # chunk_skip exists precisely to re-sync the two views, and gating here
-        # is what keeps it exact.
+        # Pause at a frame boundary only, with nothing of the remaining chunk
+        # consumed: pausing mid-parse would replay already-handled bytes on
+        # resume, and staying on boundaries keeps chunk_skip exact.
         if _response_c_backpressured(req)
             req.recv_paused = true
             req.chunk_skip = prefix + handled
@@ -191,9 +153,8 @@ function handle_streaming_write(req, data::Ptr{Cchar}, n::Csize_t)::Csize_t
         end
 
         try
-            # A zero-byte return with data still left over means handle_write made
-            # no progress and looping again would spin forever inside a curl
-            # callback, so break and let the byte-count check below report it.
+            # No progress: break and let the byte-count check below report it,
+            # rather than spinning inside a curl callback.
             handled_n_bytes, buf = handle_write(req, buf)
             handled += handled_n_bytes
             handled_n_bytes == 0 && !isnothing(buf) && break
@@ -205,10 +166,7 @@ function handle_streaming_write(req, data::Ptr{Cchar}, n::Csize_t)::Csize_t
 
     !isnothing(req.ex) && return typemax(Csize_t)
 
-    # Check that we handled the correct number of bytes. With no exception in
-    # handle_write this only fires on the zero-progress break above: every other
-    # exit has consumed the chunk whole (into the current message buffer or into
-    # complete messages), and the pause path has already returned.
+    # Only the no-progress break above can land here with a short count.
     if handled != target
         handle_exception(
             req,
@@ -239,11 +197,8 @@ function write_callback(
 
         n = size * count
 
-        # Response streaming goes through the backpressure-aware path, which must
-        # never block in here. Unary responses are a single message, bounded at
-        # length-prefix parse by max_recieve_message_length and drained by
-        # grpc_async_await rather than a channel, so the direct path below is
-        # unchanged.
+        # Streaming responses take the pausable path above; a unary response is
+        # one bounded message with no channel to block on.
         isstreaming_response(req) && return handle_streaming_write(req, data, n)
 
         buf = unsafe_wrap(Array, convert(Ptr{UInt8}, data), (n,))
@@ -632,26 +587,18 @@ mutable struct gRPCRequest
 
     response_length::UInt32
 
-    # Set by handle_streaming_write when it returned CURL_WRITEFUNC_PAUSE because
-    # the undelivered-byte budget was exceeded; cleared by the pump when the
-    # budget drains below its low watermark and it resumes the receive direction
-    # with curl_easy_pause. See the comment on handle_streaming_write for the
-    # full protocol. Occupies padding next to the other Bools, like request_eof.
+    # True while the receive direction is paused for backpressure, until the
+    # pump resumes it. Occupies Bool padding next to request_eof.
     recv_paused::Bool
 
-    # Bytes at the front of the next re-delivered chunk that were already parsed
-    # before the last CURL_WRITEFUNC_PAUSE. curl re-delivers the entire paused
-    # chunk from its first byte, so this offset is how the parser resumes
-    # mid-chunk. Only meaningful between a pause and the re-delivery it produced.
+    # Parsed prefix of the next re-delivered chunk after a pause, skipped on
+    # resume (curl replays the whole paused chunk). Meaningful only between a
+    # pause and its resume.
     chunk_skip::Int64
 
-    # Total bytes of completed-but-undelivered response messages currently
-    # queued for the pump. Atomic because its two writers hold different locks:
-    # complete_streaming_message! increments under grpc.lock (write_callback
-    # always runs under it), while the pump decrements without it. When this
-    # exceeds RECV_BACKPRESSURE_BYTES the receive direction pauses, which bounds
-    # client memory under a stalled consumer regardless of message size or
-    # stream length.
+    # Bytes of completed-but-undelivered response messages: incremented by
+    # write_callback under grpc.lock, decremented by the pump without it (hence
+    # atomic). Over RECV_BACKPRESSURE_BYTES the receive direction pauses.
     recv_queued_bytes::Base.Threads.Atomic{Int64}
 
     # Set by read_callback once curl has taken every byte of the request upload buffer, so
@@ -686,19 +633,11 @@ mutable struct gRPCRequest
     # but on some platforms the socket error from the teardown surfaces first instead.
     expiry::Float64
 
-    # The caller's response channel, set by grpc_async_request right after
-    # construction for the variants that spawn a response pump, NOCHANNEL
-    # everywhere else. Typed Any rather than a Union to keep it out of the
-    # positional constructors above: only cleanup_request reads it.
-    #
-    # Exists so an abnormal end (cancellation, deadline, handle shutdown) can
-    # unblock a response pump that is stuck in put! to a channel the caller
-    # stopped draining — grpc_cancel's documented "all tasks waiting on the
-    # request (including streaming channels) are unblocked". Closing the user
-    # channel wakes that put! with InvalidStateException, which the pump treats
-    # as its normal exit. A normal completion must NOT close it from here: the
-    # pump still has to deliver everything it buffered, and only then closes
-    # the channel itself in its finally block.
+    # The caller's response channel for the streaming variants (NOCHANNEL
+    # otherwise), so cleanup_request can close it on an abnormal end and
+    # unblock a pump stuck in put! to a channel nobody drains. Not closed on
+    # normal completion: the pump delivers what it buffered and closes the
+    # channel itself.
     response_user_c::Any
 
     function gRPCRequest(
@@ -1100,9 +1039,7 @@ Base.wait(req::gRPCRequest) = wait(req.ready)
 # and reset the parser for the next one. Only valid for a response-streaming request:
 # a unary response is left in `req.response` for `grpc_async_await` to decode.
 function complete_streaming_message!(req::gRPCRequest)
-    # Charge the message against the byte-based backpressure budget as it is
-    # handed off; handle_streaming_write consults the budget between frames to
-    # decide whether to pause the receive direction
+    # Charge the message to the backpressure budget as it is handed to the pump
     atomic_add!(req.recv_queued_bytes, Int64(req.response.size))
     # Put the completed response protobuf buffer in the channel so it can be processed
     # by the `grpc_async_stream_response` task
@@ -1664,12 +1601,9 @@ function cleanup_request(grpc::gRPCCURL, req::gRPCRequest)
     # Close streaming channels
     close(req.response_c)
     close(req.request_c)
-    # An abnormal end (cancellation, deadline expiry, handle shutdown) must also
-    # unblock a response pump stalled in put! to a caller channel nobody is
-    # draining: closing it wakes the pump, which exits through its InvalidStateException
-    # path and closes the channel itself in its finally. A normal completion leaves the
-    # caller's channel alone so the pump can deliver everything it buffered first.
-    # grpc.running is already false by the time close(grpc) reaches here.
+    # Unblock a pump stalled in put! to a caller channel nobody drains, on an
+    # abnormal end (cancellation, deadline, shutdown). On normal completion the
+    # pump closes that channel itself once it has delivered everything buffered.
     (!isnothing(req.ex) || !grpc.running) && close(req.response_user_c)
     # Increment the request semaphore to allow more requests through
     max_reqs_inc(grpc, req)
