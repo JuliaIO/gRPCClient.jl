@@ -1317,14 +1317,14 @@ include("gen/test/test_pb.jl")
         t0 = time()
         tasks = [
             @spawn begin
-                    try
-                        request = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
-                        grpc_async_await(client, request)
-                        nothing
+                try
+                    request = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+                    grpc_async_await(client, request)
+                    nothing
                 catch ex
-                        ex
+                    ex
                 end
-                end for _ in 1:N
+            end for _ in 1:N
         ]
         results = fetch.(tasks)
         elapsed = time() - t0
