@@ -132,6 +132,11 @@ baremodule TestService
     import gRPCClient
     import Base
 
+Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNumber("1.2.0-rc1")))
+    # Check compatibility between the loaded version of `gRPCClient` and
+    # the version used to generate this module (1.2.0-rc1).
+    gRPCClient.check_codegen_compat(Base.VersionNumber("1.2.0-rc1"))
+
     const TestResponse::DataType = Base.parentmodule(TestService).TestResponse
     const TestRequest::DataType = Base.parentmodule(TestService).TestRequest
 
@@ -214,6 +219,10 @@ baremodule TestService
     Base.@doc gRPCClient.grpc_generate_rpc_docstring(typeof(TestBidirectionalStreamRPC)) TestBidirectionalStreamRPC
     export TestBidirectionalStreamRPC
 
+
+else # checking gRPCClient.jl version
+    Base.@warn "This file contains code generated with `gRPCClient.jl` 1.2.0-rc1 and uses an API not available in the loaded version ($(Base.pkgversion(gRPCClient))). You may need to update `gRPCClient`. The legacy API is still supported. "
+end
 
 end # module TestService
 export TestService

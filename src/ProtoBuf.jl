@@ -48,17 +48,35 @@ function codegen_legacy(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.C
     end
 end
 
-function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Context)
+function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Context; compatguard::Bool = false)
     namespace = join(ctx.proto_file.preamble.namespace, ".")
     service_name = t.name
     ###################
     # New API
     ###################
+
     println(io, """
 
     baremodule $service_name
         import gRPCClient
         import Base
+    """)
+    # allows ignoring the new API code instead of erroring due to missing
+    # functions if loaded with an older version of gRPCClient. 
+    # Notice that we only include this statement if necessary, as
+    # it prevents VSCode from providing suggestions. 
+    compatguard && print(io, """
+    Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNumber("1.2.0-rc1")))
+    """)
+
+    # Will embed the version number used by codegen into the file
+    # so that compatibility can be checked and give a more 
+    # meaningful error message than just complaining about undefined
+    # functions. This check was added in v1.2.0. 
+    println(io, """
+        # Check compatibility between the loaded version of `gRPCClient` and
+        # the version used to generate this module ($(pkgversion(gRPCClient))).
+        gRPCClient.check_codegen_compat(Base.VersionNumber("$(pkgversion(gRPCClient))"))
     """)
     
     # Import individual types from the parent module
@@ -169,10 +187,17 @@ function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGener
 
         """)
     end
+
+    compatguard && println(io, """
+    else # checking gRPCClient.jl version
+        Base.@warn "This file contains code generated with `gRPCClient.jl` $(pkgversion(gRPCClient)) and uses an API not available in the loaded version ($("\$")(Base.pkgversion(gRPCClient))). You may need to update `gRPCClient`. The legacy API is still supported. "
+    end
+    """)
     println(io, """
     end # module $service_name
     export $service_name
     """)
+
     return
 end
 
@@ -183,13 +208,23 @@ import_cb(io, ctx, definitions) =
 function grpc_register_service_codegen(; legacy::Bool = true, servicemodule::Bool = true)
     function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Context) 
         legacy && codegen_legacy(io, t, ctx)
-        servicemodule && codegen_servicemodule(io, t, ctx)
+        # If both options are used, we include the compatguard so that the file 
+        # still works with legacy API on older versions of gRPCClient
+        servicemodule && codegen_servicemodule(io, t, ctx; compatguard = legacy)
     end
     CodeGenerators.register_external_codegen_handler(
         "gRPCClient.jl";
         import_cb = import_cb,
         service_cb = service_cb,
     )
+end
+
+function check_codegen_compat(ver::VersionNumber)
+    # This location can be used to throw an error or warn
+    # if the codegen was done with an older version of
+    # gRPCClient (ver). Currently no such incompatibilities
+    # exist. 
+	return nothing
 end
 
 """
