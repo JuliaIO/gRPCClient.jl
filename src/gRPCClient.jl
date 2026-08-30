@@ -117,9 +117,7 @@ macro public(ex)
 end
 @public check_codegen_compat
 @public grpc_generate_rpc_docstring
-@public grpc_call_bidirectional_stream
-@public grpc_call_unary_sync
-@public grpc_call_unary_async
+@public grpc_call_unary
 @public grpc_call_client_stream
 @public grpc_call_server_stream
 @public grpc_call_bidirectional_stream
