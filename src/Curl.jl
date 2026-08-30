@@ -705,7 +705,7 @@ mutable struct gRPCRequest
         # wedges forever, and its max_streams slot leaks. This watchdog is the
         # client-side backstop for that: if libcurl has not completed the request
         # shortly after the deadline, cancel it with DEADLINE_EXCEEDED.
-        local req = nothing
+        req_ref = Ref{Any}(nothing)
         watchdog = if deadline == Inf
             nothing
         else
@@ -720,7 +720,7 @@ mutable struct gRPCRequest
                         notify(grpc.sem_cond; all = true)
                     end
 
-                    r = req
+                    r = req_ref[]
                     r isa gRPCRequest && grpc_cancel(
                         r,
                         gRPCServiceCallException(
@@ -872,6 +872,7 @@ mutable struct gRPCRequest
             NOCHANNEL,
         )
         preserve_handle(req)
+        req_ref[] = req
 
         # Arm the repeating un-pause once `req` exists. Only a request-streaming call ever
         # pauses the send direction, and only an affected libcurl needs shaking loose.
@@ -1018,6 +1019,8 @@ mutable struct gRPCRequest
         return req
     end
 end
+
+Base.isopen(req::gRPCRequest) = !(@atomic req.ready.set) # TODO  dont rely on fieldnames of Base.Event?
 
 function handle_exception(req::gRPCRequest, ex; notify_ready = false)
     # We want to record the *first* exception a request encounters

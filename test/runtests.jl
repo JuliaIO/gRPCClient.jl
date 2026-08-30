@@ -3,6 +3,7 @@ using ProtoBuf
 using gRPCClient
 using Base.Threads
 using Sockets
+import REPL # Must be loaded in order to retreive auto-generated docstrings
 
 # Import the timeout header formatting function for testing
 import gRPCClient:
@@ -84,7 +85,7 @@ const _TEST_PORT = _get_test_port()
 include("gen/test/test_pb.jl")
 
 @testset "gRPCClient.jl" begin
-
+    gRPCClient.grpc_init()
     @testset "Code Generation" begin
         mktempdir() do tmpdir
             @test isnothing(protojl("proto/test.proto", @__DIR__, tmpdir))
@@ -160,6 +161,87 @@ include("gen/test/test_pb.jl")
             # Service client constructors are present
             @test contains(generated, "ExtService_ExtRPC_Client(")
             @test contains(generated, "ExtService_ExtStreamRPC_Client(")
+        end
+
+        @testset "Codegen: New API" begin
+            @testset "compatguard" begin
+                mktempdir() do tmpdir
+                    grpc_register_service_codegen(legacy = true, servicemodule = true)
+                    @test isnothing(protojl("proto/test.proto", @__DIR__, tmpdir))
+                    generated = read(joinpath(tmpdir, "test", "test_pb.jl"), String)
+                    @test contains(generated, "Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNumber(\"1.2.0-rc1\")))")
+                    @test contains(generated, "This file contains code generated with `gRPCClient.jl`")
+                    @test contains(generated, "baremodule TestService")
+                    # More tests are done only with legacy = false
+                end
+
+                mktempdir() do tmpdir
+                    grpc_register_service_codegen(legacy = false, servicemodule = true)
+                    @test isnothing(protojl("proto/test.proto", @__DIR__, tmpdir))
+                    generated = read(joinpath(tmpdir, "test", "test_pb.jl"), String)
+                    @test !contains(generated, "Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNumber(\"1.2.0-rc1\")))")
+                    @test !contains(generated, "This file contains code generated with `gRPCClient.jl`")
+                    @test contains(generated, "const TestResponse::DataType = Base.parentmodule(TestService).TestResponse")
+                    @test contains(generated, "const TestRequest::DataType = Base.parentmodule(TestService).TestRequest")
+                    # Count number of methods defined for each RPC
+                    @test count("function TestRPC", generated) == 3
+                    @test count("function TestClientStreamRPC", generated) == 2
+                    @test count("function TestServerStreamRPC", generated) == 3
+                    @test count("function TestBidirectionalStreamRPC", generated) == 2
+                end
+
+                mktempdir() do tmpdir
+                    grpc_register_service_codegen(legacy = true, servicemodule = false)
+                    @test isnothing(protojl("proto/test.proto", @__DIR__, tmpdir))
+                    generated = read(joinpath(tmpdir, "test", "test_pb.jl"), String)
+                    @test !contains(generated, "Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNumber(\"1.2.0-rc1\")))")
+                    @test !contains(generated, "This file contains code generated with `gRPCClient.jl`")
+                end
+            end
+
+            @testset "Traits" begin
+                @test gRPCClient.isstreaming_request(typeof(TestService.TestRPC)) == false
+                @test gRPCClient.isstreaming_request(typeof(TestService.TestClientStreamRPC)) == true
+                @test gRPCClient.isstreaming_request(typeof(TestService.TestServerStreamRPC)) == false
+                @test gRPCClient.isstreaming_request(typeof(TestService.TestBidirectionalStreamRPC)) == true
+
+                @test gRPCClient.isstreaming_response(typeof(TestService.TestRPC)) == false
+                @test gRPCClient.isstreaming_response(typeof(TestService.TestClientStreamRPC)) == false
+                @test gRPCClient.isstreaming_response(typeof(TestService.TestServerStreamRPC)) == true
+                @test gRPCClient.isstreaming_response(typeof(TestService.TestBidirectionalStreamRPC)) == true
+
+                @test gRPCClient.request_type(typeof(TestService.TestRPC)) == TestRequest
+                @test gRPCClient.request_type(typeof(TestService.TestClientStreamRPC)) == TestRequest
+                @test gRPCClient.request_type(typeof(TestService.TestServerStreamRPC)) == TestRequest
+                @test gRPCClient.request_type(typeof(TestService.TestBidirectionalStreamRPC)) == TestRequest
+
+                @test gRPCClient.response_type(typeof(TestService.TestRPC)) == TestResponse
+                @test gRPCClient.response_type(typeof(TestService.TestClientStreamRPC)) == TestResponse
+                @test gRPCClient.response_type(typeof(TestService.TestServerStreamRPC)) == TestResponse
+                @test gRPCClient.response_type(typeof(TestService.TestBidirectionalStreamRPC)) == TestResponse
+
+                @test gRPCClient.request_type_displayname(typeof(TestService.TestRPC)) == "TestRequest"
+                @test gRPCClient.request_type_displayname(typeof(TestService.TestClientStreamRPC)) == "TestRequest"
+                @test gRPCClient.request_type_displayname(typeof(TestService.TestServerStreamRPC)) == "TestRequest"
+                @test gRPCClient.request_type_displayname(typeof(TestService.TestBidirectionalStreamRPC)) == "TestRequest"
+
+                @test gRPCClient.response_type_displayname(typeof(TestService.TestRPC)) == "TestResponse"
+                @test gRPCClient.response_type_displayname(typeof(TestService.TestClientStreamRPC)) == "TestResponse"
+                @test gRPCClient.response_type_displayname(typeof(TestService.TestServerStreamRPC)) == "TestResponse"
+                @test gRPCClient.response_type_displayname(typeof(TestService.TestBidirectionalStreamRPC)) == "TestResponse"
+
+                @test gRPCClient.rpc_path(typeof(TestService.TestRPC)) == "/test.TestService/TestRPC"
+                @test gRPCClient.rpc_path(typeof(TestService.TestClientStreamRPC)) == "/test.TestService/TestClientStreamRPC"
+                @test gRPCClient.rpc_path(typeof(TestService.TestServerStreamRPC)) == "/test.TestService/TestServerStreamRPC"
+                @test gRPCClient.rpc_path(typeof(TestService.TestBidirectionalStreamRPC)) == "/test.TestService/TestBidirectionalStreamRPC"
+            end
+
+            @testset "docstrings" begin
+                @test contains(string(@doc TestService.TestRPC), "Request |        unary |  TestRequest |\n| Response |        unary | TestResponse |\n")
+                @test contains(string(@doc TestService.TestClientStreamRPC), "Request |       stream |  TestRequest |\n| Response |        unary | TestResponse |\n")
+                @test contains(string(@doc TestService.TestServerStreamRPC), "Request |        unary |  TestRequest |\n| Response |       stream | TestResponse |\n")
+                @test contains(string(@doc TestService.TestBidirectionalStreamRPC), "Request |       stream |  TestRequest |\n| Response |       stream | TestResponse |\n")
+            end
         end
     end
 
@@ -260,6 +342,354 @@ include("gen/test/test_pb.jl")
             r = take!(channel)
             !isnothing(r.ex) && throw(r.ex)
             @test r.index == length(r.response.data)
+        end
+    end
+
+    @testset "Simple API: Generics" begin
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
+        rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
+        @test gRPCClient.request_type(rpc) == TestRequest
+        @test gRPCClient.response_type(rpc) == TestResponse
+        @test gRPCClient.isstreaming_request(rpc) == false
+        @test gRPCClient.isstreaming_response(rpc) == false
+
+        io = IOBuffer()
+        show(io, MIME"text/plain"(), rpc)
+        str = String(take!(io))
+        @test str == """
+            gRPCClient.gRPCUnaryCall{typeof(Main.TestService.TestRPC)}(...) with properties:
+              RPC           : Main.TestService.TestRPC
+              Request type  : unary TestRequest
+              Response type : unary TestResponse
+              Status        : OK
+              Completed     : false"""
+
+        io = IOBuffer()
+        show(io, MIME"text/plain"(), [rpc])
+        str = String(take!(io))
+        @test str == """
+            1-element Vector{gRPCClient.gRPCUnaryCall{typeof(Main.TestService.TestRPC)}}:
+             gRPCClient.gRPCUnaryCall{typeof(Main.TestService.TestRPC)}(...)"""
+        close(rpc)
+    end
+
+    @testset "Simple API: Unary, sync" begin
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
+
+        @testset "sync" begin
+            resp = TestService.TestRPC(chan, TestRequest(1, [1]))
+            @test resp.data == [1]
+        end
+
+        @testset "Partially encoded" begin
+            io = IOBuffer()
+            encode(ProtoEncoder(io), TestRequest(1, [1]))
+            seekstart(io)
+
+            raw_resp = TestService.TestRPC(chan, read(io), Vector{UInt8})
+
+            io = IOBuffer(raw_resp)
+            response = decode(ProtoDecoder(io), TestResponse)
+            @test response.data == [1]
+        end
+    end
+
+    @testset "Simple API: Unary, async" begin
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
+
+        @testset "async" begin
+            rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
+            @test !isready(rpc)
+            @test :ok == timedwait(() -> isready(rpc), 0.1, pollint = 0.001)
+            resp = fetch(rpc)
+            @test resp.data == [1]
+        end
+
+        @testset "Detaching" begin
+            rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
+            @test !rpc.req.completed
+            detach(rpc)
+            @test_throws gRPCException fetch(rpc)
+            @test rpc.req.completed
+            @test_throws "Request was cancelled by the client." detach(rpc)
+            @test_throws "Request was cancelled by the client." detach(rpc)
+            detach(rpc, throws = false) # does not throw
+            @test_throws "Request was cancelled by the client." close(rpc)
+            @test_throws "Request was cancelled by the client." wait(rpc)
+        end
+
+        @testset "Connection options" begin
+            chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, max_send_message_length = 1024)
+            rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
+            @test rpc.req.max_send_message_length == 1024
+            rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync(), max_send_message_length = 2048)
+            @test rpc.req.max_send_message_length == 2048
+        end
+
+        @testset "Partially encoded" begin
+            io = IOBuffer()
+            encode(ProtoEncoder(io), TestRequest(1, [1]))
+            seekstart(io)
+            rpc = TestService.TestRPC(chan, read(io), gRPCAsync())
+
+            io = IOBuffer(fetch(rpc, Vector{UInt8}))
+            response = decode(ProtoDecoder(io), TestResponse)
+            @test response.data == [1]
+        end
+    end
+
+    @testset "Simple API: Unary, multiplexing" begin
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
+
+        @testset "store response in channel" begin
+            responses = Channel{gRPCAsyncChannelResponse{TestResponse}}(Inf)
+            TestService.TestRPC(chan, TestRequest(2, []), responses, 1)
+            TestService.TestRPC(chan, TestRequest(3, []), responses, 2)
+
+            rs = Any[nothing, nothing]
+            r = take!(responses)
+            rs[r.index] = r.response.data
+            r = take!(responses)
+            rs[r.index] = r.response.data
+            @test rs == [[1, 2], [1, 2, 3]]
+        end
+
+        @testset "Partially encoded" begin
+            responses = Channel{gRPCAsyncChannelResponse{Vector{UInt8}}}(Inf)
+
+            io = IOBuffer()
+            encode(ProtoEncoder(io), TestRequest(1, [1]))
+            seekstart(io)
+            TestService.TestRPC(chan, read(io), responses, 1)
+
+            r = take!(responses)
+            @test r.index == 1
+            io = IOBuffer(r.response)
+            response = decode(ProtoDecoder(io), TestResponse)
+            @test response.data == [1]
+        end
+    end
+
+    @testset "Simple API: Streaming request" begin
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
+        @testset "basic call" begin
+
+            rpc = TestService.TestClientStreamRPC(chan)
+            for i in 1:4
+                put!(rpc, TestRequest(1, [1]))
+            end
+            response = fetch(rpc)
+            @test response.data == 1:4
+        end
+
+        @testset "detaching" begin
+            rpc = TestService.TestClientStreamRPC(chan)
+            @test isopen(rpc)
+            detach(rpc)
+            timedwait(() -> !isopen(rpc), 0.1, pollint = 0.001)
+            @test !isopen(rpc)
+            @test rpc.req.ex.grpc_status == GRPC_CANCELLED
+            @test_throws "Request was cancelled by the client" put!(rpc, TestRequest(1, [1]))
+        end
+
+        @testset "Ending request stream" begin
+            rpc = TestService.TestClientStreamRPC(chan)
+            put!(rpc, TestRequest(1, [1]))
+            put!(rpc, TestRequest(1, [1]), done = true)
+            @test :ok == timedwait(() -> isopen(rpc), 0.1, pollint = 0.001)
+
+            rpc = TestService.TestClientStreamRPC(chan)
+            put!(rpc, TestRequest(1, [1]))
+            put!(rpc, TestRequest(1, [1]))
+            put!(rpc, done = true)
+            @test :ok == timedwait(() -> isopen(rpc), 0.1, pollint = 0.001)
+        end
+
+        @testset "Connection options" begin
+            chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, max_send_message_length = 1024)
+            rpc = TestService.TestClientStreamRPC(chan)
+            @test rpc.req.max_send_message_length == 1024
+            close(rpc)
+            rpc = TestService.TestClientStreamRPC(chan, max_send_message_length = 2048)
+            @test rpc.req.max_send_message_length == 2048
+            close(rpc)
+        end
+
+        @testset "Partially encoded" begin
+            rpc = TestService.TestClientStreamRPC(chan)
+
+            for i in 1:4
+                io = IOBuffer()
+                encode(ProtoEncoder(io), TestRequest(1, [1]))
+                seekstart(io)
+                put!(rpc, read(io))
+            end
+            response = fetch(rpc)
+            @test response.data == 1:4
+
+            io = IOBuffer(fetch(rpc, Vector{UInt8}))
+            response = decode(ProtoDecoder(io), TestResponse)
+            @test response.data == 1:4
+        end
+    end
+
+
+    @testset "Simple API: Streaming response" begin
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
+        @testset "Streaming response" begin
+            rpc = TestService.TestServerStreamRPC(chan, TestRequest(4, [1]))
+            @test isopen(rpc)
+            # Server should send 4 responses pretty immediately
+            for i in 1:4
+                resp = take!(rpc)
+                @test length(resp.data) == i
+            end
+            @test :ok == timedwait(() -> !isopen(rpc), 0.1, pollint = 0.001)
+            close(rpc)
+        end
+
+        @testset "fetch and take!" begin
+            rpc = TestService.TestServerStreamRPC(chan, TestRequest(1, [1]))
+            waittask = Threads.@spawn wait(rpc) # Allows us to check if wait(rpc) is done
+            @test !istaskdone(waittask)
+            @test !isready(rpc) # If this runs immediately after put!, it should be true
+            # wait, but with a time limit to ensure CI ends quickly
+            @test :ok == timedwait(() -> istaskdone(waittask), 0.1, pollint = 0.001)
+            @test isready(rpc) # response stream should be ready
+            resp1 = fetch(rpc) # Get data without removing
+            resp2 = take!(rpc) # Get data again, also remove
+            @test resp1.data == resp2.data == [1]
+            # The server should have shut down after sending us 1 response
+            @test !isopen(rpc)
+            @test_throws "Call has already been completed" take!(rpc)
+            @test_throws "Call has already been completed" take!(rpc, Vector{UInt8})
+            @test_throws "Call has already been completed" fetch(rpc)
+            @test_throws "Call has already been completed" fetch(rpc, Vector{UInt8})
+            @test_throws "Call has already been completed" wait(rpc)
+            @test !isready(rpc)
+        end
+
+        @testset "Connection options" begin
+            chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, max_send_message_length = 1024)
+            rpc = TestService.TestServerStreamRPC(chan, TestRequest(4, [1]))
+            @test rpc.req.max_send_message_length == 1024
+            detach(rpc)
+            rpc = TestService.TestServerStreamRPC(chan, TestRequest(4, [1]), max_send_message_length = 2048)
+            @test rpc.req.max_send_message_length == 2048
+            detach(rpc)
+        end
+
+        @testset "Partially encoded" begin
+            io = IOBuffer()
+            encode(ProtoEncoder(io), TestRequest(4, [1]))
+            seekstart(io)
+            rpc = TestService.TestServerStreamRPC(chan, read(io))
+
+            # Server should send 4 responses pretty immediately
+            for i in 1:4
+                io = IOBuffer(take!(rpc, Vector{UInt8}))
+                resp = decode(ProtoDecoder(io), TestResponse)
+                @test length(resp.data) == i
+            end
+        end
+    end
+
+    @testset "Simple API: Bidirectional" begin
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
+
+        @testset "Minimal example" begin
+            rpc = TestService.TestBidirectionalStreamRPC(chan)
+            put!(rpc, TestRequest(1, [1]))
+            resp = take!(rpc)
+            @test resp.data == [1]
+            close(rpc)
+            @test rpc.req.completed # Stream should be done
+            @test !isopen(rpc.response_channel)
+            # Check that we get information about _why_ stream was closed
+            @test_throws "Call has already been completed" take!(rpc)
+        end
+
+        @testset "detaching" begin
+            rpc = TestService.TestBidirectionalStreamRPC(chan)
+            @test isopen(rpc)
+            detach(rpc)
+            timedwait(() -> !isopen(rpc.response_channel), 0.1, pollint = 0.001)
+            @test !isopen(rpc)
+            @test rpc.req.ex.grpc_status == GRPC_CANCELLED
+            @test_throws "Request was cancelled by the client" take!(rpc)
+        end
+
+        @testset "Testing isfull" begin
+            if @isdefined(isfull)
+                rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
+                lock(rpc.req.grpc.lock) do # Prevent the request channel from being drained
+                    # one request should be passed to the Channel{IOBuffer}
+                    # Sooner or later, the request should have been handled
+                    put!(rpc, TestRequest(1, [1]))
+                    @test :ok == timedwait(() -> !isfull(rpc), 0.1, pollint = 0.001)
+
+                    # Next request request does not propagate forward due to the lock, so the channel is full even after some wait.
+                    put!(rpc, TestRequest(1, [1]))
+                    @test :timed_out == timedwait(() -> !isfull(rpc), 0.01, pollint = 0.001)
+                end
+                # Request propagates once we release the lock
+                @test :ok == timedwait(() -> !isfull(rpc), 0.1, pollint = 0.001)
+                close(rpc)
+            end
+        end
+
+        @testset "Ending request stream" begin
+            rpc = TestService.TestBidirectionalStreamRPC(chan)
+            put!(rpc, TestRequest(1, [1]))
+            put!(rpc, TestRequest(1, [1]), done = true)
+            @test :ok == timedwait(() -> !isopen(rpc), 0.1, pollint = 0.001)
+            @test_throws "Call has already been completed." put!(rpc, TestRequest(1, [1]))
+
+            rpc = TestService.TestBidirectionalStreamRPC(chan)
+            put!(rpc, TestRequest(1, [1]))
+            put!(rpc, TestRequest(1, [1]))
+            put!(rpc, done = true)
+            @test :ok == timedwait(() -> !isopen(rpc), 0.1, pollint = 0.001)
+            @test_throws "Call has already been completed." put!(rpc, TestRequest(1, [1]))
+        end
+
+        @testset "Testing fetch and take!" begin
+            rpc = TestService.TestBidirectionalStreamRPC(chan, request_channel_size = 1)
+            waittask = Threads.@spawn wait(rpc) # Allows us to check if wait(rpc) is done
+            @test !istaskdone(waittask)
+            put!(rpc, TestRequest(1, [1]))
+            @test !isready(rpc) # If this runs immediately after put!, it should be true
+            # wait, but with a time limit to ensure CI ends quickly
+            @test :ok == timedwait(() -> istaskdone(waittask), 0.1, pollint = 0.001)
+            @test isready(rpc) # response stream should be ready
+            resp1 = fetch(rpc) # Get data without removing
+            resp2 = take!(rpc) # Get data again, also remove
+            @test resp1.data == resp2.data == [1]
+            @test !rpc.req.completed # The rpc should still be active and ready for new requests
+        end
+
+        @testset "Connection options" begin
+            chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, max_send_message_length = 1024)
+            rpc = TestService.TestBidirectionalStreamRPC(chan)
+            @test rpc.req.max_send_message_length == 1024
+            detach(rpc)
+            rpc = TestService.TestBidirectionalStreamRPC(chan, max_send_message_length = 2048)
+            @test rpc.req.max_send_message_length == 2048
+            detach(rpc)
+        end
+
+        @testset "Partially encoded" begin
+            rpc = TestService.TestBidirectionalStreamRPC(chan)
+
+            io = IOBuffer()
+            encode(ProtoEncoder(io), TestRequest(1, [1]))
+            seekstart(io)
+            put!(rpc, read(io))
+
+            io = IOBuffer(take!(rpc, Vector{UInt8}))
+            resp = decode(ProtoDecoder(io), TestResponse)
+            @test resp.data == [1]
+            close(rpc)
         end
     end
 
