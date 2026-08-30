@@ -1,5 +1,3 @@
-
-
 """
     gRPCChannel(host::AbstractString, port::Integer[; grpc::gRPCCURL = grpc_global_handle(), options...])
 
@@ -30,15 +28,15 @@ struct gRPCChannel
     grpc::gRPCCURL
     options::gRPCConnectionOptions
     function gRPCChannel(host::AbstractString, port::Integer; grpc::gRPCCURL = grpc_global_handle(), options...)
-        new(host, port, grpc, gRPCConnectionOptions(; options...))
+        return new(host, port, grpc, gRPCConnectionOptions(; options...))
     end
 end
 
 abstract type AbstractgRPCCall{Trpc} end
-isstreaming_request(::AbstractgRPCCall{Trpc}) where Trpc = isstreaming_request(Trpc)
-isstreaming_response(::AbstractgRPCCall{Trpc}) where Trpc = isstreaming_response(Trpc)
-request_type(::AbstractgRPCCall{Trpc}) where Trpc = request_type(Trpc)
-response_type(::AbstractgRPCCall{Trpc}) where Trpc = response_type(Trpc)
+isstreaming_request(::AbstractgRPCCall{Trpc}) where {Trpc} = isstreaming_request(Trpc)
+isstreaming_response(::AbstractgRPCCall{Trpc}) where {Trpc} = isstreaming_response(Trpc)
+request_type(::AbstractgRPCCall{Trpc}) where {Trpc} = request_type(Trpc)
+response_type(::AbstractgRPCCall{Trpc}) where {Trpc} = response_type(Trpc)
 
 struct gRPCUnaryCall{Trpc} <: AbstractgRPCCall{Trpc}
     req::gRPCRequest
@@ -63,29 +61,32 @@ const StreamingRequestRPC = Union{gRPCClientStreamCall, gRPCBidirectionalStreamC
 const UnaryResponseRPC = Union{gRPCUnaryCall, gRPCClientStreamCall}
 const StreamingResponseRPC = Union{gRPCServerStreamCall, gRPCBidirectionalStreamCall}
 
-function Base.show(io::IO, rpc::AbstractgRPCCall) 
+function Base.show(io::IO, rpc::AbstractgRPCCall)
     f = typeof(rpc).parameters[1].instance
-    # If typeinfo is set, we know the rpc is shown as part of some container. 
-    if get(io, :compact, false) || haskey(io, :typeinfo)
+    # If typeinfo is set, we know the rpc is shown as part of some container.
+    return if get(io, :compact, false) || haskey(io, :typeinfo)
         print(io, "$(typeof(rpc))(...)")
     else
-        print(io, """
-        $(typeof(rpc))(...) with properties:
-          RPC           : $(parentmodule(f)).$(nameof(f))
-          Request type  : $(isstreaming_request(rpc) ? "stream " : "unary ")$(request_type(rpc))
-          Response type : $(isstreaming_response(rpc) ? "stream " : "unary ")$(response_type(rpc))
-          Status        : $(GRPC_CODE_TABLE[rpc.req.grpc_status])
-          Completed     : $(!isopen(rpc))""")
+        print(
+            io,
+            """
+            $(typeof(rpc))(...) with properties:
+              RPC           : $(parentmodule(f)).$(nameof(f))
+              Request type  : $(isstreaming_request(rpc) ? "stream " : "unary ")$(request_type(rpc))
+              Response type : $(isstreaming_response(rpc) ? "stream " : "unary ")$(response_type(rpc))
+              Status        : $(GRPC_CODE_TABLE[rpc.req.grpc_status])
+              Completed     : $(!isopen(rpc))"""
+        )
     end
 end
 
 function handle_channel_exception(ex, rpc, newex)
     if isa(ex, InvalidStateException) && ex.state === :closed
         # The channel may have been closed before the shutdown procedure
-        # was complete. Obtain the lock for a correct diagnosis. 
+        # was complete. Obtain the lock for a correct diagnosis.
         grpc = rpc.req.grpc::gRPCCURL
-        lock(grpc.lock) do 
-            if !isopen(rpc.req) 
+        lock(grpc.lock) do
+            if !isopen(rpc.req)
                 if !isnothing(rpc.req.ex)
                     throw(rpc.req.ex)
                 end
@@ -107,11 +108,11 @@ the call being shut down by the server logic. In such cases,
 """
 @inline function Base.close(rpc::AbstractgRPCCall)
     isstreaming_request(rpc) && close(rpc.request_channel)
-    try
+    return try
         grpc_async_await(rpc.req)
     finally
         # this will be closed by a task anyway, but
-        # its better to ensure it is closed before this 
+        # its better to ensure it is closed before this
         # function returns.
         isstreaming_response(rpc) && close(rpc.response_channel)
     end
@@ -130,16 +131,16 @@ future calls to `detach` or `close`.
     grpc = rpc.req.grpc::gRPCCURL
     prev_ex = @lock grpc.lock rpc.req.ex
 
-    grpc_cancel(rpc.req) 
+    grpc_cancel(rpc.req)
 
     # this will be closed by a task anyway, but
-    # its better to ensure it is closed before this 
+    # its better to ensure it is closed before this
     # function returns.
     isstreaming_request(rpc) && close(rpc.request_channel)
     isstreaming_response(rpc) && close(rpc.response_channel)
 
     # If the call got cancelled by this call to `detach`, we
-    # also want to throw any exception that already existed. 
+    # also want to throw any exception that already existed.
     if throws && !isnothing(prev_ex)
         throw(prev_ex)
     end
@@ -155,14 +156,14 @@ If false, either all responses have been received or an error has occured.
 """
 @inline Base.isopen(rpc::AbstractgRPCCall) = isopen(rpc.req)
 
-# Overload of Base.put! should be in generated code to  
-# enable IDE suggestions of msg type. 
-@inline function _put!(rpc::StreamingRequestRPC, msg; done::Bool = false) 
+# Overload of Base.put! should be in generated code to
+# enable IDE suggestions of msg type.
+@inline function _put!(rpc::StreamingRequestRPC, msg; done::Bool = false)
     try
         put!(rpc.request_channel, msg)
     catch ex
         handle_channel_exception(ex, rpc, gRPCServiceCallException(GRPC_OK, "Call has already been completed."))
-    end 
+    end
     done && close(rpc.request_channel)
     return nothing
 end
@@ -184,16 +185,16 @@ sending more messages. Future calls to `put!` will result in an exception.
 end
 
 @static if @isdefined(isfull) # Not available in 1.10
-"""
-    isfull(rpc::gRPCClientStreamCall)
-    isfull(rpc::gRPCBidirectionalStreamCall)
+    """
+        isfull(rpc::gRPCClientStreamCall)
+        isfull(rpc::gRPCBidirectionalStreamCall)
 
-Tells whether the request channel of `rpc` is full. 
+    Tells whether the request channel of `rpc` is full. 
 
-If `true`, a subsequent call to `put!` will likely be blocking.
-If `false`, a subsequent call to `put!` will not be blocking. 
-"""
-@inline Base.isfull(rpc::StreamingRequestRPC) = isfull(rpc.request_channel)
+    If `true`, a subsequent call to `put!` will likely be blocking.
+    If `false`, a subsequent call to `put!` will not be blocking. 
+    """
+    @inline Base.isfull(rpc::StreamingRequestRPC) = isfull(rpc.request_channel)
 end # @static if @isdefined(isfull)
 
 """
@@ -254,11 +255,11 @@ end
 Wait until a response becomes available. 
 """
 @inline function Base.wait(rpc::StreamingResponseRPC)
-    try
+    return try
         wait(rpc.response_channel)
     catch ex
         handle_channel_exception(ex, rpc, gRPCServiceCallException(GRPC_OK, "Call has already been completed and no more responses are available. "))
-    end 
+    end
 end
 
 """
@@ -268,7 +269,7 @@ end
 Tells whether the response stream has a message available which has not yet been removed by `take!`.
 """
 @inline function Base.isready(rpc::StreamingResponseRPC)
-    isready(rpc.response_channel)
+    return isready(rpc.response_channel)
 end
 
 """
@@ -282,7 +283,7 @@ If `Vector{UInt8}` is provided as the second argument, the response
 will be returned without decoding the proto format. 
 """
 @inline function Base.take!(rpc::StreamingResponseRPC)
-    try
+    return try
         io = take!(rpc.response_channel)
         seekstart(io)
         decode(ProtoDecoder(io), response_type(rpc))
@@ -292,7 +293,7 @@ will be returned without decoding the proto format.
 end
 
 @inline function Base.take!(rpc::StreamingResponseRPC, ::Type{Vector{UInt8}})
-    try
+    return try
         io = take!(rpc.response_channel)
         seekstart(io)
         read(io)::Vector{UInt8}
@@ -315,7 +316,7 @@ Note that `fetch` does not remove the response, so repeated calls will return th
 value. In most scenarios, [`take!`](@ref) is the preferred option for response streams. 
 """
 @inline function Base.fetch(rpc::StreamingResponseRPC)
-    try
+    return try
         io = fetch(rpc.response_channel)
         seekstart(io)
         decode(ProtoDecoder(io), response_type(rpc))
@@ -325,7 +326,7 @@ value. In most scenarios, [`take!`](@ref) is the preferred option for response s
 end
 
 @inline function Base.fetch(rpc::StreamingResponseRPC, ::Type{Vector{UInt8}})
-    try
+    return try
         io = fetch(rpc.response_channel)
         seekstart(io)
         read(io)::Vector{UInt8}

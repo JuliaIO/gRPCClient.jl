@@ -43,7 +43,7 @@ function benchmark_table()
     ]
     all_benchmarks = [
         workload_smol,
-        workload_smol_simple_api,    
+        workload_smol_simple_api,
         workload_32_224_224_uint8,
         workload_32_224_224_uint8_simple_api,
         workload_streaming_request,

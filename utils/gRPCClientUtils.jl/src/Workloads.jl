@@ -61,7 +61,7 @@ function workload_smol_simple_api(n = 1_000)
     chan = gRPCClient.gRPCChannel("localhost", _bench_port(), grpc = grpc_global_handle())
     rpcs = Vector{gRPCClient.gRPCUnaryCall{typeof(gRPCClientUtils.TestService.TestRPC)}}()
 
-    for i = 1:n
+    for i in 1:n
         rpc = TestService.TestRPC(chan, TestRequest(1, zeros(UInt64, 1)), gRPCClient.gRPCAsync())
         push!(rpcs, rpc)
     end

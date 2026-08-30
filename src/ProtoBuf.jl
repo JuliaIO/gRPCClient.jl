@@ -46,6 +46,7 @@ function codegen_legacy(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.C
             println(io, "")
         end
     end
+    return
 end
 
 function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Context; compatguard::Bool = false)
@@ -55,30 +56,36 @@ function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGener
     # New API
     ###################
 
-    println(io, """
+    println(
+        io, """
 
-    baremodule $service_name
-        import gRPCClient
-        import Base
-    """)
+        baremodule $service_name
+            import gRPCClient
+            import Base
+        """
+    )
     # allows ignoring the new API code instead of erroring due to missing
-    # functions if loaded with an older version of gRPCClient. 
+    # functions if loaded with an older version of gRPCClient.
     # Notice that we only include this statement if necessary, as
-    # it prevents VSCode from providing suggestions. 
-    compatguard && print(io, """
-    Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNumber("1.2.0-rc1")))
-    """)
+    # it prevents VSCode from providing suggestions.
+    compatguard && print(
+        io, """
+        Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNumber("1.2.0-rc1")))
+        """
+    )
 
     # Will embed the version number used by codegen into the file
-    # so that compatibility can be checked and give a more 
+    # so that compatibility can be checked and give a more
     # meaningful error message than just complaining about undefined
-    # functions. This check was added in v1.2.0. 
-    println(io, """
-        # Check compatibility between the loaded version of `gRPCClient` and
-        # the version used to generate this module ($(pkgversion(gRPCClient))).
-        gRPCClient.check_codegen_compat(Base.VersionNumber("$(pkgversion(gRPCClient))"))
-    """)
-    
+    # functions. This check was added in v1.2.0.
+    println(
+        io, """
+            # Check compatibility between the loaded version of `gRPCClient` and
+            # the version used to generate this module ($(pkgversion(gRPCClient))).
+            gRPCClient.check_codegen_compat(Base.VersionNumber("$(pkgversion(gRPCClient))"))
+        """
+    )
+
     # Import individual types from the parent module
     import_type_list = Set{String}()
     # Types referred to by module need not be imported individually,
@@ -93,7 +100,7 @@ function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGener
                 modname = first(split(ns, '.'))
                 # Until julia gets a dedicated syntax for importing from parent module without
                 # knowing its name, we need to use `parentmodule`. Otherwise the generated file
-                # will only work if included from the correct generated toplevel package file. 
+                # will only work if included from the correct generated toplevel package file.
                 push!(import_mod_list, "const $(modname)::Module = Base.parentmodule($service_name).$(modname)")
             else
                 push!(import_type_list, "const $(t.name)::DataType = Base.parentmodule($service_name).$(t.name)")
@@ -101,16 +108,20 @@ function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGener
         end
     end
     for imp in import_mod_list
-        print(io, """
-            $imp
-        """)
+        print(
+            io, """
+                $imp
+            """
+        )
     end
     for imp in import_type_list
-        print(io, """
-            $imp
-        """)
+        print(
+            io, """
+                $imp
+            """
+        )
     end
-    println(io, )
+    println(io)
 
     for rpc in t.rpcs
         request_type = rpc.request_type.name
@@ -123,82 +134,100 @@ function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGener
             response_type = join([rpc.response_type.package_namespace, response_type], ".")
         end
 
-        print(io, """
-            # $service_name.$(rpc.name)
-        """)
+        print(
+            io, """
+                # $service_name.$(rpc.name)
+            """
+        )
 
-        if !rpc.request_stream && !rpc.response_stream 
-            print(io, """
-                Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type, args...; kws...)
-                    gRPCClient.grpc_call_unary(chan, typeof($(rpc.name)), req, args...; kws...)
-                end
-                Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::Base.Vector{UInt8}, args...; kws...)
-                    gRPCClient.grpc_call_unary(chan, typeof($(rpc.name)), req, args...; kws...)
-                end
-                Base.@inline function $(rpc.name)(host::AbstractString, port::Integer, args...; kws...)
-                    $(rpc.name)(gRPCChannel(host, port), args...; kws...)
-                end
-            """)
+        if !rpc.request_stream && !rpc.response_stream
+            print(
+                io, """
+                    Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type, args...; kws...)
+                        gRPCClient.grpc_call_unary(chan, typeof($(rpc.name)), req, args...; kws...)
+                    end
+                    Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::Base.Vector{UInt8}, args...; kws...)
+                        gRPCClient.grpc_call_unary(chan, typeof($(rpc.name)), req, args...; kws...)
+                    end
+                    Base.@inline function $(rpc.name)(host::AbstractString, port::Integer, args...; kws...)
+                        $(rpc.name)(gRPCChannel(host, port), args...; kws...)
+                    end
+                """
+            )
         elseif rpc.request_stream && !rpc.response_stream
-            print(io, """
-                Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel; kws...)
-                    gRPCClient.grpc_call_client_stream(chan, typeof($(rpc.name)); kws...)::gRPCClient.AbstractgRPCCall
-                end
-                Base.@inline function $(rpc.name)(host::AbstractString, port::Integer; kws...)
-                    $(rpc.name)(gRPCChannel(host, port); kws...)
-                end
-                Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof($(rpc.name))}, msg::$(request_type); kws...) = gRPCClient._put!(handle, msg; kws...)
-                Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof($(rpc.name))}, msg::Base.Vector{UInt8}; kws...) = gRPCClient._put!(handle, msg; kws...)
-            """)
+            print(
+                io, """
+                    Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel; kws...)
+                        gRPCClient.grpc_call_client_stream(chan, typeof($(rpc.name)); kws...)::gRPCClient.AbstractgRPCCall
+                    end
+                    Base.@inline function $(rpc.name)(host::AbstractString, port::Integer; kws...)
+                        $(rpc.name)(gRPCChannel(host, port); kws...)
+                    end
+                    Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof($(rpc.name))}, msg::$(request_type); kws...) = gRPCClient._put!(handle, msg; kws...)
+                    Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof($(rpc.name))}, msg::Base.Vector{UInt8}; kws...) = gRPCClient._put!(handle, msg; kws...)
+                """
+            )
         elseif !rpc.request_stream && rpc.response_stream
-            print(io, """
-                Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type; kws...)
-                    gRPCClient.grpc_call_server_stream(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.AbstractgRPCCall
-                end
-                Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::Base.Vector{UInt8}; kws...)
-                    gRPCClient.grpc_call_server_stream(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.AbstractgRPCCall
-                end
-                Base.@inline function $(rpc.name)(host::AbstractString, port::Integer, req; kws...)
-                    $(rpc.name)(gRPCChannel(host, port), req; kws...)
-                end
-            """)
+            print(
+                io, """
+                    Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type; kws...)
+                        gRPCClient.grpc_call_server_stream(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.AbstractgRPCCall
+                    end
+                    Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::Base.Vector{UInt8}; kws...)
+                        gRPCClient.grpc_call_server_stream(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.AbstractgRPCCall
+                    end
+                    Base.@inline function $(rpc.name)(host::AbstractString, port::Integer, req; kws...)
+                        $(rpc.name)(gRPCChannel(host, port), req; kws...)
+                    end
+                """
+            )
         elseif rpc.request_stream && rpc.response_stream
-            print(io, """
-                Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel; kws...)
-                    gRPCClient.grpc_call_bidirectional_stream(chan, typeof($(rpc.name)); kws...)::gRPCClient.AbstractgRPCCall
-                end
-                Base.@inline function $(rpc.name)(host::AbstractString, port::Integer; kws...)
-                    $(rpc.name)(gRPCChannel(host, port); kws...)
-                end
-                Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof($(rpc.name))}, msg::$(request_type); kws...) = gRPCClient._put!(handle, msg; kws...)
-                Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof($(rpc.name))}, msg::Base.Vector{UInt8}; kws...) = gRPCClient._put!(handle, msg; kws...)
-            """)
+            print(
+                io, """
+                    Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel; kws...)
+                        gRPCClient.grpc_call_bidirectional_stream(chan, typeof($(rpc.name)); kws...)::gRPCClient.AbstractgRPCCall
+                    end
+                    Base.@inline function $(rpc.name)(host::AbstractString, port::Integer; kws...)
+                        $(rpc.name)(gRPCChannel(host, port); kws...)
+                    end
+                    Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof($(rpc.name))}, msg::$(request_type); kws...) = gRPCClient._put!(handle, msg; kws...)
+                    Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof($(rpc.name))}, msg::Base.Vector{UInt8}; kws...) = gRPCClient._put!(handle, msg; kws...)
+                """
+            )
         end
-        print(io, """
-            gRPCClient.rpc_path(::Type{typeof($(rpc.name))}) = "/$namespace.$service_name/$(rpc.name)"
-            gRPCClient.isstreaming_request(::Type{typeof($(rpc.name))}) = $(rpc.request_stream)
-            gRPCClient.isstreaming_response(::Type{typeof($(rpc.name))}) = $(rpc.response_stream)
-            gRPCClient.request_type(::Type{typeof($(rpc.name))}) = $request_type
-            gRPCClient.response_type(::Type{typeof($(rpc.name))}) = $response_type
-            gRPCClient.request_type_displayname(::Type{typeof($(rpc.name))}) = "$(request_type)"
-            gRPCClient.response_type_displayname(::Type{typeof($(rpc.name))}) = "$(response_type)"
-        """)
-        println(io, """
-            Base.@doc gRPCClient.grpc_generate_rpc_docstring(typeof($(rpc.name))) $(rpc.name)
-            export $(rpc.name)
+        print(
+            io, """
+                gRPCClient.rpc_path(::Type{typeof($(rpc.name))}) = "/$namespace.$service_name/$(rpc.name)"
+                gRPCClient.isstreaming_request(::Type{typeof($(rpc.name))}) = $(rpc.request_stream)
+                gRPCClient.isstreaming_response(::Type{typeof($(rpc.name))}) = $(rpc.response_stream)
+                gRPCClient.request_type(::Type{typeof($(rpc.name))}) = $request_type
+                gRPCClient.response_type(::Type{typeof($(rpc.name))}) = $response_type
+                gRPCClient.request_type_displayname(::Type{typeof($(rpc.name))}) = "$(request_type)"
+                gRPCClient.response_type_displayname(::Type{typeof($(rpc.name))}) = "$(response_type)"
+            """
+        )
+        println(
+            io, """
+                Base.@doc gRPCClient.grpc_generate_rpc_docstring(typeof($(rpc.name))) $(rpc.name)
+                export $(rpc.name)
 
-        """)
+            """
+        )
     end
 
-    compatguard && println(io, """
-    else # checking gRPCClient.jl version
-        Base.@warn "This file contains code generated with `gRPCClient.jl` $(pkgversion(gRPCClient)) and uses an API not available in the loaded version ($("\$")(Base.pkgversion(gRPCClient))). You may need to update `gRPCClient`. The legacy API is still supported. "
-    end
-    """)
-    println(io, """
-    end # module $service_name
-    export $service_name
-    """)
+    compatguard && println(
+        io, """
+        else # checking gRPCClient.jl version
+            Base.@warn "This file contains code generated with `gRPCClient.jl` $(pkgversion(gRPCClient)) and uses an API not available in the loaded version ($("\$")(Base.pkgversion(gRPCClient))). You may need to update `gRPCClient`. The legacy API is still supported. "
+        end
+        """
+    )
+    println(
+        io, """
+        end # module $service_name
+        export $service_name
+        """
+    )
 
     return
 end
@@ -220,13 +249,13 @@ for syntax hints. The legacy API may be disable by default or removed in
 a future version. 
 """
 function grpc_register_service_codegen(; legacy::Bool = true, servicemodule::Bool = true)
-    function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Context) 
+    function service_cb(io, t::CodeGenerators.ServiceType, ctx::CodeGenerators.Context)
         legacy && codegen_legacy(io, t, ctx)
-        # If both options are used, we include the compatguard so that the file 
+        # If both options are used, we include the compatguard so that the file
         # still works with legacy API on older versions of gRPCClient
-        servicemodule && codegen_servicemodule(io, t, ctx; compatguard = legacy)
+        return servicemodule && codegen_servicemodule(io, t, ctx; compatguard = legacy)
     end
-    CodeGenerators.register_external_codegen_handler(
+    return CodeGenerators.register_external_codegen_handler(
         "gRPCClient.jl";
         import_cb = import_cb,
         service_cb = service_cb,
@@ -237,8 +266,8 @@ function check_codegen_compat(ver::VersionNumber)
     # This location can be used to throw an error or warn
     # if the codegen was done with an older version of
     # gRPCClient (ver). Currently no such incompatibilities
-    # exist. 
-	return nothing
+    # exist.
+    return nothing
 end
 
 """
@@ -273,7 +302,7 @@ function response_type_displayname end
         chan.port,
         rpc_path(Trpc),
         chan.options;
-        grpc=chan.grpc,
+        grpc = chan.grpc,
     )
 end
 
@@ -282,12 +311,12 @@ end
 @inline function grpc_call_unary(chan::gRPCChannel, ::Type{Trpc}, req::TRequest; kws...) where {Trpc <: Function, TRequest}
     @assert TRequest in (Vector{UInt8}, request_type(Trpc))
     client = _client(chan, Trpc, TRequest, response_type(Trpc))
-    grpc_sync_request(client, req)
+    return grpc_sync_request(client, req)
 end
 @inline function grpc_call_unary(chan::gRPCChannel, ::Type{Trpc}, req::TRequest, ::Type{Vector{UInt8}}; kws...) where {Trpc <: Function, TRequest}
     @assert TRequest in (Vector{UInt8}, request_type(Trpc))
     client = _client(chan, Trpc, TRequest, Vector{UInt8})
-    grpc_sync_request(client, req)
+    return grpc_sync_request(client, req)
 end
 # Unary async
 @inline function grpc_call_unary(chan::gRPCChannel, ::Type{Trpc}, req::TRequest, ::gRPCAsync; kws...) where {Trpc <: Function, TRequest}
@@ -310,7 +339,7 @@ end
     client = _client(chan, Trpc, TRequest)
     request_c = Channel{TRequest}(request_channel_size)
     return gRPCClientStreamCall{Trpc, TRequest}(
-        grpc_async_request(client, request_c; kws...), 
+        grpc_async_request(client, request_c; kws...),
         request_c
     )
 end
@@ -320,7 +349,7 @@ end
     client = _client(chan, Trpc, TRequest)
     response_c = Channel{IOBuffer}(response_channel_size)
     return gRPCServerStreamCall{Trpc}(
-        grpc_async_request(client, req, response_c; kws...), 
+        grpc_async_request(client, req, response_c; kws...),
         response_c
     )
 end
@@ -331,15 +360,15 @@ end
     request_c = Channel{TRequest}(request_channel_size)
     response_c = Channel{IOBuffer}(response_channel_size)
     return gRPCBidirectionalStreamCall{Trpc, TRequest}(
-        grpc_async_request(client, request_c, response_c; kws...), 
-        request_c, 
+        grpc_async_request(client, request_c, response_c; kws...),
+        request_c,
         response_c
     )
 end
 
 function grpc_generate_rpc_docstring(Trpc::DataType)
-    # request_type_displayed & response_type_displayed should be the name of the 
-    # types with namespaces as it is printed where the function is defined. 
+    # request_type_displayed & response_type_displayed should be the name of the
+    # types with namespaces as it is printed where the function is defined.
     request_type_displayed = request_type_displayname(Trpc)
     response_type_displayed = response_type_displayname(Trpc)
 
@@ -366,7 +395,7 @@ function _docstring_unary(@nospecialize(Trpc), request_type_displayed, response_
         $fname(host::String, port::Integer, args...; options...)
 
     Auto-generated remote procedure call (RPC) for use with `gRPCCLient.jl`. 
-    
+
     # RPC Signature
 
     |                | Unary/stream  | Type  | 
@@ -393,27 +422,27 @@ function _docstring_unary(@nospecialize(Trpc), request_type_displayed, response_
     #### Synchronous call
     ```julia
     using gRPCClient
-    
+
     # Set up connection properties (reusable)
     chan = gRPCChannel(host, port)
 
     # Request message
     msg = $(request_type_displayed)($(join(fieldnames(Treq), ", ")))
-    
+
     # Call and return the response
     response = $fname(chan, msg)
     ```
-    
+
     #### Asynchronous call
     ```julia
     using gRPCClient
-    
+
     # Set up connection properties (reusable)
     chan = gRPCChannel(host, port)
 
     # Request message
     msg = $(request_type_displayed)($(join(fieldnames(Treq), ", ")))
-    
+
     # Initiate call
     rpc = $fname(chan, msg, gRPCAsync())
 
@@ -425,7 +454,7 @@ function _docstring_unary(@nospecialize(Trpc), request_type_displayed, response_
     Perform multiple calls and read responses in the order in which they arrive. 
     ```
     using gRPCClient
-    
+
     # Set up connection properties (reusable)
     chan = gRPCChannel(host, port)
 
@@ -462,7 +491,7 @@ function _docstring_clientstream(@nospecialize(Trpc), request_type_displayed, re
     Auto-generated remote procedure call (RPC) for use with `gRPCCLient.jl`. 
 
     # RPC Signature
-    
+
     |                | Unary/stream  | Type  | 
     |---------------|-------------|------|
     | Request  | stream | $request_type_displayed |
@@ -475,7 +504,7 @@ function _docstring_clientstream(@nospecialize(Trpc), request_type_displayed, re
     # Example
     ```julia
     using gRPCClient
-    
+
     # Set up connection properties (reusable)
     chan = gRPCChannel(host, port)
 
@@ -486,7 +515,7 @@ function _docstring_clientstream(@nospecialize(Trpc), request_type_displayed, re
     put!(rpc, $(request_type_displayed)($(join(fieldnames(Treq), ", ")))
     put!(rpc, $(request_type_displayed)($(join(fieldnames(Treq), ", ")))
     put!(rpc, done = true) # optional, signals to server that the request stream is closed. 
-    
+
     # Wait for a response to become available, return it, clean up resources. 
     response = fetch(rpc)
     ```
@@ -503,9 +532,9 @@ function _docstring_serverstream(@nospecialize(Trpc), request_type_displayed, re
         $fname(chan::gRPCChannel, req::Vector{UInt8}; options...)
 
     Auto-generated remote procedure call (RPC) for use with `gRPCCLient.jl`. 
-    
+
     # RPC Signature
-    
+
     |                | Unary/stream  | Type  | 
     |---------------|-------------|------|
     | Request  | unary | $request_type_displayed |
@@ -524,7 +553,7 @@ function _docstring_serverstream(@nospecialize(Trpc), request_type_displayed, re
 
     # Request message
     msg = $(request_type_displayed)($(join(fieldnames(Treq), ", ")))
-    
+
     # Initiate call
     rpc = $fname(chan, msg)
 
@@ -537,7 +566,7 @@ function _docstring_serverstream(@nospecialize(Trpc), request_type_displayed, re
     # or cancel without waiting for the server
     detach(rpc)
     ```
-    
+
     See also [`isfull`](@ref), [`isopen`](@ref), [`wait`](@ref), [`isready`](@ref) and [`fetch`](@ref).
     """
 end
@@ -551,7 +580,7 @@ function _docstring_bidirectional(@nospecialize(Trpc), request_type_displayed, r
     Auto-generated remote procedure call (RPC) for use with `gRPCCLient.jl`. 
 
     # RPC Signature
-    
+
     |                | Unary/stream  | Type  | 
     |---------------|-------------|------|
     | Request  | stream | $request_type_displayed |
@@ -565,7 +594,7 @@ function _docstring_bidirectional(@nospecialize(Trpc), request_type_displayed, r
 
     ```julia
     using gRPCClient
-    
+
     # Set up connection properties (reusable)
     chan = gRPCChannel(host, port)
 
@@ -578,7 +607,7 @@ function _docstring_bidirectional(@nospecialize(Trpc), request_type_displayed, r
     put!(rpc, $(request_type_displayed)($(join(fieldnames(Treq), ", ")))
     put!(rpc, done = true) # optional, signals to server that the request stream is closed. 
     resp2 = take!(rpc)
-    
+
     # Wait for server to close the call
     close(rpc)
     # or cancel without waiting for the server

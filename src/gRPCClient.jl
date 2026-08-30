@@ -108,7 +108,7 @@ export gRPCException
 export gRPCServiceCallException
 
 macro public(ex)
-    if VERSION >= v"1.11.0-DEV.469"
+    return if VERSION >= v"1.11.0-DEV.469"
         args = ex isa Symbol ? (ex,) : ex.args
         esc(Expr(:public, args...))
     else
