@@ -142,7 +142,7 @@ function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGener
         elseif rpc.request_stream && !rpc.response_stream
             print(io, """
                 Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel; kws...)
-                    gRPCClient.grpc_call_stream_request(chan, typeof($(rpc.name)); kws...)::gRPCClient.AbstractgRPCCall
+                    gRPCClient.grpc_call_client_stream(chan, typeof($(rpc.name)); kws...)::gRPCClient.AbstractgRPCCall
                 end
                 Base.@inline function $(rpc.name)(host::AbstractString, port::Integer; kws...)
                     $(rpc.name)(gRPCChannel(host, port); kws...)
@@ -153,10 +153,10 @@ function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGener
         elseif !rpc.request_stream && rpc.response_stream
             print(io, """
                 Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::$request_type; kws...)
-                    gRPCClient.grpc_call_stream_response(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.AbstractgRPCCall
+                    gRPCClient.grpc_call_server_stream(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.AbstractgRPCCall
                 end
                 Base.@inline function $(rpc.name)(chan::gRPCClient.gRPCChannel, req::Base.Vector{UInt8}; kws...)
-                    gRPCClient.grpc_call_stream_response(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.AbstractgRPCCall
+                    gRPCClient.grpc_call_server_stream(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.AbstractgRPCCall
                 end
                 Base.@inline function $(rpc.name)(host::AbstractString, port::Integer, req; kws...)
                     $(rpc.name)(gRPCChannel(host, port), req; kws...)
@@ -305,7 +305,7 @@ end
     return nothing
 end
 # Stream request
-@inline function grpc_call_stream_request(chan::gRPCChannel, ::Type{Trpc}; request_channel_size::Int = 16, kws...) where {Trpc <: Function}
+@inline function grpc_call_client_stream(chan::gRPCChannel, ::Type{Trpc}; request_channel_size::Int = 16, kws...) where {Trpc <: Function}
     TRequest = Union{request_type(Trpc), Vector{UInt8}}
     client = _client(chan, Trpc, TRequest)
     request_c = Channel{TRequest}(request_channel_size)
@@ -315,7 +315,7 @@ end
     )
 end
 # Stream response
-@inline function grpc_call_stream_response(chan::gRPCChannel, ::Type{Trpc}, req::TRequest; response_channel_size::Int = 16, kws...) where {Trpc <: Function, TRequest}
+@inline function grpc_call_server_stream(chan::gRPCChannel, ::Type{Trpc}, req::TRequest; response_channel_size::Int = 16, kws...) where {Trpc <: Function, TRequest}
     @assert TRequest in (Vector{UInt8}, request_type(Trpc))
     client = _client(chan, Trpc, TRequest)
     response_c = Channel{IOBuffer}(response_channel_size)

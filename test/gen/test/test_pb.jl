@@ -163,10 +163,10 @@ Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNum
 
     # TestService.TestServerStreamRPC
     Base.@inline function TestServerStreamRPC(chan::gRPCClient.gRPCChannel, req::TestRequest; kws...)
-        gRPCClient.grpc_call_stream_response(chan, typeof(TestServerStreamRPC), req; kws...)::gRPCClient.AbstractgRPCCall
+        gRPCClient.grpc_call_server_stream(chan, typeof(TestServerStreamRPC), req; kws...)::gRPCClient.AbstractgRPCCall
     end
     Base.@inline function TestServerStreamRPC(chan::gRPCClient.gRPCChannel, req::Base.Vector{UInt8}; kws...)
-        gRPCClient.grpc_call_stream_response(chan, typeof(TestServerStreamRPC), req; kws...)::gRPCClient.AbstractgRPCCall
+        gRPCClient.grpc_call_server_stream(chan, typeof(TestServerStreamRPC), req; kws...)::gRPCClient.AbstractgRPCCall
     end
     Base.@inline function TestServerStreamRPC(host::AbstractString, port::Integer, req; kws...)
         TestServerStreamRPC(gRPCChannel(host, port), req; kws...)
@@ -184,7 +184,7 @@ Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNum
 
     # TestService.TestClientStreamRPC
     Base.@inline function TestClientStreamRPC(chan::gRPCClient.gRPCChannel; kws...)
-        gRPCClient.grpc_call_stream_request(chan, typeof(TestClientStreamRPC); kws...)::gRPCClient.AbstractgRPCCall
+        gRPCClient.grpc_call_client_stream(chan, typeof(TestClientStreamRPC); kws...)::gRPCClient.AbstractgRPCCall
     end
     Base.@inline function TestClientStreamRPC(host::AbstractString, port::Integer; kws...)
         TestClientStreamRPC(gRPCChannel(host, port); kws...)

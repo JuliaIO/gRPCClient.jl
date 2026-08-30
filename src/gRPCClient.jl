@@ -120,8 +120,8 @@ end
 @public grpc_call_bidirectional_stream
 @public grpc_call_unary_sync
 @public grpc_call_unary_async
-@public grpc_call_stream_request
-@public grpc_call_stream_response
+@public grpc_call_client_stream
+@public grpc_call_server_stream
 @public grpc_call_bidirectional_stream
 @public rpc_path
 @public isstreaming_request
