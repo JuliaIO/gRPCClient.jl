@@ -148,7 +148,7 @@ baremodule TestService
             gRPCClient.grpc_call_unary(chan, typeof(TestRPC), req, args...; kws...)
         end
         Base.@inline function TestRPC(host::AbstractString, port::Integer, args...; kws...)
-            TestRPC(gRPCChannel(host, port), args...; kws...)
+            TestRPC(gRPCClient.gRPCChannel(host, port), args...; kws...)
         end
         gRPCClient.rpc_path(::Type{typeof(TestRPC)}) = "/test.TestService/TestRPC"
         gRPCClient.isstreaming_request(::Type{typeof(TestRPC)}) = false
@@ -169,7 +169,7 @@ baremodule TestService
             gRPCClient.grpc_call_server_stream(chan, typeof(TestServerStreamRPC), req; kws...)::gRPCClient.AbstractgRPCCall
         end
         Base.@inline function TestServerStreamRPC(host::AbstractString, port::Integer, req; kws...)
-            TestServerStreamRPC(gRPCChannel(host, port), req; kws...)
+            TestServerStreamRPC(gRPCClient.gRPCChannel(host, port), req; kws...)
         end
         gRPCClient.rpc_path(::Type{typeof(TestServerStreamRPC)}) = "/test.TestService/TestServerStreamRPC"
         gRPCClient.isstreaming_request(::Type{typeof(TestServerStreamRPC)}) = false
@@ -187,7 +187,7 @@ baremodule TestService
             gRPCClient.grpc_call_client_stream(chan, typeof(TestClientStreamRPC); kws...)::gRPCClient.AbstractgRPCCall
         end
         Base.@inline function TestClientStreamRPC(host::AbstractString, port::Integer; kws...)
-            TestClientStreamRPC(gRPCChannel(host, port); kws...)
+            TestClientStreamRPC(gRPCClient.gRPCChannel(host, port); kws...)
         end
         Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof(TestClientStreamRPC)}, msg::TestRequest; kws...) = gRPCClient._put!(handle, msg; kws...)
         Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof(TestClientStreamRPC)}, msg::Base.Vector{UInt8}; kws...) = gRPCClient._put!(handle, msg; kws...)
@@ -207,7 +207,7 @@ baremodule TestService
             gRPCClient.grpc_call_bidirectional_stream(chan, typeof(TestBidirectionalStreamRPC); kws...)::gRPCClient.AbstractgRPCCall
         end
         Base.@inline function TestBidirectionalStreamRPC(host::AbstractString, port::Integer; kws...)
-            TestBidirectionalStreamRPC(gRPCChannel(host, port); kws...)
+            TestBidirectionalStreamRPC(gRPCClient.gRPCChannel(host, port); kws...)
         end
         Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof(TestBidirectionalStreamRPC)}, msg::TestRequest; kws...) = gRPCClient._put!(handle, msg; kws...)
         Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof(TestBidirectionalStreamRPC)}, msg::Base.Vector{UInt8}; kws...) = gRPCClient._put!(handle, msg; kws...)

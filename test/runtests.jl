@@ -392,6 +392,11 @@ include("gen/test/test_pb.jl")
             response = decode(ProtoDecoder(io), TestResponse)
             @test response.data == [1]
         end
+
+        @testset "Host-port syntax" begin
+            resp = TestService.TestRPC(_TEST_HOST, _TEST_PORT, TestRequest(1, [1]))
+            @test resp.data == [1]
+        end
     end
 
     @testset "Simple API: Unary, async" begin
@@ -401,6 +406,12 @@ include("gen/test/test_pb.jl")
             rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCClient.gRPCAsync())
             @test !isready(rpc)
             @test :ok == timedwait(() -> isready(rpc), 0.1, pollint = 0.001)
+            resp = fetch(rpc)
+            @test resp.data == [1]
+        end
+
+        @testset "Host-port syntax" begin
+            rpc = TestService.TestRPC(_TEST_HOST, _TEST_PORT, TestRequest(1, [1]), gRPCClient.gRPCAsync())
             resp = fetch(rpc)
             @test resp.data == [1]
         end
@@ -482,6 +493,16 @@ include("gen/test/test_pb.jl")
             @test response.data == 1:4
         end
 
+        @testset "host/port syntax" begin
+            rpc = TestService.TestClientStreamRPC(_TEST_HOST, _TEST_PORT)
+            for i in 1:4
+                put!(rpc, TestRequest(1, [1]))
+            end
+            response = fetch(rpc)
+            @test response.data == 1:4
+        end
+
+
         @testset "detaching" begin
             rpc = TestService.TestClientStreamRPC(chan)
             @test isopen(rpc)
@@ -548,6 +569,16 @@ include("gen/test/test_pb.jl")
             close(rpc)
         end
 
+        @testset "host/port syntax" begin
+            rpc = TestService.TestServerStreamRPC(_TEST_HOST, _TEST_PORT, TestRequest(4, [1]))
+            # Server should send 4 responses pretty immediately
+            for i in 1:4
+                resp = take!(rpc)
+                @test length(resp.data) == i
+            end
+            close(rpc)
+        end
+
         @testset "fetch and take!" begin
             rpc = TestService.TestServerStreamRPC(chan, TestRequest(1, [1]))
             waittask = Threads.@spawn wait(rpc) # Allows us to check if wait(rpc) is done
@@ -607,6 +638,14 @@ include("gen/test/test_pb.jl")
             @test !isopen(rpc.response_channel)
             # Check that we get information about _why_ stream was closed
             @test_throws "Call has already been completed" take!(rpc)
+        end
+
+        @testset "host/port syntax" begin
+            rpc = TestService.TestBidirectionalStreamRPC(_TEST_HOST, _TEST_PORT)
+            put!(rpc, TestRequest(1, [1]))
+            resp = take!(rpc)
+            @test resp.data == [1]
+            close(rpc)
         end
 
         @testset "detaching" begin

@@ -150,7 +150,7 @@ function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGener
                         gRPCClient.grpc_call_unary(chan, typeof($(rpc.name)), req, args...; kws...)
                     end
                     Base.@inline function $(rpc.name)(host::AbstractString, port::Integer, args...; kws...)
-                        $(rpc.name)(gRPCChannel(host, port), args...; kws...)
+                        $(rpc.name)(gRPCClient.gRPCChannel(host, port), args...; kws...)
                     end
                 """
             )
@@ -161,7 +161,7 @@ function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGener
                         gRPCClient.grpc_call_client_stream(chan, typeof($(rpc.name)); kws...)::gRPCClient.AbstractgRPCCall
                     end
                     Base.@inline function $(rpc.name)(host::AbstractString, port::Integer; kws...)
-                        $(rpc.name)(gRPCChannel(host, port); kws...)
+                        $(rpc.name)(gRPCClient.gRPCChannel(host, port); kws...)
                     end
                     Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof($(rpc.name))}, msg::$(request_type); kws...) = gRPCClient._put!(handle, msg; kws...)
                     Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof($(rpc.name))}, msg::Base.Vector{UInt8}; kws...) = gRPCClient._put!(handle, msg; kws...)
@@ -177,7 +177,7 @@ function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGener
                         gRPCClient.grpc_call_server_stream(chan, typeof($(rpc.name)), req; kws...)::gRPCClient.AbstractgRPCCall
                     end
                     Base.@inline function $(rpc.name)(host::AbstractString, port::Integer, req; kws...)
-                        $(rpc.name)(gRPCChannel(host, port), req; kws...)
+                        $(rpc.name)(gRPCClient.gRPCChannel(host, port), req; kws...)
                     end
                 """
             )
@@ -188,7 +188,7 @@ function codegen_servicemodule(io, t::CodeGenerators.ServiceType, ctx::CodeGener
                         gRPCClient.grpc_call_bidirectional_stream(chan, typeof($(rpc.name)); kws...)::gRPCClient.AbstractgRPCCall
                     end
                     Base.@inline function $(rpc.name)(host::AbstractString, port::Integer; kws...)
-                        $(rpc.name)(gRPCChannel(host, port); kws...)
+                        $(rpc.name)(gRPCClient.gRPCChannel(host, port); kws...)
                     end
                     Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof($(rpc.name))}, msg::$(request_type); kws...) = gRPCClient._put!(handle, msg; kws...)
                     Base.@inline Base.put!(handle::gRPCClient.AbstractgRPCCall{typeof($(rpc.name))}, msg::Base.Vector{UInt8}; kws...) = gRPCClient._put!(handle, msg; kws...)
