@@ -311,12 +311,12 @@ end
 @inline function grpc_call_unary(chan::gRPCChannel, ::Type{Trpc}, req::TRequest; kws...) where {Trpc <: Function, TRequest}
     @assert TRequest in (Vector{UInt8}, request_type(Trpc))
     client = _client(chan, Trpc, TRequest, response_type(Trpc))
-    return grpc_sync_request(client, req)
+    return grpc_sync_request(client, req; kws...)
 end
 @inline function grpc_call_unary(chan::gRPCChannel, ::Type{Trpc}, req::TRequest, ::Type{Vector{UInt8}}; kws...) where {Trpc <: Function, TRequest}
     @assert TRequest in (Vector{UInt8}, request_type(Trpc))
     client = _client(chan, Trpc, TRequest, Vector{UInt8})
-    return grpc_sync_request(client, req)
+    return grpc_sync_request(client, req; kws...)
 end
 # Unary async
 @inline function grpc_call_unary(chan::gRPCChannel, ::Type{Trpc}, req::TRequest, ::gRPCAsync; kws...) where {Trpc <: Function, TRequest}

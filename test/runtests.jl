@@ -693,6 +693,58 @@ include("gen/test/test_pb.jl")
         end
     end
 
+    @testset "Simple API: Keyword forwarding" begin
+        # Testing that all syntaxes forward keywords by using a channel
+        # with a bad auth, then using a good auth when invoking the rpc
+
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, token = "bad_token")
+        @test_throws "UNAUTHENTICATED" TestService.TestRPC(chan, TestRequest(1, [1]))
+        TestService.TestRPC(chan, TestRequest(1, [1]), token = _TEST_BEARER_TOKEN)
+
+        @test_throws "UNAUTHENTICATED" TestService.TestRPC(chan, TestRequest(1, [1]), Vector{UInt8})
+        TestService.TestRPC(chan, TestRequest(1, [1]), Vector{UInt8}, token = _TEST_BEARER_TOKEN)
+
+        rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCAsync())
+        @test_throws "UNAUTHENTICATED" close(rpc)
+        rpc = TestService.TestRPC(chan, TestRequest(1, [1]), gRPCAsync(), token = _TEST_BEARER_TOKEN)
+        close(rpc)
+
+        responses = Channel{gRPCAsyncChannelResponse{TestResponse}}(Inf)
+        rpc = TestService.TestRPC(chan, TestRequest(1, [1]), responses, 1)
+        resp = take!(responses)
+        @test resp.ex isa gRPCServiceCallException
+        TestService.TestRPC(chan, TestRequest(1, [1]), responses, 1, token = _TEST_BEARER_TOKEN)
+        resp = take!(responses)
+        @test isnothing(resp.ex)
+        
+        # Since the auth interceptor is only implemented for unary on the test server, 
+        # we use deadline to test streaming rpcs
+
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, token = "bad_token", deadline = 1e-9)
+        rpc = TestService.TestClientStreamRPC(chan)
+        sleep(0.001)
+        @test_throws "DEADLINE_EXCEEDED" detach(rpc)
+        rpc = TestService.TestClientStreamRPC(chan, deadline = 1)
+        sleep(0.001)
+        detach(rpc)
+
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, token = "bad_token", deadline = 1e-9)
+        rpc = TestService.TestServerStreamRPC(chan, TestRequest(1, [1]))
+        sleep(0.001)
+        @test_throws "DEADLINE_EXCEEDED" detach(rpc)
+        rpc = TestService.TestServerStreamRPC(chan, TestRequest(1, [1]), deadline = 1)
+        sleep(0.001)
+        detach(rpc)
+
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, token = "bad_token", deadline = 1e-9)
+        rpc = TestService.TestBidirectionalStreamRPC(chan)
+        sleep(0.001)
+        @test_throws "DEADLINE_EXCEEDED" detach(rpc)
+        rpc = TestService.TestBidirectionalStreamRPC(chan, deadline = 1)
+        sleep(0.001)
+        detach(rpc)
+    end
+
     # The streaming stress tests move ~1000 messages (or ~160MB) through a single
     # call. On a slow CI runner that can take longer than the default 10s deadline,
     # and the call's own DEADLINE_EXCEEDED then closes the stream mid-test, so give
