@@ -755,11 +755,11 @@ include("gen/test/test_pb.jl")
         TestService.TestRPC(chan, TestRequest(1, [1]), responses, 1, token = _TEST_BEARER_TOKEN)
         resp = take!(responses)
         @test isnothing(resp.ex)
-        
-        # Since the auth interceptor is only implemented for unary on the test server, 
+
+        # Since the auth interceptor is only implemented for unary on the test server,
         # we use deadline to test streaming rpcs
 
-        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, token = "bad_token", deadline = 1e-9)
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, token = "bad_token", deadline = 1.0e-9)
         rpc = TestService.TestClientStreamRPC(chan)
         sleep(0.001)
         @test_throws "DEADLINE_EXCEEDED" detach(rpc)
@@ -767,7 +767,7 @@ include("gen/test/test_pb.jl")
         sleep(0.001)
         detach(rpc)
 
-        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, token = "bad_token", deadline = 1e-9)
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, token = "bad_token", deadline = 1.0e-9)
         rpc = TestService.TestServerStreamRPC(chan, TestRequest(1, [1]))
         sleep(0.001)
         @test_throws "DEADLINE_EXCEEDED" detach(rpc)
@@ -775,7 +775,7 @@ include("gen/test/test_pb.jl")
         sleep(0.001)
         detach(rpc)
 
-        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, token = "bad_token", deadline = 1e-9)
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, token = "bad_token", deadline = 1.0e-9)
         rpc = TestService.TestBidirectionalStreamRPC(chan)
         sleep(0.001)
         @test_throws "DEADLINE_EXCEEDED" detach(rpc)
