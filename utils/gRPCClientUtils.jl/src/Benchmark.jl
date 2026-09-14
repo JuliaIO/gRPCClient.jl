@@ -43,10 +43,15 @@ function benchmark_table()
     ]
     all_benchmarks = [
         workload_smol,
+        workload_smol_simple_api,
         workload_32_224_224_uint8,
+        workload_32_224_224_uint8_simple_api,
         workload_streaming_request,
+        workload_streaming_request_simple_api,
         workload_streaming_response,
+        workload_streaming_response_simple_api,
         workload_streaming_bidirectional,
+        workload_streaming_bidirectional_simple_api,
     ]
 
     all_results = [perform_benchmark(f) for f in ProgressBar(all_benchmarks)]
