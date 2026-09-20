@@ -1,3 +1,7 @@
+```@meta
+CurrentModule = gRPCClient
+```
+
 # gRPCClient.jl
 
 gRPCClient.jl aims to be a production grade gRPC client emphasizing performance and reliability.
@@ -45,9 +49,11 @@ using gRPCClient
 protojl("test/proto/test.proto", ".", "test/gen")
 ```
 
+This will currently generate code both for an older and an updated API. If backwards compatibility with older versions of `gRPCClient.jl` (before 1.2.0) is not required, running `grpc_register_service_codegen(legacy = false)` is recommended as it will reduce amount of generated code and enable better IDE integration. 
+
 ## Example Usage
 
-See [here](#RPC) for examples covering all provided interfaces for both unary and streaming gRPC calls. 
+See [here](#RPCs) for examples covering all provided interfaces for both unary and streaming gRPC calls. 
 
 ## Concurrency Model
 
@@ -70,7 +76,7 @@ client = MyService_MyRPC_Client("localhost", 50051; grpc = h)
 
 The global handle returned by `grpc_global_handle()` uses the default `sticky = false`.
 
-## API
+##  API
 
 ### Package Initialization / Shutdown
 
@@ -79,6 +85,110 @@ grpc_init()
 grpc_shutdown()
 grpc_global_handle()
 ```
+
+### `gRPCChannel`
+```@docs
+gRPCClient.gRPCChannel
+```
+
+### Code generation
+
+```protobuf
+syntax = "proto3";
+package test;
+
+option go_package = "./;main";
+
+service TestService {
+  rpc TestRPC(TestRequest) returns (TestResponse) {}
+}
+```
+will be
+```julia
+baremodule TestService
+    import gRPCClient
+    import Base
+
+    # Check compatibility between the loaded version of `gRPCClient` and
+    # the version used to generate this module (1.2.0-rc1).
+    gRPCClient.check_codegen_compat(Base.VersionNumber("1.2.0-rc1"))
+
+    const TestResponse::DataType = Base.parentmodule(TestService).TestResponse
+    const TestRequest::DataType = Base.parentmodule(TestService).TestRequest
+
+    # TestService.TestRPC
+    Base.@inline function TestRPC(chan::gRPCClient.gRPCChannel, req::TestRequest, args...; kws...)
+        gRPCClient.grpc_call_unary(chan, typeof(TestRPC), req, args...; kws...)
+    end
+    Base.@inline function TestRPC(chan::gRPCClient.gRPCChannel, req::Base.Vector{UInt8}, args...; kws...)
+        gRPCClient.grpc_call_unary(chan, typeof(TestRPC), req, args...; kws...)
+    end
+    Base.@inline function TestRPC(host::AbstractString, port::Integer, args...; kws...)
+        TestRPC(gRPCClient.gRPCChannel(host, port), args...; kws...)
+    end
+    gRPCClient.rpc_path(::Type{typeof(TestRPC)}) = "/test.TestService/TestRPC"
+    gRPCClient.isstreaming_request(::Type{typeof(TestRPC)}) = false
+    gRPCClient.isstreaming_response(::Type{typeof(TestRPC)}) = false
+    gRPCClient.request_type(::Type{typeof(TestRPC)}) = TestRequest
+    gRPCClient.response_type(::Type{typeof(TestRPC)}) = TestResponse
+    gRPCClient.request_type_displayname(::Type{typeof(TestRPC)}) = "TestRequest"
+    gRPCClient.response_type_displayname(::Type{typeof(TestRPC)}) = "TestResponse"
+    Base.@doc gRPCClient.grpc_generate_rpc_docstring(typeof(TestRPC)) TestRPC
+    export TestRPC
+end
+```
+
+* The service is represented as a `baremodule`, so that tab-completion and IDE suggestions will show the available RPCs and nothing else. 
+* A check is done for ensuring that the generated code is compatible with the loaded version of `gRPCClient.jl`. 
+* The generated methods for the `rpc` clarifies which message types the rpc accepts as input. 
+* The generated methods are only thin wrappers around generic implementations residing in the loaded version of `gRPCClient.jl`. 
+* A series of traits are generated, describing the request/response types and other information about the `rpc`. 
+* An automatic docstring is created. 
+
+```@docs
+grpc_register_service_codegen(; legacy::Bool = true, servicemodule::Bool = true)
+```
+
+### RPCs
+
+#### Call initialization
+
+| Description                                | Name                                 | Throws (if an error occured)     | Async unary | Client stream   | Server stream   | Bidirectional         |
+| ------------------------------------------ | ------------------------------------ | ---------------------------------|-------------|-----------------|-----------------|-----------------------|
+| Create a call                              | <service.rpc>                        | Only on synchronous unary calls  |             |                 |                 |                       |
+| Check if ready for a request               | `Base.isfull` (Julia 1.11 or later)  | Yes                              |             |                 |                 |                       |
+| Send request                               | `put!(rpc, msg)`                     | Yes                              |             |                 |                 |                       |
+| Signal done with requests                  | `Base.put!(rpc[, msg], done = true)` | Yes                              |             |                 |                 |                       |
+| Check if response isavailable              | `Base.isready`                       | Yes                              |             |                 |                 |                       |
+| Wait until response becomes available      | `Base.wait`                          | If no response is pending        |             |                 |                 |                       |
+| Take response                              | `Base.take!`                         | If no response is pending        |             |                 |                 |                       |
+| Read response without removing it          | `Base.fetch`                         | If no response is pending        |             |                 |                 |                       |
+| Check if rpc is still active               | `Base.isopen`                        | No                               |             |                 |                 |                       |
+| Wait for server shutdown and report errors | `Base.close`                         | Yes                              |             |                 |                 |                       |  
+| Gracefully cancel                          | `Base.detach`                        | Yes                              |             |                 |                 |                       |
+
+```@docs
+Base.isopen(rpc::AbstractgRPCCall)
+Base.put!(rpc::StreamingRequestRPC; done::Bool)
+Base.fetch(rpc::UnaryResponseRPC)
+Base.wait(rpc::UnaryResponseRPC)
+Base.wait(rpc::StreamingResponseRPC)
+Base.isready(rpc::UnaryResponseRPC)
+Base.isready(rpc::StreamingResponseRPC)
+Base.take!(rpc::StreamingResponseRPC)
+Base.fetch(rpc::StreamingResponseRPC)
+Base.close(rpc::AbstractgRPCCall)
+Base.detach(rpc::AbstractgRPCCall; throws::Bool = true)
+gRPCAsync
+```
+
+#### Exception handling
+
+#### Raw Encoded Buffers (Partial Decoding)
+
+Raw data may be passed to a call or to `put!` in the form of a `Vector{UInt8}` instead of the protobuf type, bypassing the encoder. Similarly a `Vector{UInt8}` can be returned by providing an extra argument to `
+
+## Legacy API
 
 ### Generated ServiceClient Constructors
 
@@ -137,7 +247,7 @@ gRPCClient.gRPCServiceClient
 ```@docs
 grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::TRequest; options...) where {TRequest<:Any,TResponse<:Any}
 grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::TRequest, channel::Channel{gRPCAsyncChannelResponse{TResponse}}, index::Int64; options...) where {TRequest<:Any,TResponse<:Any}
-grpc_async_await(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::gRPCRequest) where {TRequest<:Any,TResponse<:Any}
+grpc_async_await(client::gRPCServiceClient{TRequest,false,TResponse,false},request::gRPCRequest) where {TRequest<:Any,TResponse<:Any}
 grpc_sync_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, request::TRequest; options...) where {TRequest<:Any,TResponse<:Any}
 ```
 
@@ -145,9 +255,9 @@ grpc_sync_request(client::gRPCServiceClient{TRequest,false,TResponse,false}, req
 
 ```@docs
 grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,false}, request::Channel{TRequest}; options...) where {TRequest<:Any,TResponse<:Any}
-grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,true},request::TRequest,response::Channel{TResponse}; options...) where {TRequest<:Any,TResponse<:Any}
-grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,true},request::Channel{TRequest},response::Channel{TResponse}; options...) where {TRequest<:Any,TResponse<:Any}
-grpc_async_await(client::gRPCServiceClient{TRequest,true,TResponse,false},request::gRPCRequest) where {TRequest<:Any,TResponse<:Any} 
+grpc_async_request(client::gRPCServiceClient{TRequest,false,TResponse,true}, request::TRequest,response::Channel{TResponse}; options...) where {TRequest<:Any,TResponse<:Any}
+grpc_async_request(client::gRPCServiceClient{TRequest,true,TResponse,true}, request::Channel{TRequest},response::Channel{TResponse}; options...) where {TRequest<:Any,TResponse<:Any}
+grpc_async_await(client::gRPCServiceClient{TRequest,true,TResponse,false}, request::gRPCRequest) where {TRequest<:Any,TResponse<:Any} 
 ```
 
 #### Cancellation
