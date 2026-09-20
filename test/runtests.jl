@@ -596,8 +596,27 @@ include("gen/test/test_pb.jl")
             @test_throws "Call has already been completed" take!(rpc, Vector{UInt8})
             @test_throws "Call has already been completed" fetch(rpc)
             @test_throws "Call has already been completed" fetch(rpc, Vector{UInt8})
-            @test_throws "Call has already been completed" wait(rpc)
+            # A clean end of stream no longer throws from `wait`; it returns and `isready`
+            # reports that nothing remains.
+            @test wait(rpc) === nothing
             @test !isready(rpc)
+        end
+
+        @testset "iterate" begin
+            # Drain a stream of unknown length with a `for` loop (decoded responses)
+            rpc = TestService.TestServerStreamRPC(chan, TestRequest(4, [1]))
+            responses = collect(rpc)
+            @test length(responses) == 4
+            @test [length(r.data) for r in responses] == [1, 2, 3, 4]
+            @test eltype(responses) == TestResponse
+            # Stream ended cleanly: a further wait returns and isready is false
+            @test wait(rpc) === nothing
+            @test !isready(rpc)
+
+            # A failed call throws from within the loop
+            badchan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, deadline = 1.0e-9)
+            rpc = TestService.TestServerStreamRPC(badchan, TestRequest(4, [1]))
+            @test_throws "DEADLINE_EXCEEDED" foreach(identity, rpc)
         end
 
         @testset "Connection options" begin
@@ -638,6 +657,17 @@ include("gen/test/test_pb.jl")
             @test !isopen(rpc.response_channel)
             # Check that we get information about _why_ stream was closed
             @test_throws "Call has already been completed" take!(rpc)
+        end
+
+        @testset "iterate" begin
+            rpc = TestService.TestBidirectionalStreamRPC(chan)
+            put!(rpc, TestRequest(1, [1]))
+            put!(rpc, TestRequest(1, [2]), done = true)
+            responses = collect(rpc)
+            @test length(responses) == 2
+            # Stream ended cleanly: a further wait returns and isready is false
+            @test wait(rpc) === nothing
+            @test !isready(rpc)
         end
 
         @testset "host/port syntax" begin

@@ -119,7 +119,7 @@ the call being shut down by the server logic. In such cases,
 end
 
 """
-    detach(rpc::AbstractgRPCCall[; throws::Bool = false])
+    detach(rpc::AbstractgRPCCall[; throws::Bool = true])
 
 Gracefully cancel an in-flight request `rpc` and frees all associated resources. 
 
@@ -150,9 +150,12 @@ end
 """
     isopen(rpc::AbstractgRPCCall)
 
-Tells whether `rpc` is still open.
+Tells whether the underlying call is still active.
 
-If false, either all responses have been received or an error has occured.
+Use it for liveness, or to decide whether another `put!` is still worthwhile. Do not
+use it to tell whether more responses remain: responses may still be buffered or in
+transit after it returns `false`, so drain a stream by consuming responses to
+completion rather than guarding on this.
 """
 @inline Base.isopen(rpc::AbstractgRPCCall) = isopen(rpc.req)
 
@@ -242,7 +245,11 @@ end
     isready(rpc::gRPCUnaryCall)
     isready(rpc::gRPCClientStreamCall)
 
-Check whether `fetch(rpc)` or `take!` is ready to return a response (or throw an exception) once called. 
+Tells whether `fetch(rpc)` would return the response immediately, without blocking.
+
+Use it to poll for the response. It is `false` both while the call runs and if it
+failed; use `isopen(rpc)` to test for completion, then `fetch` (which returns the
+response or throws the error).
 """
 @inline function Base.isready(rpc::UnaryResponseRPC)
     return !isopen(rpc) && isnothing(rpc.req.ex)
@@ -252,21 +259,39 @@ end
     wait(rpc::gRPCServerStreamCall)
     wait(rpc::gRPCBidirectionalStreamCall)
 
-Wait until a response becomes available. 
+Block until a response is available or the stream has ended, returning in both cases; a
+failed call throws its exception here.
+
+You will usually want to check [`isready`](@ref) afterwards: `true` means a response is
+available to [`take!`](@ref), `false` means the stream has ended.
 """
 @inline function Base.wait(rpc::StreamingResponseRPC)
-    return try
+    try
         wait(rpc.response_channel)
     catch ex
-        handle_channel_exception(ex, rpc, gRPCServiceCallException(GRPC_OK, "Call has already been completed and no more responses are available. "))
+        (ex isa InvalidStateException && ex.state === :closed) || rethrow()
+        # The response channel is closed: a failed call re-raises its exception here,
+        # while a clean end of stream returns normally.
+        grpc = rpc.req.grpc::gRPCCURL
+        lock(grpc.lock) do
+            if !isopen(rpc.req)
+                isnothing(rpc.req.ex) || throw(rpc.req.ex)
+            end
+        end
     end
+    return nothing
 end
 
 """
     isready(rpc::gRPCServerStreamCall)
     isready(rpc::gRPCBidirectionalStreamCall)
 
-Tells whether the response stream has a message available which has not yet been removed by `take!`.
+Tells whether a response is buffered, so `take!(rpc)` would return one without blocking.
+
+Use it to consume responses without blocking (for example polling, or fan-in across
+several calls). Do not use it as a loop guard to drain a stream: a `false` does not mean
+the stream has ended — more responses may be in transit or arrive later — and pairing it
+with `isopen` still races. Iterate `rpc` (or take a known number of responses) instead.
 """
 @inline function Base.isready(rpc::StreamingResponseRPC)
     return isready(rpc.response_channel)
@@ -334,3 +359,49 @@ end
         handle_channel_exception(ex, rpc, gRPCServiceCallException(GRPC_OK, "Call has already been completed and no more responses are available. "))
     end
 end
+
+"""
+    iterate(rpc::gRPCServerStreamCall)
+    iterate(rpc::gRPCBidirectionalStreamCall)
+
+Iterate the responses of `rpc`, so a response stream can be drained with a `for` loop:
+
+```julia
+for response in rpc
+    # handle response
+end
+```
+
+This is the race-free way to consume a stream of unknown length: each response is returned
+in turn and the loop ends cleanly once the server closes the stream. A failed call still
+throws from within the loop. Prefer this over guarding a `take!` loop with
+[`isopen`](@ref)/[`isready`](@ref), which cannot do both safely.
+
+Iteration can also be implemented manually with the following equivalent:
+
+```julia
+while true
+    wait(rpc)
+    isready(rpc) || break
+    response = take!(rpc)
+    # handle response
+end
+```
+"""
+@inline function Base.iterate(rpc::StreamingResponseRPC, state = nothing)
+    # Equivalent to the wait/isready/take! procedure above, but done in a single atomic
+    # take!: a clean end of stream surfaces as the GRPC_OK "already completed" exception,
+    # which stops iteration; any other status is a real failure and propagates.
+    return try
+        (take!(rpc), nothing)
+    catch ex
+        if ex isa gRPCServiceCallException && ex.grpc_status == GRPC_OK
+            nothing
+        else
+            rethrow()
+        end
+    end
+end
+
+Base.IteratorSize(::Type{<:StreamingResponseRPC}) = Base.SizeUnknown()
+Base.eltype(::Type{<:AbstractgRPCCall{Trpc}}) where {Trpc} = response_type(Trpc)
