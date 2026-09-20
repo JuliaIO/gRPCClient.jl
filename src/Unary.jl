@@ -144,7 +144,7 @@ Wait for the request to complete and return the response when it is ready. Throw
 """
 grpc_async_await(
     client::gRPCServiceClient{TRequest, false, TResponse, false},
-    request::gRPCRequest,
+    request::gRPCRequest
 ) where {TRequest <: Any, TResponse <: Any} = grpc_async_await(request, TResponse)
 
 
