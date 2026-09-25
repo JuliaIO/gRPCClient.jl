@@ -1,7 +1,3 @@
-```@meta
-CurrentModule = gRPCClient
-```
-
 # gRPCClient.jl
 
 gRPCClient.jl aims to be a production grade gRPC client emphasizing performance and reliability.
@@ -271,12 +267,23 @@ close(rpc)
 
 Taking a known number of responses is a safe pattern: [`take!`](@ref) blocks until each one arrives, so every response is received and the call never reads past the end.
 
-When the number of responses is not known ahead of time, iterate the call. Iteration drains the stream race-free — it yields each response in turn and the loop ends cleanly once the server closes the stream (a failed call still throws from the loop):
+When the number of responses is not known ahead of time, use iteration:
 
 ```julia
 rpc = TestService.TestServerStreamRPC(chan, TestRequest(4, [1]))
 for response in rpc
     # process response
+end
+```
+
+Alternatively, use a combination of [`wait!`](@ref) and [`isready`](@ref):
+
+```julia
+while true
+    wait(rpc)
+    isready(rpc) || break
+    raw = take!(rpc)
+    # handle raw
 end
 ```
 
