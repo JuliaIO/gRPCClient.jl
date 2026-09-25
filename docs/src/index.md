@@ -1,5 +1,9 @@
 # gRPCClient.jl
 
+```@meta
+CurrentModule = gRPCClient
+```
+
 gRPCClient.jl aims to be a production grade gRPC client emphasizing performance and reliability.
 
 ## Features
@@ -186,20 +190,20 @@ Every generated RPC method carries its own docstring, produced by the code gener
 
 The table below lists the operations available on a call handle and which of the four call shapes each one applies to. "Async unary" is a unary call started with [`gRPCAsync`](@ref)`()`; a synchronous unary call returns its response directly and exposes none of these handle operations.
 
-| Description                                | Name                                 | Throws (if an error occured)         | Async unary | Client stream   | Server stream   | Bidirectional         |
+| Description                                | Name                                 | Throws         | Async unary | Client stream   | Server stream   | Bidirectional         |
 | ------------------------------------------ | ------------------------------------ | ------------------------------------ |:-----------:|:---------------:|:---------------:|:---------------------:|
-| Create a call                              | `<service.rpc>`                      | Submission errors (sync unary: all)  |     ✓       |       ✓         |       ✓         |          ✓            |
-| Check if ready for a request               | `Base.isfull` (Julia 1.11 or later)  | No                                   |             |       ✓         |                 |          ✓            |
-| Send request                               | `put!(rpc, msg)`                     | Yes                                  |             |       ✓         |                 |          ✓            |
+| Create a call                              | `<service.rpc>`                      | On submission (sync unary: also on failure) |     ✓       |       ✓         |       ✓         |          ✓            |
+| Check if ready for a request               | `Base.isfull` (Julia 1.12 or later)  | Never                                |             |       ✓         |                 |          ✓            |
+| Send request                               | `put!(rpc, msg)`                     | If the call has ended                |             |       ✓         |                 |          ✓            |
 | Signal done with requests                  | `Base.put!(rpc[, msg], done = true)` | Only when sending `msg`              |             |       ✓         |                 |          ✓            |
-| Check if response is available             | `Base.isready`                       | No                                   |     ✓       |       ✓         |       ✓         |          ✓            |
-| Wait for response or end of stream      | `Base.wait`                          | Yes                             |     ✓       |       ✓         |       ✓         |          ✓            |
-| Take response                              | `Base.take!`                         | When no responses remain               |             |                 |       ✓         |          ✓            |
-| Read response without removing it          | `Base.fetch`                         | When no responses remain               |     ✓       |       ✓         |       ✓         |          ✓            |
-| Iterate responses                          | `for x in rpc`                       | Yes                             |             |                 |       ✓         |          ✓            |
-| Check if rpc is still active               | `Base.isopen`                        | No                                   |     ✓       |       ✓         |       ✓         |          ✓            |
-| Wait for server shutdown and report errors | `Base.close`                         | Yes                                  |     ✓       |       ✓         |       ✓         |          ✓            |
-| Gracefully cancel                          | `Base.detach`                        | Yes                                  |     ✓       |       ✓         |       ✓         |          ✓            |
+| Check if response is available             | `Base.isready`                       | Never                                |     ✓       |       ✓         |       ✓         |          ✓            |
+| Wait for response or end of stream         | `Base.wait`                          | On failure                           |     ✓       |       ✓         |       ✓         |          ✓            |
+| Take response                              | `Base.take!`                         | When ended and drained               |             |                 |       ✓         |          ✓            |
+| Read response without removing it          | `Base.fetch`                         | On failure (streaming: when ended and drained) |     ✓       |       ✓         |       ✓         |          ✓            |
+| Iterate responses                          | `for x in rpc`                       | On failure                           |             |                 |       ✓         |          ✓            |
+| Check if rpc is still active               | `Base.isopen`                        | Never                                |     ✓       |       ✓         |       ✓         |          ✓            |
+| Wait for server shutdown and report errors | `Base.close`                         | On failure                           |     ✓       |       ✓         |       ✓         |          ✓            |
+| Gracefully cancel                          | `Base.detach`                        | On failure                           |     ✓       |       ✓         |       ✓         |          ✓            |
 
 For unary responses (async unary and client streaming) `fetch` retrieves the single response and cleans up; for streaming responses (server streaming and bidirectional) `take!` removes the next response and `fetch` returns it without removing it. Streaming responses are buffered, so any responses still queued are delivered first — the call's error, or a normal end of stream, is only raised once no responses remain.
 
@@ -239,7 +243,7 @@ response = fetch(rpc)
 
 ##### Client streaming
 
-The call is opened without a request. Stream request messages with [`put!`](@ref), then [`fetch`](@ref) the single response; `fetch` closes the request stream for you, so an explicit `put!(rpc; done = true)` is only needed if you want to finish sending before fetching:
+The call is opened without a request message. Stream request messages with [`put!`](@ref), then [`fetch`](@ref) the single response; `fetch` closes the request stream for you, so an explicit `put!(rpc; done = true)` is only needed if you want to finish sending before fetching:
 
 ```julia
 chan = gRPCChannel("localhost", 8001)
@@ -253,7 +257,7 @@ response = fetch(rpc)
 
 ##### Server streaming
 
-The request is supplied up front. Pull responses with [`take!`](@ref) as they arrive, then [`close`](@ref) the call to wait for the server to finish and surface any error ([`detach`](@ref) instead cancels without waiting). This example's server sends one response per requested element:
+The request message is supplied when opening the call. Pull responses with [`take!`](@ref) as they arrive, then [`close`](@ref) the call to wait for the server to finish and surface any error ([`detach`](@ref) instead cancels without waiting). This example's server sends one response per requested element:
 
 ```julia
 chan = gRPCChannel("localhost", 8001)
@@ -276,7 +280,7 @@ for response in rpc
 end
 ```
 
-Alternatively, use a combination of [`wait!`](@ref) and [`isready`](@ref):
+Alternatively, use a combination of [`wait`](@ref) and [`isready`](@ref):
 
 ```julia
 while true
@@ -312,7 +316,7 @@ Where the exception is raised depends on how the call is driven:
 - For every **asynchronous or streaming** call, starting the call only reports the programming errors it can detect immediately: an uninitialized or shut-down handle (`FAILED_PRECONDITION`), an invalid deadline or a `token` / `authorization`-metadata conflict (`INVALID_ARGUMENT`), or an oversized message (`RESOURCE_EXHAUSTED`). Every failure that depends on time or the server — deadline expiry (including expiry while queued for a stream slot), cancellation, transport errors, and non-OK server statuses — is raised later, when the result is retrieved with [`fetch`](@ref), [`take!`](@ref), [`wait`](@ref), [`close`](@ref), or [`detach`](@ref).
 - Streaming a request with [`put!`](@ref) raises once the call is no longer accepting requests — because it has completed, was cancelled, or failed. If the call ended because of an error, that error is what `put!` raises, so a failing `put!` is your cue to stop sending and retrieve the result.
 
-A call can be ended early at any time with [`detach`](@ref), which cancels the request and frees its resources; pass `throws = true` to re-raise any exception already recorded for the call. Combining `deadline = Inf` with `detach` lets you manage a long-lived stream's lifetime yourself. The client-side deadline watchdog that bounds a call even when the underlying connection never becomes ready is described under [Cancellation](#Cancellation) in the legacy API.
+A call can be ended early at any time with [`detach`](@ref), which cancels the request and frees its resources; by default it re-raises any exception already recorded for the call, which you can suppress with `throws = false`. Combining `deadline = Inf` with `detach` lets you manage a long-lived stream's lifetime yourself. The client-side deadline watchdog that bounds a call even when the underlying connection never becomes ready is described under [Cancellation](#Cancellation) in the legacy API.
 
 #### Raw Encoded Buffers (Partial Decoding)
 
