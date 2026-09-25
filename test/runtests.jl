@@ -408,6 +408,10 @@ include("gen/test/test_pb.jl")
             @test :ok == timedwait(() -> isready(rpc), 0.1, pollint = 0.001)
             resp = fetch(rpc)
             @test resp.data == [1]
+            # fetch does not consume: a repeated fetch returns the same response
+            resp2 = fetch(rpc)
+            @test resp2.data == [1]
+            @test fetch(rpc, Vector{UInt8}) == fetch(rpc, Vector{UInt8})
         end
 
         @testset "Host-port syntax" begin

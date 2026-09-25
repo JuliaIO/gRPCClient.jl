@@ -218,7 +218,8 @@ If the response of `rpc` is not of interest, `close` may be used to avoid decodi
     if isstreaming_request(rpc)
         put!(rpc, done = true)
     end
-    return decode(ProtoDecoder(grpc_async_await(rpc.req, IOBuffer)), response_type(rpc))
+    io = grpc_async_await(rpc.req, IOBuffer)
+    return decode(ProtoDecoder(seekstart(io)), response_type(rpc))
 end
 
 @inline function Base.fetch(rpc::UnaryResponseRPC, ::Type{Vector{UInt8}})
