@@ -405,3 +405,9 @@ end
 
 Base.IteratorSize(::Type{<:StreamingResponseRPC}) = Base.SizeUnknown()
 Base.eltype(::Type{<:AbstractgRPCCall{Trpc}}) where {Trpc} = response_type(Trpc)
+
+# Implement stateful iteration protocol; prevent `isempty` from removing responses.
+@inline function Base.isdone(rpc::StreamingResponseRPC, state...)
+    c = rpc.response_channel
+    return !isopen(c) && !isready(c)
+end

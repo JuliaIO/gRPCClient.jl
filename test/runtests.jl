@@ -668,6 +668,12 @@ include("gen/test/test_pb.jl")
             # Stream ended cleanly: a further wait returns and isready is false
             @test wait(rpc) === nothing
             @test !isready(rpc)
+
+            # Check stateful iteration interface (Base.isdone)
+            rpc = TestService.TestBidirectionalStreamRPC(chan)
+            @test Base.isdone(rpc) === false
+            @test isempty(rpc) === false
+            close(rpc)
         end
 
         @testset "host/port syntax" begin
