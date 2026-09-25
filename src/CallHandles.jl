@@ -291,8 +291,8 @@ Tells whether a response is buffered, so `take!(rpc)` would return one without b
 
 Use it to consume responses without blocking (for example polling, or fan-in across
 several calls). Do not use it as a loop guard to drain a stream: a `false` does not mean
-the stream has ended — more responses may be in transit or arrive later — and pairing it
-with `isopen` still races. Iterate `rpc` (or take a known number of responses) instead.
+the stream has ended — more responses may be in transit or arrive later. Use iteration, take a known number of responses or use a 
+combination of `wait` and `isready` instead.
 """
 @inline function Base.isready(rpc::StreamingResponseRPC)
     return isready(rpc.response_channel)
