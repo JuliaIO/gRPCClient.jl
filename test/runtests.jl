@@ -591,8 +591,10 @@ include("gen/test/test_pb.jl")
             # wait, but with a time limit to ensure CI ends quickly
             @test :ok == timedwait(() -> istaskdone(waittask), 0.1, pollint = 0.001)
             @test isready(rpc) # response stream should be ready
-            resp1 = fetch(rpc) # Get data without removing
-            resp2 = take!(rpc) # Get data again, also remove
+            resp1 = fetch(rpc)
+            @test fetch(rpc).data == resp1.data
+            @test decode(ProtoDecoder(IOBuffer(fetch(rpc, Vector{UInt8}))), TestResponse).data == [1]
+            resp2 = take!(rpc)
             @test resp1.data == resp2.data == [1]
             # The server should have shut down after sending us 1 response
             @test !isopen(rpc)
@@ -621,6 +623,23 @@ include("gen/test/test_pb.jl")
             badchan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, deadline = 1.0e-9)
             rpc = TestService.TestServerStreamRPC(badchan, TestRequest(4, [1]))
             @test_throws "DEADLINE_EXCEEDED" foreach(identity, rpc)
+        end
+
+        @testset "wait throws on failure" begin
+            badchan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, deadline = 1.0e-9)
+            rpc = TestService.TestServerStreamRPC(badchan, TestRequest(4, [1]))
+            @test_throws "DEADLINE_EXCEEDED" wait(rpc)
+        end
+
+        @testset "isdone and isempty" begin
+            rpc = TestService.TestServerStreamRPC(chan, TestRequest(4, [1]))
+            wait(rpc)
+            @test isready(rpc)
+            @test Base.isdone(rpc) === false
+            @test isempty(rpc) === false
+            @test length(collect(rpc)) == 4
+            @test Base.isdone(rpc) === true
+            @test isempty(rpc) === true
         end
 
         @testset "Connection options" begin
@@ -686,6 +705,12 @@ include("gen/test/test_pb.jl")
             resp = take!(rpc)
             @test resp.data == [1]
             close(rpc)
+        end
+
+        @testset "wait throws on failure" begin
+            badchan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, deadline = 1.0e-9)
+            rpc = TestService.TestBidirectionalStreamRPC(badchan)
+            @test_throws "DEADLINE_EXCEEDED" wait(rpc)
         end
 
         @testset "detaching" begin
