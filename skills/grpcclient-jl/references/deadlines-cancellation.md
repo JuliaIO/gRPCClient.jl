@@ -18,6 +18,10 @@ With `deadline = Inf` no client-side timeout is enforced and no `grpc-timeout` h
 
 An abandoned `Inf` request is not cleaned up by garbage collection. Cancelling it is the caller's responsibility.
 
+## detach (current API)
+
+For a current-API call handle, `detach(rpc)` cancels the call, closes its request and response streams, frees resources, and by default (`throws = true`) re-raises any exception already recorded for it (`throws = false` suppresses). The stored exception then becomes `CANCELLED`, which later `detach`/`close` calls raise. It is the counterpart to `close`, which instead waits for the server to finish. Underneath, `detach` calls `grpc_cancel` on the request.
+
 ## grpc_cancel
 
 ```julia
@@ -48,6 +52,8 @@ Everything whose outcome depends on time or concurrency is raised by `grpc_async
 The split matters when writing error handling. Wrapping only the submission catches configuration mistakes and nothing else, and for streaming calls, omitting `grpc_async_await` entirely means a failed stream is indistinguishable from a short one.
 
 In the channel-based unary form, submission-time errors still throw from `grpc_async_request`, while everything else arrives as the `ex` field of a `gRPCAsyncChannelResponse`.
+
+The same split applies in the current API: a synchronous unary call raises either class directly; an async or streaming call raises the submission-time programming errors above when the call handle is created, and defers everything time- or server-dependent to `fetch`, `take!`, `wait`, `close`, or `detach`; `put!` raises once the call stops accepting requests.
 
 ## Statuses worth special handling
 

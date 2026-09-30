@@ -1,6 +1,6 @@
 ---
 name: grpcclient-jl-dev
-description: Work on the gRPCClient.jl package itself. Covers running the Go test server, running and extending the test suite, regenerating test stubs with protoc.sh, building the docs, benchmarking and stress testing with gRPCClientUtils, and navigating the libcurl transport in src/Curl.jl. Use when editing files in this repository (src/Curl.jl, src/gRPC.jl, src/Unary.jl, src/Streaming.jl, src/ProtoBuf.jl, test/runtests.jl) or debugging the client's transport, deadline watchdog, or streaming pumps. For calling a gRPC service as a user of the package, use the grpcclient-jl skill instead.
+description: Work on the gRPCClient.jl package itself. Covers running the Go test server, running and extending the test suite, regenerating test stubs with protoc.sh, building the docs, benchmarking and stress testing with gRPCClientUtils, and navigating the libcurl transport in src/Curl.jl. Use when editing files in this repository (src/Curl.jl, src/gRPC.jl, src/Unary.jl, src/Streaming.jl, src/CallHandles.jl, src/ProtoBuf.jl, test/runtests.jl) or debugging the client's transport, deadline watchdog, or streaming pumps. For calling a gRPC service as a user of the package, use the grpcclient-jl skill instead.
 ---
 
 # Developing gRPCClient.jl
@@ -14,7 +14,8 @@ description: Work on the gRPCClient.jl package itself. Covers running the Go tes
 | `src/gRPC.jl` | Public handle lifecycle, `gRPCServiceClient`, request framing, the generic `grpc_async_await` |
 | `src/Unary.jl` | Unary methods and `gRPCAsyncChannelResponse` |
 | `src/Streaming.jl` | Streaming methods and the request and response pump tasks |
-| `src/ProtoBuf.jl` | The ProtoBuf.jl codegen hook that emits `*_Client` constructors |
+| `src/CallHandles.jl` | The current API: `gRPCChannel`, the four call-handle types, and their `put!`/`take!`/`fetch`/`wait`/`iterate`/`close`/`detach` methods |
+| `src/ProtoBuf.jl` | The ProtoBuf.jl codegen hook; emits both the service-module API and the legacy `*_Client` constructors, gated by `grpc_register_service_codegen(; legacy, servicemodule)` |
 | `test/proto/test.proto` | One service with all four RPC variants |
 | `test/gen/` | Checked-in generated stubs used by the suite |
 | `test/go/` | The Go reference server every test and benchmark runs against |
@@ -69,7 +70,7 @@ cd test
 bash protoc.sh
 ```
 
-This regenerates the Python stubs in `test/python/` with `grpc_tools.protoc` through `uv`, then regenerates `test/gen/` by running `protojl("proto/test.proto", ".", "gen")` in a fresh Julia process. Changes to `src/ProtoBuf.jl` are only visible in the checked-in stubs after running it, and the `Code Generation` testset asserts on the generated text, including the `# gRPCClient.jl BEGIN` and `# gRPCClient.jl END` markers, the four constructor names, the `TRequest=`/`TResponse=` keywords, and the streaming type parameters for each variant.
+This regenerates the Python stubs in `test/python/` with `grpc_tools.protoc` through `uv`, then regenerates `test/gen/` by running `protojl("proto/test.proto", ".", "gen")` in a fresh Julia process. Changes to `src/ProtoBuf.jl` are only visible in the checked-in stubs after running it, and the `Code Generation` testset asserts on the generated text. Its `Codegen: New API` subset regenerates into a temp dir under each `grpc_register_service_codegen` combination and asserts on the `# gRPCClient.jl BEGIN`/`END` markers, the version guard, the `baremodule TestService`, the per-RPC method counts (3 for a unary-request RPC, 2 for a streaming-request one), the type-alias consts, the `typeof(RPC)` trait methods, and the generated docstrings' request/response type tables.
 
 ## Docs
 
