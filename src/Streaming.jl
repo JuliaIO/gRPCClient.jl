@@ -398,5 +398,5 @@ Raise any exceptions encountered during the streaming request.
 """
 grpc_async_await(
     client::gRPCServiceClient{TRequest, true, TResponse, false},
-    request::gRPCRequest,
+    request::gRPCRequest
 ) where {TRequest <: Any, TResponse <: Any} = grpc_async_await(request, TResponse)
