@@ -431,6 +431,10 @@ include("gen/test/test_pb.jl")
             @test :ok == timedwait(() -> isready(rpc), 0.1, pollint = 0.001)
             resp = fetch(rpc)
             @test resp.data == [1]
+            # fetch does not consume: a repeated fetch returns the same response
+            resp2 = fetch(rpc)
+            @test resp2.data == [1]
+            @test fetch(rpc, Vector{UInt8}) == fetch(rpc, Vector{UInt8})
         end
 
         @testset "Host-port syntax" begin
@@ -610,8 +614,10 @@ include("gen/test/test_pb.jl")
             # wait, but with a time limit to ensure CI ends quickly
             @test :ok == timedwait(() -> istaskdone(waittask), 0.1, pollint = 0.001)
             @test isready(rpc) # response stream should be ready
-            resp1 = fetch(rpc) # Get data without removing
-            resp2 = take!(rpc) # Get data again, also remove
+            resp1 = fetch(rpc)
+            @test fetch(rpc).data == resp1.data
+            @test decode(ProtoDecoder(IOBuffer(fetch(rpc, Vector{UInt8}))), TestResponse).data == [1]
+            resp2 = take!(rpc)
             @test resp1.data == resp2.data == [1]
             # The server should have shut down after sending us 1 response
             @test !isopen(rpc)
@@ -619,8 +625,44 @@ include("gen/test/test_pb.jl")
             @test_throws "Call has already been completed" take!(rpc, Vector{UInt8})
             @test_throws "Call has already been completed" fetch(rpc)
             @test_throws "Call has already been completed" fetch(rpc, Vector{UInt8})
-            @test_throws "Call has already been completed" wait(rpc)
+            # A clean end of stream no longer throws from `wait`; it returns and `isready`
+            # reports that nothing remains.
+            @test wait(rpc) === nothing
             @test !isready(rpc)
+        end
+
+        @testset "iterate" begin
+            # Drain a stream of unknown length with a `for` loop (decoded responses)
+            rpc = TestService.TestServerStreamRPC(chan, TestRequest(4, [1]))
+            responses = collect(rpc)
+            @test length(responses) == 4
+            @test [length(r.data) for r in responses] == [1, 2, 3, 4]
+            @test eltype(responses) == TestResponse
+            # Stream ended cleanly: a further wait returns and isready is false
+            @test wait(rpc) === nothing
+            @test !isready(rpc)
+
+            # A failed call throws from within the loop
+            badchan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, deadline = 1.0e-9)
+            rpc = TestService.TestServerStreamRPC(badchan, TestRequest(4, [1]))
+            @test_throws "DEADLINE_EXCEEDED" foreach(identity, rpc)
+        end
+
+        @testset "wait throws on failure" begin
+            badchan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, deadline = 1.0e-9)
+            rpc = TestService.TestServerStreamRPC(badchan, TestRequest(4, [1]))
+            @test_throws "DEADLINE_EXCEEDED" wait(rpc)
+        end
+
+        @testset "isdone and isempty" begin
+            rpc = TestService.TestServerStreamRPC(chan, TestRequest(4, [1]))
+            wait(rpc)
+            @test isready(rpc)
+            @test Base.isdone(rpc) === false
+            @test isempty(rpc) === false
+            @test length(collect(rpc)) == 4
+            @test Base.isdone(rpc) === true
+            @test isempty(rpc) === true
         end
 
         @testset "Connection options" begin
@@ -663,12 +705,35 @@ include("gen/test/test_pb.jl")
             @test_throws "Call has already been completed" take!(rpc)
         end
 
+        @testset "iterate" begin
+            rpc = TestService.TestBidirectionalStreamRPC(chan)
+            put!(rpc, TestRequest(1, [1]))
+            put!(rpc, TestRequest(1, [2]), done = true)
+            responses = collect(rpc)
+            @test length(responses) == 2
+            # Stream ended cleanly: a further wait returns and isready is false
+            @test wait(rpc) === nothing
+            @test !isready(rpc)
+
+            # Check stateful iteration interface (Base.isdone)
+            rpc = TestService.TestBidirectionalStreamRPC(chan)
+            @test Base.isdone(rpc) === false
+            @test isempty(rpc) === false
+            close(rpc)
+        end
+
         @testset "host/port syntax" begin
             rpc = TestService.TestBidirectionalStreamRPC(_TEST_HOST, _TEST_PORT)
             put!(rpc, TestRequest(1, [1]))
             resp = take!(rpc)
             @test resp.data == [1]
             close(rpc)
+        end
+
+        @testset "wait throws on failure" begin
+            badchan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT, deadline = 1.0e-9)
+            rpc = TestService.TestBidirectionalStreamRPC(badchan)
+            @test_throws "DEADLINE_EXCEEDED" wait(rpc)
         end
 
         @testset "detaching" begin
