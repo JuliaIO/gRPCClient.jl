@@ -4,6 +4,7 @@
 [![Documentation][doc-stable-img]][doc-stable-url]
 [![Documentation][doc-dev-img]][doc-dev-url]
 [![CI](https://github.com/JuliaIO/gRPCClient.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/JuliaIO/gRPCClient.jl/actions/workflows/ci.yml)
+[![Nightly](https://github.com/JuliaIO/gRPCClient.jl/actions/workflows/nightly.yml/badge.svg)](https://github.com/JuliaIO/gRPCClient.jl/actions/workflows/nightly.yml)
 [![codecov](https://codecov.io/github/JuliaIO/gRPCClient.jl/graph/badge.svg?token=CJkqtuSbML)](https://codecov.io/github/JuliaIO/gRPCClient.jl)
 
 
