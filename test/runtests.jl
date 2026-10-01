@@ -20,6 +20,26 @@ import gRPCClient:
 # exactly this value; requests without one are unaffected.
 const _TEST_BEARER_TOKEN = "test-secret-token"
 
+const _TEST_START_TIME = time()
+
+# Opt-in hang diagnostics for CI: if the suite is still running after
+# JULIA_GRPCCLIENT_TEST_WATCHDOG seconds, dump every task's backtrace (and again
+# each interval after that). Run with more than one thread so the watchdog can
+# make progress while the main thread is stuck.
+if haskey(ENV, "JULIA_GRPCCLIENT_TEST_WATCHDOG")
+    let interval = parse(Float64, ENV["JULIA_GRPCCLIENT_TEST_WATCHDOG"])
+        errormonitor(
+            Threads.@spawn while true
+                sleep(interval)
+                println(stderr, "\n=== Test watchdog: still running after $(round(Int, time() - _TEST_START_TIME)) s, dumping task backtraces ===")
+                flush(stderr)
+                ccall(:jl_print_task_backtraces, Cvoid, (Cint,), 0)
+                flush(stderr)
+            end
+        )
+    end
+end
+
 # This is primarily used for starting the server when running CI.
 # By launching the server asynchronously within julia, we ensure
 # that the server is active while testing, which otherwise would require
@@ -237,10 +257,13 @@ include("gen/test/test_pb.jl")
             end
 
             @testset "docstrings" begin
-                @test contains(string(@doc TestService.TestRPC), "Request |        unary |  TestRequest |\n| Response |        unary | TestResponse |\n")
-                @test contains(string(@doc TestService.TestClientStreamRPC), "Request |       stream |  TestRequest |\n| Response |        unary | TestResponse |\n")
-                @test contains(string(@doc TestService.TestServerStreamRPC), "Request |        unary |  TestRequest |\n| Response |       stream | TestResponse |\n")
-                @test contains(string(@doc TestService.TestBidirectionalStreamRPC), "Request |       stream |  TestRequest |\n| Response |       stream | TestResponse |\n")
+                # Markdown table padding/alignment differs between Julia versions,
+                # so collapse runs of spaces before matching the signature table.
+                squash(d) = replace(string(d), r" +" => " ")
+                @test contains(squash(@doc TestService.TestRPC), "| Request | unary | TestRequest |\n| Response | unary | TestResponse |\n")
+                @test contains(squash(@doc TestService.TestClientStreamRPC), "| Request | stream | TestRequest |\n| Response | unary | TestResponse |\n")
+                @test contains(squash(@doc TestService.TestServerStreamRPC), "| Request | unary | TestRequest |\n| Response | stream | TestResponse |\n")
+                @test contains(squash(@doc TestService.TestBidirectionalStreamRPC), "| Request | stream | TestRequest |\n| Response | stream | TestResponse |\n")
             end
         end
     end

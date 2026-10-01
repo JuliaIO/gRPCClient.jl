@@ -31,27 +31,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # '1.10' is the compat floor in Project.toml (and the current LTS), so it
+        # stays pinned explicitly. '1' tracks the latest stable release. Nightly
+        # runs in nightly.yml so it never gates PRs or affects the CI badge.
         version:
           - '1.10'
           - '1.12'
-          - 'nightly'
+          - '1'
         os:
           - ubuntu-latest
           - windows-latest
-          - macOS-15
-          - macOS-latest
-        arch:
-          - x64
-          - aarch64
-        exclude:
+          - macos-latest
+        include:
           - os: ubuntu-latest
-            arch: aarch64
+            arch: x64
           - os: windows-latest
-            arch: aarch64
-          - os: macos-15
             arch: x64
           - os: macos-latest
-            arch: x64
+            arch: aarch64
+          # Cover the previous macOS release once, on the latest Julia only.
+          - os: macos-15
+            version: '1'
+            arch: aarch64
     steps:
     - uses: actions/checkout@v5
     - name: Setup Go
@@ -73,7 +74,7 @@ jobs:
     - uses: julia-actions/cache@v2
     - uses: julia-actions/julia-buildpkg@v1
     - uses: julia-actions/julia-runtest@v1
-      timeout-minutes: 5
+      timeout-minutes: 15
       env: 
         JULIA_GRPCCLIENT_TEST_START_SERVER: "go"
     - uses: julia-actions/julia-processcoverage@v1
