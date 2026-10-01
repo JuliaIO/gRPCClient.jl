@@ -1,0 +1,74 @@
+name: Nightly
+
+# Julia nightly is tested separately from ci.yml so that upstream regressions are
+# visible without gating PRs or turning the CI badge red. Do not mark these jobs
+# as required checks. The weekly schedule catches nightly breakage even when no
+# PRs are open.
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'Project.toml'
+      - '.github/workflows/nightly.yml'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - 'test/**'
+      - 'Project.toml'
+      - '.github/workflows/nightly.yml'
+
+env:
+  GRPC_TEST_SERVER_HOST: "localhost"
+  GRPC_TEST_SERVER_PORT: 8001
+
+jobs:
+  test:
+    name: Julia nightly - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x64
+          - os: windows-latest
+            arch: x64
+          - os: macos-latest
+            arch: aarch64
+    steps:
+    - uses: actions/checkout@v5
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+    - name: Build Go gRPC Test Server
+      run: go build -o grpc_test_server .
+      working-directory: test/go
+    - name: Rename Go executable for windows
+      if: matrix.os == 'windows-latest'
+      run: mv grpc_test_server grpc_test_server.exe
+      shell: pwsh
+      working-directory: test/go
+    - uses: julia-actions/setup-julia@v2
+      with:
+        version: nightly
+        arch: ${{ matrix.arch }}
+    - uses: julia-actions/cache@v2
+    - uses: julia-actions/julia-buildpkg@v1
+    - uses: julia-actions/julia-runtest@v1
+      timeout-minutes: 20
+      with:
+        coverage: false
+      env:
+        JULIA_GRPCCLIENT_TEST_START_SERVER: "go"
+        # Dump all task backtraces if the suite is still running after this many
+        # seconds, so a hang shows where it is stuck instead of a bare timeout.
+        JULIA_GRPCCLIENT_TEST_WATCHDOG: "240"
+        # A second thread lets the watchdog run while the main thread is stuck.
+        JULIA_NUM_THREADS: "2"
