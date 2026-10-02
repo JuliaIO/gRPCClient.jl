@@ -1,3 +1,35 @@
+```@raw html
+---
+layout: home
+
+hero:
+  name: gRPCClient.jl
+  text: A production grade gRPC client emphasizing performance and reliability.
+  tagline: Unary+Streaming RPC, HTTP/2 multiplexing, thread safe, and SSL/TLS.
+  image:
+    src: /assets/logo.png
+    alt: gRPCClient.jl Logo
+  actions:
+    - theme: brand
+      text: Getting Started
+      link: /#Getting-Started
+    - theme: alt
+      text: View on GitHub
+      link: https://github.com/JuliaIO/gRPCClient.jl
+
+features:
+  - icon: 🚀
+    title: High Performance
+    details: Synchronous and asynchronous interfaces with thread-safe socket I/O and streaming pumps.
+  - icon: 🔗
+    title: HTTP/2 Multiplexing
+    details: Efficient connection multiplexing for multiple concurrent requests.
+  - icon: 🔒
+    title: Secure by Default
+    details: Built-in support for SSL/TLS connections.
+---
+```
+
 # gRPCClient.jl
 
 gRPCClient.jl aims to be a production grade gRPC client emphasizing performance and reliability.
