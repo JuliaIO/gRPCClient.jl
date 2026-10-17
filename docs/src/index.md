@@ -53,7 +53,7 @@ This will currently generate code both for an older and an updated API. If backw
 
 ## Example Usage
 
-See [here](#RPCs) for examples covering all provided interfaces for both unary and streaming gRPC calls. 
+See [here](#Lifecycles) for examples covering all provided interfaces for both unary and streaming gRPC calls. 
 
 ## Concurrency Model
 
@@ -313,15 +313,15 @@ Errors surface as a [`gRPCServiceCallException`](@ref), whose `grpc_status` fiel
 Where the exception is raised depends on how the call is driven:
 
 - A **synchronous unary** call raises from the call itself, so wrap `TestService.TestRPC(chan, req)` in a `try`/`catch`.
-- For every **asynchronous or streaming** call, starting the call only reports the programming errors it can detect immediately: an uninitialized or shut-down handle (`FAILED_PRECONDITION`), an invalid deadline or a `token` / `authorization`-metadata conflict (`INVALID_ARGUMENT`), or an oversized message (`RESOURCE_EXHAUSTED`). Every failure that depends on time or the server — deadline expiry (including expiry while queued for a stream slot), cancellation, transport errors, and non-OK server statuses — is raised later, when the result is retrieved with [`fetch`](@ref), [`take!`](@ref), [`wait`](@ref), [`close`](@ref), or [`detach`](@ref).
-- Streaming a request with [`put!`](@ref) raises once the call is no longer accepting requests — because it has completed, was cancelled, or failed. If the call ended because of an error, that error is what will be raised. Note that `put!` only *enqueues* a message for the background sender; a message it accepts can still go untransmitted if the call ends (error, deadline, cancellation, or shutdown).
+- For every **asynchronous or streaming** call, starting the call only reports the programming errors it can detect immediately, such as an uninitialized or shut-down handle, an invalid arguments, or an oversized message. Every failure that depends on timeouts, cancellation, transport errors, and server errors is raised later during the lifecycle, but at the latest when calling [`close`](@ref) or [`detach`](@ref) (also [`fetch`](@ref) for unary-response calls).
+- Streaming a request with [`put!`](@ref) raises once the call is no longer accepting requests — because it has completed, was cancelled, or failed. If the call ended because of an error, that error is what will be raised. Note that `put!` only *enqueues* a message for the background sender; a message it accepts can still go untransmitted.
 
 !!! note "End every asynchronous or streaming call"
-    Some failures are observed only through [`fetch`](@ref), [`take!`](@ref), [`wait`](@ref), [`close`](@ref), or [`detach`](@ref), so a call that is started and then ignored can fail silently. End a unary-response call (async unary, client streaming) with [`fetch`](@ref), [`close`](@ref), or [`detach`](@ref), and a streaming-response call (server, bidirectional) with [`close`](@ref) or [`detach`](@ref) to ensure all errors are surfaced. 
+    To ensure all errors are surfaced, always end a unary-response call (async unary, client streaming) with [`fetch`](@ref), [`close`](@ref), or [`detach`](@ref), and a streaming-response call (server, bidirectional) with [`close`](@ref) or [`detach`](@ref). 
 
 A call can be ended early at any time with [`detach`](@ref), which cancels the request and frees its resources; by default it re-raises any exception already recorded for the call, which you can suppress with `throws = false`. Combining `deadline = Inf` with `detach` lets you manage a long-lived stream's lifetime yourself. The client-side deadline watchdog that bounds a call even when the underlying connection never becomes ready is described under [Cancellation](#Cancellation) in the legacy API.
 
-!!! warning "A `deadline = Inf` call must be ended explicitly"
+!!! warning "A `deadline = Inf` call *must* be ended explicitly"
     `deadline = Inf` disables the client-side deadline watchdog, so a call that never completes on its own is never cleaned up: it leaks its resources, including its `max_streams` concurrency slot, and garbage collection will not reclaim it. Always end such a call with [`close`](@ref) or [`detach`](@ref).
 
 #### Raw Encoded Buffers (Partial Decoding)
