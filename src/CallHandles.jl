@@ -269,7 +269,7 @@ available to [`take!`](@ref), `false` means the stream has ended.
         wait(rpc.response_channel)
     catch ex
         # If channel was closed, first try to throw an error from the call itself
-        if (ex isa InvalidStateException && ex.state === :closed) 
+        if (ex isa InvalidStateException && ex.state === :closed)
             grpc_async_await(rpc.req) # Does not throw if the call was completed without errors!
         else
             rethrow()
