@@ -181,16 +181,11 @@ function grpc_async_await(req::gRPCRequest)
     return req.code != CURLE_OK
 end
 
-"""
-    grpc_request_exception(req::gRPCRequest) -> Union{Nothing, Exception}
-
-Return the exception that `req` failed with, or `nothing` if it succeeded.
-
-Prefers a recorded `req.ex`, then a non-OK gRPC status, then maps the libcurl
-`code` to a deadline or transport error. Only reads `req`'s result fields, so call
-it under `grpc.lock` or after `req.ready` has been notified, when those fields are
-stable.
-"""
+# Return the exception that `req` failed with, or `nothing` if it succeeded.
+# Prefers a recorded `req.ex`, then a non-OK gRPC status, then maps the libcurl
+# `code` to a deadline or transport error. Only reads `req`'s result fields, so call
+# it under `grpc.lock` or after `req.ready` has been notified, when those fields are
+# stable.
 @inline function grpc_request_exception(req::gRPCRequest)::Union{Nothing, Exception}
     if !isnothing(req.ex)
         return req.ex
