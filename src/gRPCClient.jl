@@ -106,6 +106,7 @@ export gRPCAsyncChannelResponse
 
 export gRPCException
 export gRPCServiceCallException
+export gRPCChannel
 
 macro public(ex)
     return if VERSION >= v"1.11.0-DEV.469"
