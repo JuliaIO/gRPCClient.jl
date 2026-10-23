@@ -46,7 +46,8 @@ jobs:
     - name: Setup Go
       uses: actions/setup-go@v7
       with:
-        go-version: '1.24'
+        go-version-file: test/go/go.mod
+        cache-dependency-path: test/go/go.sum
     - name: Build Go gRPC Test Server
       run: go build -o grpc_test_server .
       working-directory: test/go
