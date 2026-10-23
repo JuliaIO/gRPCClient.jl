@@ -1,10 +1,30 @@
 # Raw encoded buffers and partial decoding
 
-By default the client protobuf-encodes a typed request and decodes the response into a typed message. Declaring a message type parameter as `Vector{UInt8}` bypasses that step for that side and moves the raw protobuf payload through instead. Two reasons to want it: forwarding bytes already held, for example a proxy or a cache, and reading only a few fields out of a large response.
+By default the client protobuf-encodes a typed request and decodes the response into a typed message. Either side can instead carry a raw, already-encoded protobuf payload (a `Vector{UInt8}`), skipping that step. Two reasons to want it: forwarding bytes already held, for example a proxy or a cache, and reading only a few fields out of a large response.
 
 A generated message type is always a struct, so `Vector{UInt8}` is unambiguous as a raw-buffer marker. The buffer is the serialized protobuf message body only; the 5-byte gRPC frame is still added and stripped by the library. Message size limits still apply and are measured on the payload excluding that frame.
 
-## Choosing the raw side
+## Current API
+
+Pass a `Vector{UInt8}` in place of the typed request, and/or add `Vector{UInt8}` as an extra argument to receive the response undecoded. The same applies to `put!`, `take!`, and `fetch`. The two sides are independent.
+
+```julia
+using ProtoBuf
+io = IOBuffer(); encode(ProtoEncoder(io), MyRequest(42, UInt64[])); raw_request = take!(io)
+
+# Raw request, typed response
+response = MyService.MyRPC(chan, raw_request)
+
+# Typed request, raw response
+raw_response = MyService.MyRPC(chan, MyRequest(42, UInt64[]), Vector{UInt8})
+response = decode(ProtoDecoder(IOBuffer(raw_response)), MyResponse)
+```
+
+For streaming, send raw with `put!(rpc, raw_request)` and receive raw with `take!(rpc, Vector{UInt8})` (or `fetch(rpc, Vector{UInt8})`); each streaming element is one complete message payload. The legacy `TRequest`/`TResponse` type-parameter form below still works too.
+
+## Legacy API
+
+### Choosing the raw side
 
 Every generated constructor takes `TRequest` and `TResponse` keywords defaulting to the proto types. The two sides are independent.
 
@@ -28,7 +48,7 @@ raw_response = grpc_sync_request(client, MyRequest(42, UInt64[]))
 
 With `TRequest = Vector{UInt8}` the argument passed to `grpc_async_request` must be a byte vector; with the default it must be the proto type. The client's type parameter is what dispatch selects on, so a mismatch is a `MethodError` at the call site rather than a runtime decode failure.
 
-## Streaming
+### Streaming
 
 Override the streaming side and use a channel of byte vectors:
 
@@ -56,4 +76,4 @@ This is the usual approach for calling a service whose `.proto` is unavailable, 
 
 ## Not to be confused with
 
-A proto `bytes` field also maps to `Vector{UInt8}`, but that is a field inside a normal generated struct and is entirely unaffected by this feature. Raw buffers apply only to the whole-message type parameters `TRequest` and `TResponse`.
+A proto `bytes` field also maps to `Vector{UInt8}`, but that is a field inside a normal generated struct and is entirely unaffected by this feature. Raw buffers apply only to the whole-message request/response payload.
