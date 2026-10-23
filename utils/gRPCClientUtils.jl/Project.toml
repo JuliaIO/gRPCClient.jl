@@ -16,10 +16,10 @@ gRPCClient = "aaca4a50-36af-4a1d-b878-4c443f2061ad"
 gRPCClient = {path = "../.."}
 
 [compat]
-BenchmarkTools = "~1.6.0"
+BenchmarkTools = "~1.6.0, 1.8"
 PProf = "3.2.0"
-PrettyTables = "~3.1.0"
-Profile = "1.11.0"
+PrettyTables = "~3.1.0, 3.5"
+Profile = "<0.0.1, 1, 1.11.0"
 ProgressBars = "~1.5.0"
 ProtoBuf = "^1.2"
 gRPCClient = "1"
