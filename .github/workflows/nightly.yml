@@ -42,9 +42,9 @@ jobs:
           - os: macos-latest
             arch: aarch64
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
     - name: Setup Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v7
       with:
         go-version: '1.24'
     - name: Build Go gRPC Test Server
@@ -55,11 +55,11 @@ jobs:
       run: mv grpc_test_server grpc_test_server.exe
       shell: pwsh
       working-directory: test/go
-    - uses: julia-actions/setup-julia@v2
+    - uses: julia-actions/setup-julia@v3
       with:
         version: nightly
         arch: ${{ matrix.arch }}
-    - uses: julia-actions/cache@v2
+    - uses: julia-actions/cache@v3
     - uses: julia-actions/julia-buildpkg@v1
     - uses: julia-actions/julia-runtest@v1
       timeout-minutes: 20
