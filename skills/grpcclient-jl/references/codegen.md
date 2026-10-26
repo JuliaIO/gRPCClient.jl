@@ -15,6 +15,19 @@ protojl(proto_file, proto_search_root, output_dir)
 
 `grpc_register_service_codegen()` is exported and can be called explicitly, but `__init__` already calls it, so `using gRPCClient` is sufficient.
 
+Call it before `protojl` to choose which APIs to emit:
+
+```julia
+grpc_register_service_codegen(; legacy::Bool = true, servicemodule::Bool = true)
+```
+
+| Keyword | Emits |
+|---|---|
+| `servicemodule` | The module-per-service API: `baremodule MyService` with one function per RPC (the current API) |
+| `legacy` | The `MyService_MyRPC_Client` constructors driven by `grpc_sync_request` / `grpc_async_request` |
+
+Both default to `true`, so a stock `protojl` produces both. `grpc_register_service_codegen(legacy = false)` is recommended for new projects: less generated code and cleaner IDE completions. With both enabled, the service-module block is wrapped in a version guard so the file still loads (using the legacy API) on versions of gRPCClient.jl older than 1.2.0.
+
 ## Generated layout
 
 For a proto declaring `package foo`:
@@ -50,7 +63,53 @@ PB.field_numbers(::Type{TestRequest}) = (;test_response_sz = 1, data = 2)
 
 The injected service block is delimited by `# gRPCClient.jl BEGIN` and `# gRPCClient.jl END` markers, which is what to grep for when checking whether the hook ran.
 
-## Generated constructor
+When both APIs are emitted, a version guard (`Base.@static if Base.:!(Base.isless(Base.pkgversion(gRPCClient), Base.VersionNumber("1.2.0-rc1")))`) wraps the service-module half, so an old gRPCClient falls back to the legacy constructors.
+
+## Current API: the service module
+
+Each service becomes a `baremodule` (so tab-completion shows the RPCs and nothing else). Every RPC is an exported function with a compat guard, type-alias consts, trait methods, and a generated docstring:
+
+```julia
+baremodule TestService
+    import gRPCClient
+    import Base
+
+    gRPCClient.check_codegen_compat(Base.VersionNumber("1.2.0-rc1"))   # loaded vs generated version
+
+    const TestResponse::DataType = Base.parentmodule(TestService).TestResponse
+    const TestRequest::DataType = Base.parentmodule(TestService).TestRequest
+
+    Base.@inline function TestRPC(chan::gRPCClient.gRPCChannel, req::TestRequest, args...; kws...)
+        gRPCClient.grpc_call_unary(chan, typeof(TestRPC), req, args...; kws...)
+    end
+    Base.@inline function TestRPC(chan::gRPCClient.gRPCChannel, req::Base.Vector{UInt8}, args...; kws...)
+        gRPCClient.grpc_call_unary(chan, typeof(TestRPC), req, args...; kws...)
+    end
+    Base.@inline function TestRPC(host::AbstractString, port::Integer, args...; kws...)
+        TestRPC(gRPCClient.gRPCChannel(host, port), args...; kws...)
+    end
+    gRPCClient.rpc_path(::Type{typeof(TestRPC)}) = "/test.TestService/TestRPC"
+    gRPCClient.isstreaming_request(::Type{typeof(TestRPC)}) = false
+    gRPCClient.isstreaming_response(::Type{typeof(TestRPC)}) = false
+    gRPCClient.request_type(::Type{typeof(TestRPC)}) = TestRequest
+    gRPCClient.response_type(::Type{typeof(TestRPC)}) = TestResponse
+    gRPCClient.request_type_displayname(::Type{typeof(TestRPC)}) = "TestRequest"
+    gRPCClient.response_type_displayname(::Type{typeof(TestRPC)}) = "TestResponse"
+    Base.@doc gRPCClient.grpc_generate_rpc_docstring(typeof(TestRPC)) TestRPC
+    export TestRPC
+end
+```
+
+Predictable shape, so a call site can be written without reading the file:
+
+- Module name is the service name; function name is the RPC name; the path is `/{package}.{ServiceName}/{RPCName}`.
+- **Method count per RPC** is a codegen invariant the tests assert: **3** for a unary-request RPC (`chan, req` typed; `chan, req` raw `Vector{UInt8}`; `host, port`) and **2** for a streaming-request RPC (`chan`; `host, port`), which is `count("function TestRPC", generated) == 3` etc.
+- The generated docstring (viewable with `?MyService.MyRPC`) documents the exact signatures, request/response types, options, and copy-pasteable examples for that RPC's shape.
+- Dispatch, shape, and types come from the `typeof(RPCfunction)` traits above; the four `isstreaming_request`/`isstreaming_response` combinations select the call implementation, so nothing about the shape is chosen at the call site.
+
+The `check_codegen_compat` line makes a mismatch between the loaded gRPCClient and the version that generated the file a clear error rather than a confusing method failure.
+
+## Legacy API: generated constructors
 
 Each RPC produces exactly this shape, with no option defaults baked in; every option flows through `options...` to `gRPCServiceClient`, so the defaults live in one place:
 
@@ -71,7 +130,7 @@ export TestService_TestRPC_Client
 
 Naming is `{ServiceName}_{RPCName}_Client` and the path is `/{package}.{ServiceName}/{RPCName}`, both derived mechanically, so a symbol can be predicted from the proto without reading the generated file. The constructor is exported when the proto file is namespaced or `always_use_modules` is set; otherwise it is defined without an export.
 
-## Type parameters
+### Type parameters
 
 ```julia
 gRPCServiceClient{TRequest, SRequest, TResponse, SResponse}
