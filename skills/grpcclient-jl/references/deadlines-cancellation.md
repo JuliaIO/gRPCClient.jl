@@ -37,11 +37,11 @@ After cancelling a client or bidirectional stream, close the request channel so 
 
 ## The exception contract
 
-`grpc_async_request` throws only for programming errors it can detect synchronously at submission:
+`grpc_async_request` throws only for conditions it can detect synchronously at submission:
 
 | Condition | Status |
 |---|---|
-| Handle uninitialized or shut down | `FAILED_PRECONDITION` |
+| Handle uninitialized or shut down, including a shutdown while queued for a slot | `UNAVAILABLE` |
 | Invalid deadline (negative, `NaN`, `-Inf`) | `INVALID_ARGUMENT` |
 | Message larger than `max_send_message_length` | `RESOURCE_EXHAUSTED` |
 | `token` plus an `authorization` metadata entry | `INVALID_ARGUMENT` |
@@ -62,8 +62,8 @@ The same split applies in the current API: a synchronous unary call raises eithe
 | Status | Typical cause on this client |
 |---|---|
 | `GRPC_DEADLINE_EXCEEDED` | Deadline elapsed, whether queued, in transfer, or enforced by the watchdog |
-| `GRPC_CANCELLED` | `grpc_cancel`, or `grpc_shutdown` while the call was in flight |
+| `GRPC_CANCELLED` | `grpc_cancel` |
 | `GRPC_RESOURCE_EXHAUSTED` | Message exceeded `max_send_message_length` or `max_recieve_message_length` |
-| `GRPC_FAILED_PRECONDITION` | Call attempted on a shut-down or uninitialized handle |
+| `GRPC_UNAVAILABLE` | `grpc_shutdown` while the call was in flight or queued, or a call on a shut-down or uninitialized handle; retryable once the handle is re-initialized |
 | `GRPC_INTERNAL` | Underlying libcurl error; `message` carries the libcurl text |
 | `GRPC_UNAUTHENTICATED` | Server rejected or required the bearer token |

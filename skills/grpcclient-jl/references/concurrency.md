@@ -23,7 +23,7 @@ grpc_shutdown(h)               # shuts down only this handle
 
 A current-API `gRPCChannel` takes the handle the same way: `gRPCChannel("host", 50051; grpc = h)`.
 
-`grpc_init` on an already-open handle is a no-op, and `grpc_shutdown` is safe to call twice. Calling into a shut-down handle raises `FAILED_PRECONDITION` at submission.
+`grpc_init` on an already-open handle is a no-op, and `grpc_shutdown` is safe to call twice. Calling into a shut-down handle raises `UNAVAILABLE` at submission, and `grpc_shutdown` fails calls still in flight with `UNAVAILABLE`.
 
 ## max_streams
 

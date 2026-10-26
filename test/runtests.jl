@@ -12,7 +12,6 @@ import gRPCClient:
     GRPC_UNAUTHENTICATED,
     GRPC_CANCELLED,
     GRPC_INVALID_ARGUMENT,
-    GRPC_FAILED_PRECONDITION,
     GRPC_INTERNAL,
     GRPC_UNAVAILABLE
 
@@ -2058,7 +2057,7 @@ include("gen/test/test_pb.jl")
         # Hold the only slot, then queue a second request behind it
         grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
         queued = @spawn try
-            # A shutdown while queued propagates FAILED_PRECONDITION from submission
+            # A shutdown while queued propagates UNAVAILABLE from submission
             # (the caller is still blocked inside grpc_async_request at that point)
             req = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
             grpc_async_await(client, req)
@@ -2075,7 +2074,7 @@ include("gen/test/test_pb.jl")
         # The queued request was unblocked by the shutdown, well before its deadline
         @test time() - t0 < 2.0
         @test isa(ex, gRPCServiceCallException)
-        @test ex.grpc_status == GRPC_FAILED_PRECONDITION
+        @test ex.grpc_status == GRPC_UNAVAILABLE
 
         close(silent_server)
         foreach(close, accepted)
@@ -2124,6 +2123,17 @@ include("gen/test/test_pb.jl")
             @test isa(r, gRPCServiceCallException)
             @test r.grpc_status == GRPC_UNAVAILABLE
         end
+
+        # Submitting on the shut-down handle is UNAVAILABLE too, so a caller racing a
+        # reset sees one retryable code whether its request was in flight, queued or new
+        ex = try
+            grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+            nothing
+        catch e
+            e
+        end
+        @test isa(ex, gRPCServiceCallException)
+        @test ex.grpc_status == GRPC_UNAVAILABLE
 
         close(silent_server)
         foreach(close, accepted)

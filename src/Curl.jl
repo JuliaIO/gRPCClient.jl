@@ -653,17 +653,20 @@ mutable struct gRPCRequest
 
         options = _merge_options(options, kws)
 
-        # Exception contract: grpc_async_request throws only for programming errors it
-        # can detect synchronously at submission (an uninitialized or shut-down handle
-        # as FAILED_PRECONDITION, an invalid deadline as INVALID_ARGUMENT, an oversized
-        # message as RESOURCE_EXHAUSTED at encode). Failures that depend on time or
-        # concurrency (deadline exceeded, cancellation, transport errors, server
-        # statuses) are raised by grpc_async_await instead, keeping each exception type
-        # in the location callers have always handled it.
+        # Exception contract: grpc_async_request throws only for conditions it can detect
+        # synchronously at submission (an uninitialized or shut-down handle as
+        # UNAVAILABLE, an invalid deadline as INVALID_ARGUMENT, an oversized message as
+        # RESOURCE_EXHAUSTED at encode). Failures that depend on time or concurrency
+        # (deadline exceeded, cancellation, transport errors, server statuses) are raised
+        # by grpc_async_await instead, keeping each exception type in the location
+        # callers have always handled it. A handle that is not running is UNAVAILABLE
+        # rather than FAILED_PRECONDITION because a shut-down handle is usually being
+        # reset and re-initialized (as grpc-java reports calls on a shut-down channel), so
+        # the call can be retried.
         !grpc.running && throw(
             gRPCServiceCallException(
-                GRPC_FAILED_PRECONDITION,
-                "gRPCCURL backend is not running, did you forget to call grpc_init()?",
+                GRPC_UNAVAILABLE,
+                "gRPCCURL backend is not running (shut down, or grpc_init() was never called)",
             ),
         )
 
@@ -742,7 +745,7 @@ mutable struct gRPCRequest
         catch ex
             isnothing(watchdog) || close(watchdog)
             # Only a deadline expiry while queued becomes an await-raised dead request;
-            # a shutdown while queued propagates as FAILED_PRECONDITION from submission,
+            # a shutdown while queued propagates as UNAVAILABLE from submission,
             # matching the contract above
             (ex isa gRPCServiceCallException && ex.grpc_status == GRPC_DEADLINE_EXCEEDED) ||
                 rethrow()
@@ -921,8 +924,8 @@ mutable struct gRPCRequest
         lock(grpc.lock) do
             if !grpc.running
                 # We did all that work for nothing, and now we have to cleanup. A
-                # shut-down handle is a submission-time FAILED_PRECONDITION per the
-                # contract at the top of this constructor.
+                # shut-down handle is a submission-time UNAVAILABLE per the contract at
+                # the top of this constructor.
                 isnothing(watchdog) || close(watchdog)
                 isnothing(req.unpause) || close(req.unpause)
                 curl_easy_cleanup(easy_handle)
@@ -933,7 +936,7 @@ mutable struct gRPCRequest
 
                 throw(
                     gRPCServiceCallException(
-                        GRPC_FAILED_PRECONDITION,
+                        GRPC_UNAVAILABLE,
                         "Tried to make a request when the provided grpc handle is shutdown",
                     ),
                 )
@@ -1548,7 +1551,7 @@ function max_reqs_dec(grpc::gRPCCURL, expiry::Float64)
         while isempty(grpc.sem_free)
             grpc.running || throw(
                 gRPCServiceCallException(
-                    GRPC_FAILED_PRECONDITION,
+                    GRPC_UNAVAILABLE,
                     "The grpc handle was shutdown while the request was queued",
                 ),
             )
