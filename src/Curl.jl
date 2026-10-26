@@ -1466,6 +1466,16 @@ function Base.close(grpc::gRPCCURL)
         else
             while length(grpc.requests) > 0
                 request = pop!(grpc.requests)
+                # A request still in flight has not received its full response. Without an
+                # exception, grpc_async_await would decode whatever was buffered (often nothing)
+                # and return it as a success.
+                request.completed || handle_exception(
+                    request,
+                    gRPCServiceCallException(
+                        GRPC_UNAVAILABLE,
+                        "gRPC handle was shut down with the request in flight",
+                    ),
+                )
                 cleanup_request(grpc, request)
             end
 
