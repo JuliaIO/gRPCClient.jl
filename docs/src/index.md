@@ -313,7 +313,7 @@ Errors surface as a [`gRPCServiceCallException`](@ref), whose `grpc_status` fiel
 Where the exception is raised depends on how the call is driven:
 
 - A **synchronous unary** call raises from the call itself, so wrap `TestService.TestRPC(chan, req)` in a `try`/`catch`.
-- For every **asynchronous or streaming** call, starting the call only reports the programming errors it can detect immediately, such as an uninitialized or shut-down handle, an invalid arguments, or an oversized message. Every failure that depends on timeouts, cancellation, transport errors, and server errors is raised later during the lifecycle, but at the latest when calling [`close`](@ref) or [`detach`](@ref) (also [`fetch`](@ref) for unary-response calls).
+- For every **asynchronous or streaming** call, starting the call only reports the errors it can detect immediately, such as an uninitialized or shut-down handle (`UNAVAILABLE`), an invalid arguments, or an oversized message. Every failure that depends on timeouts, cancellation, transport errors, and server errors is raised later during the lifecycle, but at the latest when calling [`close`](@ref) or [`detach`](@ref) (also [`fetch`](@ref) for unary-response calls).
 - Streaming a request with [`put!`](@ref) raises once the call is no longer accepting requests — because it has completed, was cancelled, or failed. If the call ended because of an error, that error is what will be raised. Note that `put!` only *enqueues* a message for the background sender; a message it accepts can still go untransmitted.
 
 !!! note "End every asynchronous or streaming call"
@@ -445,13 +445,19 @@ handle's `max_streams` slots, so a request submitted while every slot is held
 by a slow or stuck call still fails at its own deadline rather than waiting
 indefinitely for a slot.
 
-The exception contract: `grpc_async_request` throws only for programming
-errors it can detect synchronously at submission (an uninitialized or
-shut-down handle as `FAILED_PRECONDITION`, an invalid deadline or a
+The exception contract: `grpc_async_request` throws only for conditions it
+can detect synchronously at submission (an uninitialized or shut-down handle
+as `UNAVAILABLE`, an invalid deadline or a
 `token`/`authorization`-metadata conflict as `INVALID_ARGUMENT`, an oversized
 message as `RESOURCE_EXHAUSTED`). Every failure that depends on time or
 concurrency (deadline exceeded, including expiry while queued, cancellation,
 transport errors, server statuses) is raised by `grpc_async_await`.
+
+Shutting a handle down with `grpc_shutdown` fails every request still in
+flight with `UNAVAILABLE` from `grpc_async_await`, and a request queued for a
+`max_streams` slot with `UNAVAILABLE` from `grpc_async_request`. A shut-down
+handle is usually about to be re-initialized, so these calls can be retried,
+on this handle once `grpc_init` has run again or elsewhere.
 
 An in-flight request can also be cancelled explicitly at any time:
 

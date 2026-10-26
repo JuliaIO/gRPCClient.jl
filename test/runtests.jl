@@ -12,8 +12,8 @@ import gRPCClient:
     GRPC_UNAUTHENTICATED,
     GRPC_CANCELLED,
     GRPC_INVALID_ARGUMENT,
-    GRPC_FAILED_PRECONDITION,
-    GRPC_INTERNAL
+    GRPC_INTERNAL,
+    GRPC_UNAVAILABLE
 
 # The bearer token the test Go server accepts (mirrors expectedBearerToken in
 # test/go/server.go). A request carrying an `authorization` header must present
@@ -1130,9 +1130,16 @@ include("gen/test/test_pb.jl")
         @test istaskdone(shutdown_task)
         fetch(shutdown_task)
 
-        # cleanup_request on shutdown does not set req.ex (grpc_cancel does), so
-        # await must simply return rather than block forever on req.ready
-        grpc_async_await(req, TestResponse)
+        # The stream was cut off by the shutdown, so await must raise UNAVAILABLE rather
+        # than block forever on req.ready or report the truncated stream as a success
+        ex = try
+            grpc_async_await(req, TestResponse)
+            nothing
+        catch e
+            e
+        end
+        @test isa(ex, gRPCServiceCallException)
+        @test ex.grpc_status == GRPC_UNAVAILABLE
         @test !isopen(response_c)
 
         # The global handle must be usable again after re-init
@@ -2050,7 +2057,7 @@ include("gen/test/test_pb.jl")
         # Hold the only slot, then queue a second request behind it
         grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
         queued = @spawn try
-            # A shutdown while queued propagates FAILED_PRECONDITION from submission
+            # A shutdown while queued propagates UNAVAILABLE from submission
             # (the caller is still blocked inside grpc_async_request at that point)
             req = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
             grpc_async_await(client, req)
@@ -2067,7 +2074,66 @@ include("gen/test/test_pb.jl")
         # The queued request was unblocked by the shutdown, well before its deadline
         @test time() - t0 < 2.0
         @test isa(ex, gRPCServiceCallException)
-        @test ex.grpc_status == GRPC_FAILED_PRECONDITION
+        @test ex.grpc_status == GRPC_UNAVAILABLE
+
+        close(silent_server)
+        foreach(close, accepted)
+    end
+
+    @testset "Shutdown fails in-flight unary requests with UNAVAILABLE" begin
+        # Shutting a handle down must not complete an in-flight unary call as a success with
+        # an empty response, which a caller cannot tell apart from a real (default) reply
+        grpc_handle = gRPCCURL()
+        grpc_init(grpc_handle)
+
+        silent_server = listen(Sockets.localhost, 0)
+        silent_port = Int(getsockname(silent_server)[2])
+        accepted = Sockets.TCPSocket[]
+        @async while true
+            try
+                push!(accepted, accept(silent_server))
+            catch
+                break
+            end
+        end
+
+        client = TestService_TestRPC_Client(
+            "127.0.0.1",
+            silent_port;
+            grpc = grpc_handle,
+            deadline = 10.0,
+        )
+        calls = [
+            @spawn try
+                grpc_sync_request(client, TestRequest(1, zeros(UInt64, 1)))
+            catch ex
+                ex
+            end
+                for _ in 1:4
+        ]
+        sleep(0.5)
+        @test !any(istaskdone, calls)
+
+        t0 = time()
+        grpc_shutdown(grpc_handle)
+        results = fetch.(calls)
+        # Failed by the shutdown, well before the deadline
+        @test time() - t0 < 2.0
+        for r in results
+            @test isa(r, gRPCServiceCallException)
+            @test r.grpc_status == GRPC_UNAVAILABLE
+        end
+
+        # Submitting on the shut-down handle is UNAVAILABLE too, so a caller racing a
+        # reset sees one retryable code whether its request was in flight, queued or new
+        ex = try
+            grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+            nothing
+        catch e
+            e
+        end
+        @test isa(ex, gRPCServiceCallException)
+        @test ex.grpc_status == GRPC_UNAVAILABLE
 
         close(silent_server)
         foreach(close, accepted)

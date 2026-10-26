@@ -26,7 +26,7 @@ It is a `Condition` rather than a `Channel` on purpose: waiters must be wakeable
 `gRPCRequest`'s constructor performs, in order:
 
 1. Merge per-call option overrides into the client options
-2. Reject a non-running handle with `FAILED_PRECONDITION`
+2. Reject a non-running handle with `UNAVAILABLE`
 3. Validate the deadline, rejecting negative, `NaN`, and `-Inf` with `INVALID_ARGUMENT`. This must stay ahead of the watchdog `Timer`, which would otherwise raise a bare `ArgumentError` on a negative interval
 4. Compute `expiry = time() + deadline`, which is why queue time counts against the deadline
 5. Arm the watchdog, before the queue wait, so a request can never block past its deadline
