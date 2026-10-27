@@ -311,7 +311,7 @@ close(rpc)
 Errors surface as a [`gRPCServiceCallException`](@ref), whose `grpc_status` field carries the gRPC status code and whose `message` holds the server- or client-supplied detail.
 
 !!! warning "Status codes other than `OK` are not yet stable"
-    Do not rely on the specific non-`OK` status code reported for a given failure. Some of the codes the client assigns, particularly for client-side and transport errors, may be reworked in future releases to align more closely with the gRPC reference implementations. Treat any non-`OK` status as a failure; branching on a particular code may need revisiting when upgrading.
+    Do not rely on the specific non-`OK` status code reported for a given failure. Some of the codes the client assigns, particularly for client-side and transport errors, may be reworked to align more closely with the gRPC reference implementations. Such corrections are considered bug fixes rather than breaking changes, so they will not require a new major version. They may ship in any minor release, but status codes will not change within patch releases. Treat any non-`OK` status as a failure, and review code that branches on a particular status when upgrading to a new minor version.
 
 Where the exception is raised depends on how the call is driven:
 
