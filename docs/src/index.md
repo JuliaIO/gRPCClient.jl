@@ -310,6 +310,9 @@ close(rpc)
 
 Errors surface as a [`gRPCServiceCallException`](@ref), whose `grpc_status` field carries the gRPC status code and whose `message` holds the server- or client-supplied detail.
 
+!!! warning "Status codes other than `OK` are not yet stable"
+    Do not rely on the specific non-`OK` status code reported for a given failure. Some of the codes the client assigns, particularly for client-side and transport errors, may be reworked in future releases to align more closely with the gRPC reference implementations. Treat any non-`OK` status as a failure; branching on a particular code may need revisiting when upgrading.
+
 Where the exception is raised depends on how the call is driven:
 
 - A **synchronous unary** call raises from the call itself, so wrap `TestService.TestRPC(chan, req)` in a `try`/`catch`.
