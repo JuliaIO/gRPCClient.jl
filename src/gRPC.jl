@@ -210,10 +210,12 @@ end
 
 
 # Turn a received message `IOBuffer` into the user's value. The generic method
-# ProtoBuf-decodes into `T`; the `Vector{UInt8}` method returns a fresh copy of
-# the raw protobuf payload, enabling raw / partial-decode responses.
+# ProtoBuf-decodes into `T`; the `Vector{UInt8}` method returns the raw protobuf
+# payload, enabling raw / partial-decode responses. It takes the buffer's bytes
+# rather than copying them: each message has a buffer of its own that nothing
+# reads after it is decoded, and `take!` wraps its memory without a copy.
 _decode_message(io, ::Type{T}) where {T} = decode(ProtoDecoder(io), T)
-_decode_message(io, ::Type{Vector{UInt8}}) = read(seekstart(io))
+_decode_message(io, ::Type{Vector{UInt8}}) = take!(io)
 _decode_message(io, ::Type{IOBuffer}) = io
 
 function grpc_async_await(req::gRPCRequest, TResponse)
