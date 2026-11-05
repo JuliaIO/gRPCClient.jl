@@ -454,6 +454,52 @@ include("gen/test/test_pb.jl")
             @test fetch(rpc, Vector{UInt8}) == fetch(rpc, Vector{UInt8})
         end
 
+        @testset "raw fetch returns the response's own memory, every time" begin
+            n = 200_000
+            expected = (io = IOBuffer(); encode(ProtoEncoder(io), TestResponse(collect(UInt64, 1:n))); take!(io))
+            new_rpc() = TestService.TestRPC(chan, TestRequest(n, [1]), gRPCClient.gRPCAsync())
+
+            # fetch does not consume the response, raw or decoded, in either order.
+            rpc = new_rpc()
+            raw = fetch(rpc, Vector{UInt8})
+            @test raw == expected
+            @test fetch(rpc).data == collect(UInt64, 1:n)
+            @test fetch(rpc, Vector{UInt8}) == expected
+            rpc = new_rpc()
+            @test fetch(rpc).data == collect(UInt64, 1:n)
+            @test fetch(rpc, Vector{UInt8}) == expected
+
+            # An empty response.
+            rpc = TestService.TestRPC(chan, TestRequest(0, UInt64[]), gRPCClient.gRPCAsync())
+            @test fetch(rpc, Vector{UInt8}) == UInt8[]
+            @test isempty(fetch(rpc).data)
+
+            if VERSION >= v"1.11"
+                # Every raw fetch shares the response's memory (documented), so modifying
+                # one shows in every later fetch.
+                rpc = new_rpc()
+                raw = fetch(rpc, Vector{UInt8})
+                @test pointer(fetch(rpc, Vector{UInt8})) == pointer(raw)
+                fill!(raw, 0x00)
+                @test fetch(rpc, Vector{UInt8}) == zeros(UInt8, length(expected))
+
+                # Concurrent raw fetches of one call all get that memory.
+                rpc = new_rpc()
+                wait(rpc)
+                raws = fetch.([Threads.@spawn(fetch(rpc, Vector{UInt8})) for _ in 1:8])
+                @test all(r -> pointer(r) == pointer(raws[1]) && r == expected, raws)
+
+                # No copy, on the first raw fetch or any later one. Measured after the
+                # warm-up calls above.
+                rpc = new_rpc()
+                wait(rpc)
+                first_bytes = @allocated fetch(rpc, Vector{UInt8})
+                later_bytes = @allocated fetch(rpc, Vector{UInt8})
+                @test first_bytes < length(expected) ÷ 10
+                @test later_bytes < length(expected) ÷ 10
+            end
+        end
+
         @testset "Host-port syntax" begin
             rpc = TestService.TestRPC(_TEST_HOST, _TEST_PORT, TestRequest(1, [1]), gRPCClient.gRPCAsync())
             resp = fetch(rpc)
@@ -703,6 +749,19 @@ include("gen/test/test_pb.jl")
                 io = IOBuffer(take!(rpc, Vector{UInt8}))
                 resp = decode(ProtoDecoder(io), TestResponse)
                 @test length(resp.data) == i
+            end
+        end
+
+        @testset "raw fetch and take! return each response's own memory" begin
+            expected(i) = (io = IOBuffer(); encode(ProtoEncoder(io), TestResponse(collect(UInt64, 1:i))); take!(io))
+            rpc = TestService.TestServerStreamRPC(chan, TestRequest(3, [1]))
+            for i in 1:3
+                peeked = fetch(rpc, Vector{UInt8})  # leaves the response in the stream
+                @test peeked == expected(i)
+                @test fetch(rpc).data == collect(UInt64, 1:i)
+                taken = take!(rpc, Vector{UInt8})
+                @test taken == expected(i)
+                VERSION >= v"1.11" && @test pointer(taken) == pointer(peeked)
             end
         end
     end
