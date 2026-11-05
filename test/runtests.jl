@@ -454,38 +454,49 @@ include("gen/test/test_pb.jl")
             @test fetch(rpc, Vector{UInt8}) == fetch(rpc, Vector{UInt8})
         end
 
-        @testset "raw fetch hands the response over once, and does not consume it" begin
+        @testset "raw fetch returns the response's own bytes, every time" begin
             n = 200_000
             expected = (io = IOBuffer(); encode(ProtoEncoder(io), TestResponse(collect(UInt64, 1:n))); take!(io))
             new_rpc() = TestService.TestRPC(chan, TestRequest(n, [1]), gRPCClient.gRPCAsync())
 
+            # Every raw fetch returns the same vector, and fetch does not consume it.
             rpc = new_rpc()
             raw = fetch(rpc, Vector{UInt8})
             @test raw == expected
-            again = fetch(rpc, Vector{UInt8})              # a later raw fetch is a fresh copy
-            @test again == expected && again !== raw
+            @test fetch(rpc, Vector{UInt8}) === raw
             @test fetch(rpc).data == collect(UInt64, 1:n)  # decoded after raw
-            @test fetch(rpc, Vector{UInt8}) == expected     # raw after decoded
-
-            # The first raw fetch returned the response itself (documented): changing it
-            # changes what later fetches of the same call return.
-            fill!(raw, 0x00)
-            @test fetch(rpc, Vector{UInt8}) == zeros(UInt8, length(expected))
+            @test fetch(rpc, Vector{UInt8}) === raw         # raw after decoded
 
             # Decoded first, then raw: the raw fetch still returns the whole response.
             rpc = new_rpc()
             @test fetch(rpc).data == collect(UInt64, 1:n)
             @test fetch(rpc, Vector{UInt8}) == expected
 
-            # No copy on the first raw fetch where `take!` wraps the buffer (Julia 1.11+).
-            # Measured after a warm-up fetch so compilation is not counted.
+            # An empty response.
+            rpc = TestService.TestRPC(chan, TestRequest(0, UInt64[]), gRPCClient.gRPCAsync())
+            @test fetch(rpc, Vector{UInt8}) == UInt8[]
+            @test isempty(fetch(rpc).data)
+
+            # Concurrent fetches of one call: raw ones all get the same vector, decoded ones
+            # each decode the whole response.
+            rpc = new_rpc()
+            wait(rpc)
+            raws = fetch.([Threads.@spawn(fetch(rpc, Vector{UInt8})) for _ in 1:8])
+            @test all(r -> r === raws[1], raws) && raws[1] == expected
+            rpc = new_rpc()
+            wait(rpc)
+            decoded = fetch.([Threads.@spawn(fetch(rpc)) for _ in 1:8])
+            @test all(d -> d.data == collect(UInt64, 1:n), decoded)
+
+            # No copy, on the first raw fetch or any later one, where `take!` wraps the
+            # buffer (Julia 1.11+). Measured after the warm-up calls above.
             if VERSION >= v"1.11"
                 rpc = new_rpc()
                 wait(rpc)
                 first_bytes = @allocated fetch(rpc, Vector{UInt8})
                 later_bytes = @allocated fetch(rpc, Vector{UInt8})
                 @test first_bytes < length(expected) ÷ 10
-                @test later_bytes >= length(expected)
+                @test later_bytes < length(expected) ÷ 10
             end
         end
 
@@ -738,6 +749,18 @@ include("gen/test/test_pb.jl")
                 io = IOBuffer(take!(rpc, Vector{UInt8}))
                 resp = decode(ProtoDecoder(io), TestResponse)
                 @test length(resp.data) == i
+            end
+        end
+
+        @testset "raw take! hands over each response; raw fetch copies" begin
+            expected(i) = (io = IOBuffer(); encode(ProtoEncoder(io), TestResponse(collect(UInt64, 1:i))); take!(io))
+            rpc = TestService.TestServerStreamRPC(chan, TestRequest(3, [1]))
+            for i in 1:3
+                peeked = fetch(rpc, Vector{UInt8})  # leaves the response in the stream
+                @test peeked == expected(i)
+                fill!(peeked, 0x00)                 # a copy: the stream is unaffected
+                taken = take!(rpc, Vector{UInt8})
+                @test taken == expected(i)
             end
         end
     end
