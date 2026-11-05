@@ -208,11 +208,10 @@ Reads the response of `rpc`, cleanup resources and throw any exception caught.
 If the `rpc` has streaming requests, the request stream will be closed.
 
 If `Vector{UInt8}` is provided as the second argument, the response 
-will be returned without decoding the proto format. The vector is the response's own
-buffer, not a copy (no copy is made on Julia 1.11 and later), and every raw fetch of
-`rpc` returns that same vector. `fetch` does not consume the response, so it can be
-called again, raw or decoded; a decoded fetch decodes from that vector, so modifying it
-changes what later fetches return.
+will be returned without decoding the proto format. The vector shares the response's
+memory rather than copying it (on Julia 1.11 and later), so every raw fetch of `rpc`
+returns the same bytes, and modifying them changes what later fetches return. `fetch`
+does not consume the response: it can be called again, raw or decoded.
 
 If the response of `rpc` is not of interest, `close` may be used to avoid decoding. 
 """
@@ -220,36 +219,27 @@ If the response of `rpc` is not of interest, `close` may be used to avoid decodi
     if isstreaming_request(rpc)
         put!(rpc, done = true)
     end
-    grpc_async_await(rpc.req)
-    return decode(ProtoDecoder(IOBuffer(_response_bytes(rpc.req))), response_type(rpc))
+    io = grpc_async_await(rpc.req, IOBuffer)
+    return decode(ProtoDecoder(seekstart(io)), response_type(rpc))
 end
 
 @inline function Base.fetch(rpc::UnaryResponseRPC, ::Type{Vector{UInt8}})
     if isstreaming_request(rpc)
         put!(rpc, done = true)
     end
-    grpc_async_await(rpc.req)
-    return _response_bytes(rpc.req)
+    return _message_bytes(grpc_async_await(rpc.req, IOBuffer))
 end
 
-# The bytes of a completed unary response, shared by every fetch of the call. The first
-# fetch takes them out of the receive buffer: `take!` wraps the buffer's memory without a
-# copy (on Julia 1.11 and later), as `_decode_message` does for the legacy API (#153).
-# Under `req.lock`, held only for that `take!`, so two fetches at once cannot both take
-# the buffer; once the bytes are published, a fetch reads them without the lock. A
-# decoded fetch reads them through an `IOBuffer` of its own, so concurrent fetches do not
-# share a read position.
-function _response_bytes(req::gRPCRequest)::Vector{UInt8}
-    bytes = @atomic :acquire req.response_bytes
-    bytes === nothing || return bytes
-    return lock(req.lock) do
-        bytes = @atomic :acquire req.response_bytes
-        if bytes === nothing
-            bytes = take!(req.response)
-            @atomic :release req.response_bytes = bytes
-        end
-        bytes
-    end
+# A received message's bytes as a vector over its buffer's memory, for a raw read that
+# leaves the message in place. Unlike `take!`, it does not empty the buffer, so the
+# message can be read again, and it changes nothing, so it needs no lock. Every message
+# buffer is created by this package with no offset, so the message is `data[begin:size]`.
+# Before Julia 1.11 an IOBuffer's `data` is a resizable Vector that cannot be shared
+# safely, and `take!` copies anyway, so this copies too.
+@static if VERSION >= v"1.11"
+    _message_bytes(io::IOBuffer)::Vector{UInt8} = Base.wrap(Array, io.data, io.size)
+else
+    _message_bytes(io::IOBuffer)::Vector{UInt8} = io.data[begin:io.size]
 end
 
 """
@@ -356,7 +346,8 @@ end
 Return a recevied response from a response stream. Blocks unless a response is already available. 
 
 If `Vector{UInt8}` is provided as the second argument, the response 
-will be returned without decoding the proto format. 
+will be returned without decoding the proto format. The vector shares the response's
+memory rather than copying it (on Julia 1.11 and later), as does a later `take!` of it.
 
 Note that `fetch` does not remove the response, so repeated calls will return the same
 value. In most scenarios, [`take!`](@ref) is the preferred option for response streams. 
@@ -373,9 +364,7 @@ end
 
 @inline function Base.fetch(rpc::StreamingResponseRPC, ::Type{Vector{UInt8}})
     return try
-        io = fetch(rpc.response_channel)
-        seekstart(io)
-        read(io)::Vector{UInt8}
+        _message_bytes(fetch(rpc.response_channel))
     catch ex
         handle_channel_exception(ex, rpc, gRPCServiceCallException(GRPC_OK, "Call has already been completed and no more responses are available. "))
     end

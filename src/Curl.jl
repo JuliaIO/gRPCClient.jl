@@ -547,11 +547,6 @@ mutable struct gRPCRequest
     # Holds the current response in the response stream
     response::IOBuffer
 
-    # A unary response's bytes, taken out of `response` by the first `fetch` of the
-    # simple API, which every later fetch then reads (see `_response_bytes`). `nothing`
-    # until then. Atomic so that a fetch can read it without taking `lock`.
-    @atomic response_bytes::Union{Nothing, Vector{UInt8}}
-
     # These are only used when the request or response is streaming
     request_c::Union{Channel{IOBuffer}, NoChannel}
     response_c::Union{Channel{IOBuffer}, NoChannel}
@@ -854,7 +849,6 @@ mutable struct gRPCRequest
             request,
             0,
             response,
-            nothing,
             request_c,
             response_c,
             Event(),
@@ -993,7 +987,6 @@ mutable struct gRPCRequest
             request,
             0,
             response,
-            nothing,
             request_c,
             response_c,
             Event(),

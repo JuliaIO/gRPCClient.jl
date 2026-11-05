@@ -34,8 +34,6 @@ for _ in 1:10
 end
 ```
 
-A raw response is the received message's own buffer, not a copy of it (on Julia 1.11 and later). For an asynchronous unary call, every `fetch(rpc, Vector{UInt8})` returns that same vector, and `fetch` does not consume the response, so it can be fetched again, raw or decoded. Since a decoded fetch also reads that vector, modifying it changes what later fetches of the call return; `copy` it first if you need to change it and fetch again.
-
-On a response stream, `take!(rpc, Vector{UInt8})` removes the response and hands its buffer over. `fetch` on a stream returns the next response without removing it, so it returns a copy; prefer `take!`.
+A raw response shares the received message's memory rather than copying it (on Julia 1.11 and later). `fetch` does not consume the response, so an asynchronous call can be fetched again, raw or decoded, and every raw fetch returns the same bytes. Modifying them therefore changes what later fetches of the call return; `copy` them first if you need to change them and fetch again. On a response stream, `take!(rpc, Vector{UInt8})` removes the response and hands its buffer over.
 
 The two sides are independent, so either or both may be raw. The same mechanism is covered in more depth for the [legacy API](../legacy.md#Raw-Encoded-Buffers-(Partial-Decoding)).
