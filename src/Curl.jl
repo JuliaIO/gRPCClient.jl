@@ -1108,8 +1108,16 @@ function handle_write(
             end
 
             req.response_read_header = true
-            seekstart(req.response)
-            truncate(req.response, 0)
+            # Size the message buffer to the length-prefix (already checked against
+            # max_recieve_message_length) unless it already fits, so a large message is
+            # received without regrowing the buffer (each regrowth copies everything
+            # received so far) and a raw response is handed back without a copy.
+            if req.response_length > length(req.response.data)
+                req.response = IOBuffer(; sizehint = req.response_length)
+            else
+                seekstart(req.response)
+                truncate(req.response, 0)
+            end
 
             # A zero-length message is complete the moment its length-prefix is
             # parsed: an all-default protobuf (`google.protobuf.Empty`, a message

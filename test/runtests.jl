@@ -416,6 +416,23 @@ include("gen/test/test_pb.jl")
             @test response.data == [1]
         end
 
+        @testset "Raw response larger than the initial buffer" begin
+            # A message past the first write callback is received into a buffer sized from its
+            # length-prefix and handed back without a copy: it must decode in full, be exactly
+            # the message's length, and not alias the next call's response.
+            n = 200_000
+            req_bytes(sz) = (io = IOBuffer(); encode(ProtoEncoder(io), TestRequest(sz, [1])); take!(io))
+            a = TestService.TestRPC(chan, req_bytes(n), Vector{UInt8})
+            typed = TestService.TestRPC(chan, TestRequest(n, [1]))
+            @test decode(ProtoDecoder(IOBuffer(a)), TestResponse).data == typed.data == collect(UInt64, 1:n)
+            io = IOBuffer(); encode(ProtoEncoder(io), typed)
+            @test length(a) == position(io)
+            b = TestService.TestRPC(chan, req_bytes(n), Vector{UInt8})
+            @test a == b
+            fill!(b, 0x00)
+            @test decode(ProtoDecoder(IOBuffer(a)), TestResponse).data == collect(UInt64, 1:n)
+        end
+
         @testset "Host-port syntax" begin
             resp = TestService.TestRPC(_TEST_HOST, _TEST_PORT, TestRequest(1, [1]))
             @test resp.data == [1]
