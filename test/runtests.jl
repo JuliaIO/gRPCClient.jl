@@ -454,6 +454,41 @@ include("gen/test/test_pb.jl")
             @test fetch(rpc, Vector{UInt8}) == fetch(rpc, Vector{UInt8})
         end
 
+        @testset "raw fetch hands the response over once, and does not consume it" begin
+            n = 200_000
+            expected = (io = IOBuffer(); encode(ProtoEncoder(io), TestResponse(collect(UInt64, 1:n))); take!(io))
+            new_rpc() = TestService.TestRPC(chan, TestRequest(n, [1]), gRPCClient.gRPCAsync())
+
+            rpc = new_rpc()
+            raw = fetch(rpc, Vector{UInt8})
+            @test raw == expected
+            again = fetch(rpc, Vector{UInt8})              # a later raw fetch is a fresh copy
+            @test again == expected && again !== raw
+            @test fetch(rpc).data == collect(UInt64, 1:n)  # decoded after raw
+            @test fetch(rpc, Vector{UInt8}) == expected     # raw after decoded
+
+            # The first raw fetch returned the response itself (documented): changing it
+            # changes what later fetches of the same call return.
+            fill!(raw, 0x00)
+            @test fetch(rpc, Vector{UInt8}) == zeros(UInt8, length(expected))
+
+            # Decoded first, then raw: the raw fetch still returns the whole response.
+            rpc = new_rpc()
+            @test fetch(rpc).data == collect(UInt64, 1:n)
+            @test fetch(rpc, Vector{UInt8}) == expected
+
+            # No copy on the first raw fetch where `take!` wraps the buffer (Julia 1.11+).
+            # Measured after a warm-up fetch so compilation is not counted.
+            if VERSION >= v"1.11"
+                rpc = new_rpc()
+                wait(rpc)
+                first_bytes = @allocated fetch(rpc, Vector{UInt8})
+                later_bytes = @allocated fetch(rpc, Vector{UInt8})
+                @test first_bytes < length(expected) ÷ 10
+                @test later_bytes >= length(expected)
+            end
+        end
+
         @testset "Host-port syntax" begin
             rpc = TestService.TestRPC(_TEST_HOST, _TEST_PORT, TestRequest(1, [1]), gRPCClient.gRPCAsync())
             resp = fetch(rpc)

@@ -208,7 +208,11 @@ Reads the response of `rpc`, cleanup resources and throw any exception caught.
 If the `rpc` has streaming requests, the request stream will be closed.
 
 If `Vector{UInt8}` is provided as the second argument, the response 
-will be returned without decoding the proto format. 
+will be returned without decoding the proto format. The first such call returns
+the response's own bytes, without a copy, so modifying that vector changes what
+later calls to `fetch` on the same `rpc` return. `fetch` does not consume the
+response: it can be fetched again, raw or decoded, and each later raw fetch
+returns a fresh copy.
 
 If the response of `rpc` is not of interest, `close` may be used to avoid decoding. 
 """
@@ -224,8 +228,23 @@ end
     if isstreaming_request(rpc)
         put!(rpc, done = true)
     end
-    io = grpc_async_await(rpc.req, IOBuffer)
-    return read(seekstart(io))
+    grpc_async_await(rpc.req)
+    return _fetch_raw_response!(rpc.req)
+end
+
+# The first raw fetch hands the response's bytes over: `take!` wraps the buffer's memory
+# without a copy (on Julia 1.11 and later; 1.10's `take!` copies). A read-only `IOBuffer`
+# over those bytes takes the buffer's place, so the response can still be fetched again,
+# raw or decoded. A later raw fetch finds that read-only buffer and copies from it. Under
+# the request's lock, so two tasks fetching at once cannot both take the buffer.
+function _fetch_raw_response!(req::gRPCRequest)::Vector{UInt8}
+    return lock(req.lock) do
+        io = req.response
+        iswritable(io) || return read(seekstart(io))
+        bytes = take!(io)
+        req.response = IOBuffer(bytes)
+        return bytes
+    end
 end
 
 """

@@ -34,4 +34,6 @@ for _ in 1:10
 end
 ```
 
+For an asynchronous call, the first `fetch(rpc, Vector{UInt8})` returns the response's own bytes without a copy (on Julia 1.11 and later), so modifying that vector changes what later fetches of the same call return. `fetch` does not consume the response: it can be fetched again, raw or decoded, and each later raw fetch returns a fresh copy.
+
 The two sides are independent, so either or both may be raw. The same mechanism is covered in more depth for the [legacy API](../legacy.md#Raw-Encoded-Buffers-(Partial-Decoding)).
