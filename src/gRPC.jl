@@ -229,7 +229,7 @@ end
             return gRPCServiceCallException(req.grpc_status, req.grpc_message)
     elseif req.code == CURLE_OPERATION_TIMEDOUT &&
             return gRPCServiceCallException(GRPC_DEADLINE_EXCEEDED, "Deadline exceeded.")
-    elseif req.code != CURLE_OK && time() >= req.expiry &&
+    elseif req.code != CURLE_OK && monotonic_time() >= req.expiry &&
             # Any transport error observed after the deadline passed is a deadline expiry.
             # Tearing the transfer down at CURLOPT_TIMEOUT_MS normally yields
             # CURLE_OPERATION_TIMEDOUT, but the socket error from the teardown can surface
