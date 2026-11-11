@@ -433,6 +433,42 @@ include("gen/test/test_pb.jl")
             @test decode(ProtoDecoder(IOBuffer(a)), TestResponse).data == collect(UInt64, 1:n)
         end
 
+        @testset "Raw request framed at its exact size" begin
+            # A raw request is framed into a buffer allocated once at its final size (the 5-byte
+            # prefix plus the message), not grown while the message is copied in, and an
+            # oversized one is rejected before it is copied.
+            frame(v, max) = gRPCClient.grpc_encode_request_iobuffer(v; max_send_message_length = max)
+            raw = rand(UInt8, 1 << 20)
+            buf = frame(raw, 2 << 20)
+            @test buf.size == length(raw) + 5
+            @test length(buf.data) == length(raw) + 5
+            framed = collect(buf.data[1:buf.size])
+            @test framed[1] == 0x00
+            @test ntoh(reinterpret(UInt32, framed[2:5])[1]) == length(raw)
+            @test framed[6:end] == raw
+            @test @allocated(frame(raw, 2 << 20)) < length(raw) + 5 + 4096
+
+            # Over the limit: the same RESOURCE_EXHAUSTED as before, and nothing copied
+            big = zeros(UInt8, 4 << 20)
+            function try_frame(v, max)
+                try
+                    frame(v, max)
+                    return nothing
+                catch ex
+                    return ex
+                end
+            end
+            ex = try_frame(big, 1 << 20)
+            @test ex isa gRPCServiceCallException
+            @test ex.grpc_status == gRPCClient.GRPC_RESOURCE_EXHAUSTED
+            @test ex.message == "request message larger than max_send_message_length: $(length(big)) > $(1 << 20)"
+            @test @allocated(try_frame(big, 1 << 20)) < length(big) ÷ 4
+
+            # The framed request still reaches the server intact
+            req = (io = IOBuffer(); encode(ProtoEncoder(io), TestRequest(5, rand(UInt64, 100_000))); take!(io))
+            @test TestService.TestRPC(chan, req).data == collect(UInt64, 1:5)
+        end
+
         @testset "Host-port syntax" begin
             resp = TestService.TestRPC(_TEST_HOST, _TEST_PORT, TestRequest(1, [1]))
             @test resp.data == [1]
