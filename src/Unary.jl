@@ -28,19 +28,47 @@ for request in requests
     @info response
 end
 ```
+
+# Sending a raw request without copying it
+
+A raw request (a `Vector{UInt8}` holding an already-encoded message) is normally copied into the
+call's upload buffer behind the 5-byte gRPC frame. With `borrow_request = true` only the frame
+prefix is built, and the message is uploaded straight from `request`, without a copy.
+
+The vector is then borrowed from the caller until the call completes, that is until
+`grpc_async_await`, `fetch` or `wait` on it has returned. Until then it must not be written,
+resized or emptied. Reading it, and sending it in other borrowed calls at the same time, are fine.
+A caller that never awaits the call must treat the vector as lent indefinitely. A synchronous call
+returns only once it has completed, so it always satisfies this.
+
+Only a unary call with a raw `Vector{UInt8}` request accepts `borrow_request`: this method,
+[`grpc_sync_request`](@ref), and a generated unary method called synchronously, with
+`Vector{UInt8}` or with `gRPCAsync()`. A typed request, a streaming call, and the form that delivers
+the response to a `Channel` reject it with an `ArgumentError`.
 """
 function grpc_async_request(
         client::gRPCServiceClient{TRequest, false, TResponse, false},
         request::TRequest;
+        borrow_request::Bool = false,
         kws...
     ) where {TRequest <: Any, TResponse <: Any}
 
     options = _merge_options(client.options, kws)
 
-    request_buf = grpc_encode_request_iobuffer(
-        request;
-        max_send_message_length = options.max_send_message_length,
-    )
+    if borrow_request
+        # Frame prefix only; read_callback uploads the message from `request` itself
+        request_buf = grpc_encode_request_prefix(
+            request;
+            max_send_message_length = options.max_send_message_length,
+        )
+        request_body = request
+    else
+        request_buf = grpc_encode_request_iobuffer(
+            request;
+            max_send_message_length = options.max_send_message_length,
+        )
+        request_body = _NO_REQUEST_BODY
+    end
     seekstart(request_buf)
 
     req = gRPCRequest(
@@ -50,7 +78,8 @@ function grpc_async_request(
         IOBuffer(),
         NOCHANNEL,
         NOCHANNEL,
-        options
+        options;
+        request_body = request_body,
     )
 
     return req

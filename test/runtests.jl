@@ -575,6 +575,164 @@ include("gen/test/test_pb.jl")
         end
     end
 
+    @testset "Simple API: Unary, borrowed raw request" begin
+        chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
+
+        # A TestRequest of `n` data words that answers with `sz` elements, encoded with `data`
+        # first and `test_response_sz` last, so the server returns `1:sz` only if it decoded
+        # every byte: one dropped, repeated or shifted byte breaks the packed field's length or
+        # the trailing field. Every word has its top bit set, so each encodes to exactly 10 bytes.
+        function varint!(io, x::UInt64)
+            while x >= 0x80
+                write(io, UInt8(x & 0x7f) | 0x80)
+                x >>= 7
+            end
+            write(io, UInt8(x))
+            return nothing
+        end
+        function borrowed_body(n, sz)
+            io = IOBuffer()
+            if n > 0
+                write(io, UInt8(2 << 3 | 2))
+                varint!(io, UInt64(10n))
+                for i in 1:n
+                    varint!(io, (UInt64(1) << 63) | UInt64(i))
+                end
+            end
+            write(io, UInt8(1 << 3 | 0))
+            varint!(io, UInt64(sz))
+            return take!(io)
+        end
+        decoded(raw) = decode(ProtoDecoder(IOBuffer(raw)), TestResponse)
+
+        @testset "round trip, $(n) words" for n in (0, 1, 100, 419_000)
+            # 419_000 words is just under the 4 MiB message limit on both sides
+            body = borrowed_body(n, 3)
+            original = copy(body)
+            @test TestService.TestRPC(chan, body; borrow_request = true).data == [1, 2, 3]
+            @test decoded(TestService.TestRPC(chan, body, Vector{UInt8}; borrow_request = true)).data == [1, 2, 3]
+            rpc = TestService.TestRPC(chan, body, gRPCAsync(); borrow_request = true)
+            @test fetch(rpc).data == [1, 2, 3]
+            @test decoded(fetch(rpc, Vector{UInt8})).data == [1, 2, 3]
+            client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT; TRequest = Vector{UInt8})
+            @test grpc_sync_request(client, body; borrow_request = true).data == [1, 2, 3]
+            @test body == original
+        end
+
+        @testset "empty message" begin
+            @test isempty(TestService.TestRPC(chan, UInt8[]; borrow_request = true).data)
+        end
+
+        @testset "one vector shared by concurrent calls, $(spawn ? "Threads.@spawn" : "@async")" for spawn in (false, true)
+            body = borrowed_body(20_000, 4)
+            original = copy(body)
+            call() = TestService.TestRPC(chan, body; borrow_request = true).data
+            tasks = [spawn ? Threads.@spawn(call()) : @async(call()) for _ in 1:32]
+            @test all(t -> fetch(t) == [1, 2, 3, 4], tasks)
+            @test body == original
+        end
+
+        @testset "sent again once a call has completed" begin
+            body = borrowed_body(50_000, 2)
+            original = copy(body)
+            for _ in 1:3
+                rpc = TestService.TestRPC(chan, body, gRPCAsync(); borrow_request = true)
+                @test fetch(rpc).data == [1, 2]
+                @test body == original
+            end
+        end
+
+        @testset "message size limit" begin
+            body = borrowed_body(200, 1)
+            small = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT; max_send_message_length = length(body) - 1)
+            ex = try
+                TestService.TestRPC(small, body; borrow_request = true)
+                nothing
+            catch e
+                e
+            end
+            @test ex isa gRPCServiceCallException
+            @test ex.grpc_status == gRPCClient.GRPC_RESOURCE_EXHAUSTED
+            @test ex.message == "request message larger than max_send_message_length: $(length(body)) > $(length(body) - 1)"
+            exact = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT; max_send_message_length = length(body))
+            @test TestService.TestRPC(exact, body; borrow_request = true).data == [1]
+        end
+
+        @testset "rejected where it does not apply, without taking a stream slot" begin
+            # One slot: if a rejected call took it and never gave it back, the borrowed call
+            # at the end would wait for it until its deadline.
+            grpc_handle = gRPCCURL(max_streams = 1)
+            one = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT; grpc = grpc_handle, deadline = 10)
+            body = borrowed_body(10, 1)
+            @test_throws "borrow_request = true needs a raw request" TestService.TestRPC(one, TestRequest(1, [1]); borrow_request = true)
+            ch = Channel{gRPCClient.gRPCAsyncChannelResponse{TestResponse}}(1)
+            @test_throws "borrow_request is only supported by a unary call" TestService.TestRPC(one, body, ch, 1; borrow_request = true)
+            @test_throws "borrow_request is only supported by a unary call" TestService.TestServerStreamRPC(one, body; borrow_request = true)
+            @test_throws "borrow_request is only supported by a unary call" TestService.TestClientStreamRPC(one; borrow_request = true)
+            @test_throws "borrow_request is only supported by a unary call" TestService.TestBidirectionalStreamRPC(one; borrow_request = true)
+            @test TestService.TestRPC(one, body; borrow_request = true).data == [1]
+            grpc_shutdown(grpc_handle)
+        end
+
+        @testset "deadline and cancellation leave the vector intact" begin
+            # A server that accepts TCP but never answers: libcurl may already have uploaded the
+            # start of the message when the call ends, by its deadline or by grpc_cancel.
+            grpc_handle = gRPCCURL()
+            silent_server = listen(Sockets.localhost, 0)
+            silent_port = Int(getsockname(silent_server)[2])
+            accepted = Sockets.TCPSocket[]
+            @async while true
+                try
+                    push!(accepted, accept(silent_server))
+                catch
+                    break
+                end
+            end
+            silent = gRPCClient.gRPCChannel("127.0.0.1", silent_port; grpc = grpc_handle)
+            body = borrowed_body(200_000, 1)
+            original = copy(body)
+
+            ex = try
+                TestService.TestRPC(silent, body; borrow_request = true, deadline = 1.0)
+                nothing
+            catch e
+                e
+            end
+            @test ex isa gRPCServiceCallException
+            @test ex.grpc_status == GRPC_DEADLINE_EXCEEDED
+            @test body == original
+
+            rpc = TestService.TestRPC(silent, body, gRPCAsync(); borrow_request = true, deadline = Inf)
+            @test grpc_cancel(rpc.req)
+            ex = try
+                fetch(rpc)
+                nothing
+            catch e
+                e
+            end
+            @test ex isa gRPCServiceCallException
+            @test ex.grpc_status == GRPC_CANCELLED
+            @test body == original
+
+            close(silent_server)
+            foreach(close, accepted)
+            grpc_shutdown(grpc_handle)
+        end
+
+        @testset "no copy of the message" begin
+            body = borrowed_body(200_000, 1)                  # 2 MB
+            sync_call(borrow) = TestService.TestRPC(chan, body; borrow_request = borrow)
+            sync_call(true)
+            sync_call(false)
+            borrowed = @allocated sync_call(true)
+            copying = @allocated sync_call(false)
+            # Generous bounds: the rest of a call allocates a few kilobytes
+            @test borrowed < length(body) ÷ 10
+            @test copying - borrowed > length(body) * 9 ÷ 10
+            @test copying < length(body) * 3 ÷ 2
+        end
+    end
+
     @testset "Simple API: Unary, multiplexing" begin
         chan = gRPCClient.gRPCChannel(_TEST_HOST, _TEST_PORT)
 

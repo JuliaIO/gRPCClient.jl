@@ -408,6 +408,11 @@ function _docstring_unary(@nospecialize(Trpc), request_type_displayed, response_
     The request message may be either a `$(request_type_displayed)` or a `Vector{UInt8}` 
     containing already proto encoded data. 
 
+    A `Vector{UInt8}` request is copied into the call's upload buffer unless `borrow_request = true`
+    is passed, in which case it is sent from the vector itself. The vector is then borrowed until the
+    call completes (`fetch`, `wait` or the synchronous call has returned) and must not be written,
+    resized or emptied before that. Not accepted with a `Channel`; see [`grpc_async_request`](@ref).
+
     The response can handled in different ways:
     * Wait for a result and return it immediately (default).
     * Return a handle which can be used to `fetch` the result later (provide `gRPCAsync()` as an extra argument).

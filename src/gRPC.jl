@@ -189,6 +189,24 @@ end
 _request_iobuffer(request) = IOBuffer()
 _request_iobuffer(request::AbstractVector{UInt8}) = IOBuffer(; sizehint = GRPC_HEADER_SIZE + length(request))
 
+# The 5-byte frame prefix alone, for a raw request whose message is uploaded from the caller's
+# own vector (`borrow_request = true`, see grpc_async_request): the same compressed flag (0, not
+# compressed), big-endian length, and size check as grpc_encode_request_iobuffer, without the
+# message copied in behind it. A `Vector{UInt8}` only: read_callback reads it in place, so it
+# must be one contiguous block of memory.
+function grpc_encode_request_prefix(request::Vector{UInt8}; max_send_message_length = 4 * 1024 * 1024)
+    _check_request_size(length(request), max_send_message_length)
+    buf = IOBuffer(; sizehint = GRPC_HEADER_SIZE)
+    write(buf, UInt8(0))
+    write(buf, hton(UInt32(length(request))))
+    return buf
+end
+grpc_encode_request_prefix(request; kws...) = throw(
+    ArgumentError(
+        "borrow_request = true needs a raw request, a Vector{UInt8} holding an encoded message; got a $(typeof(request))",
+    ),
+)
+
 
 function grpc_async_await(req::gRPCRequest)
     # Wait for request to be done
