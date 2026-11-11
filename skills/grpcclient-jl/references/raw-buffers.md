@@ -20,6 +20,21 @@ raw_response = MyService.MyRPC(chan, MyRequest(42, UInt64[]), Vector{UInt8})
 response = decode(ProtoDecoder(IOBuffer(raw_response)), MyResponse)
 ```
 
+### Sending without a copy (`borrow_request`)
+
+A raw request is copied into the call's upload buffer behind the 5-byte frame. For a unary call, `borrow_request = true` uploads it from the caller's vector instead, without a copy. Use it when forwarding large messages, for example in a proxy.
+
+```julia
+response = MyService.MyRPC(chan, raw_request; borrow_request = true)
+rpc = MyService.MyRPC(chan, raw_request, gRPCAsync(); borrow_request = true)
+response = fetch(rpc)                                   # the borrow ends here
+raw_response = grpc_sync_request(raw_client, raw_request; borrow_request = true)   # legacy API
+```
+
+The contract: the vector is borrowed until the call completes (`fetch`, `wait` or `grpc_async_await` has returned). Until then it must not be written, resized or emptied. Reading it, and sending it in other borrowed calls at the same time, are fine; so is sending it again after the call completed. A caller that never awaits must treat it as lent indefinitely. A synchronous call always satisfies the contract. Breaking it does not crash, but sends a corrupted or truncated message.
+
+Accepted only by a unary call with a raw `Vector{UInt8}` request (synchronous, `Vector{UInt8}` response, or `gRPCAsync()`). A typed request, a streaming call, and the `Channel`-delivering unary form throw an `ArgumentError` before any request is made. The message size limit applies exactly as without it. It is opt-in because a caller that reuses its buffer after an asynchronous submit would otherwise corrupt the message silently.
+
 For streaming, send raw with `put!(rpc, raw_request)` and receive raw with `take!(rpc, Vector{UInt8})` (or `fetch(rpc, Vector{UInt8})`); each streaming element is one complete message payload. The legacy `TRequest`/`TResponse` type-parameter form below still works too.
 
 ## Legacy API

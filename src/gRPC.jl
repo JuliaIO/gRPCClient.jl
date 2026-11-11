@@ -128,6 +128,19 @@ end
 _encode_body(buf::IOBuffer, request) = UInt32(encode(ProtoEncoder(buf), request))
 _encode_body(buf::IOBuffer, request::AbstractVector{UInt8}) = UInt32(write(buf, request))
 
+# The request size limit: `nbytes` is the message payload, excluding the 5-byte frame.
+function _check_request_size(nbytes::Integer, max_send_message_length)
+    if nbytes > max_send_message_length
+        throw(
+            gRPCServiceCallException(
+                GRPC_RESOURCE_EXHAUSTED,
+                "request message larger than max_send_message_length: $(nbytes) > $max_send_message_length",
+            ),
+        )
+    end
+    return nothing
+end
+
 function grpc_encode_request_iobuffer(
         request,
         req_buf::IOBuffer;
@@ -144,14 +157,7 @@ function grpc_encode_request_iobuffer(
 
     end_pos = position(req_buf)
 
-    if req_buf.size - GRPC_HEADER_SIZE > max_send_message_length
-        throw(
-            gRPCServiceCallException(
-                GRPC_RESOURCE_EXHAUSTED,
-                "request message larger than max_send_message_length: $(req_buf.size - GRPC_HEADER_SIZE) > $max_send_message_length",
-            ),
-        )
-    end
+    _check_request_size(req_buf.size - GRPC_HEADER_SIZE, max_send_message_length)
 
     # Seek back to length prefix and update it with size of encoded protobuf
     seek(req_buf, start_pos + 1)
@@ -164,11 +170,41 @@ function grpc_encode_request_iobuffer(
 end
 
 
-grpc_encode_request_iobuffer(request; max_send_message_length = 4 * 1024 * 1024) =
-    grpc_encode_request_iobuffer(
-    request,
-    IOBuffer();
-    max_send_message_length = max_send_message_length,
+function grpc_encode_request_iobuffer(request; max_send_message_length = 4 * 1024 * 1024)
+    # A raw request's size is known before it is copied, so an oversized one is rejected
+    # first, with the same error the check after framing raises, instead of after copying it
+    request isa AbstractVector{UInt8} && _check_request_size(length(request), max_send_message_length)
+    return grpc_encode_request_iobuffer(
+        request,
+        _request_iobuffer(request);
+        max_send_message_length = max_send_message_length,
+    )
+end
+
+# The buffer a request is framed into. A raw request's framed size is known up front (the
+# 5-byte frame plus its bytes), so its buffer is allocated once at exactly that size; an
+# `IOBuffer()` would grow while the payload is written, allocating close to twice the payload
+# for a large one. A typed message's encoded size is not known until it is encoded, so it
+# keeps the default buffer.
+_request_iobuffer(request) = IOBuffer()
+_request_iobuffer(request::AbstractVector{UInt8}) = IOBuffer(; sizehint = GRPC_HEADER_SIZE + length(request))
+
+# The 5-byte frame prefix alone, for a raw request whose message is uploaded from the caller's
+# own vector (`borrow_request = true`, see grpc_async_request): the same compressed flag (0, not
+# compressed), big-endian length, and size check as grpc_encode_request_iobuffer, without the
+# message copied in behind it. A `Vector{UInt8}` only: read_callback reads it in place, so it
+# must be one contiguous block of memory.
+function grpc_encode_request_prefix(request::Vector{UInt8}; max_send_message_length = 4 * 1024 * 1024)
+    _check_request_size(length(request), max_send_message_length)
+    buf = IOBuffer(; sizehint = GRPC_HEADER_SIZE)
+    write(buf, UInt8(0))
+    write(buf, hton(UInt32(length(request))))
+    return buf
+end
+grpc_encode_request_prefix(request; kws...) = throw(
+    ArgumentError(
+        "borrow_request = true needs a raw request, a Vector{UInt8} holding an encoded message; got a $(typeof(request))",
+    ),
 )
 
 

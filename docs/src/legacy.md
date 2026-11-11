@@ -159,6 +159,13 @@ raw_response = grpc_sync_request(client, raw_request)   # raw_response::Vector{U
 response = decode(ProtoDecoder(IOBuffer(raw_response)), MyResponse)
 ```
 
+A raw unary request can also be sent without being copied into the call's upload
+buffer by passing `borrow_request = true` to `grpc_sync_request` or
+`grpc_async_request`. The vector is then borrowed until the call completes
+(`grpc_async_await` has returned) and must not be written, resized or emptied
+before that; see [`grpc_async_request`](@ref) and the
+[raw buffers guide](guide/raw-buffers.md) for the full contract.
+
 Mixed combinations work too. To send a typed request but receive the response
 as raw bytes, override only `TResponse`:
 
