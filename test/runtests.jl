@@ -1482,12 +1482,29 @@ include("gen/test/test_pb.jl")
             end
         end
 
-        @test awaited_status(time() - 1) == GRPC_DEADLINE_EXCEEDED
+        @test awaited_status(gRPCClient.monotonic_time() - 1) == GRPC_DEADLINE_EXCEEDED
 
         # The same error before the deadline, or on a request with no deadline at
         # all, stays an INTERNAL transport failure
-        @test awaited_status(time() + 60) == GRPC_INTERNAL
+        @test awaited_status(gRPCClient.monotonic_time() + 60) == GRPC_INTERNAL
         @test awaited_status(Inf) == GRPC_INTERNAL
+    end
+
+    @testset "Deadline is measured on the monotonic clock" begin
+        # A wall-clock step (NTP sync, manual change, VM resume) must neither cut a
+        # deadline short nor stretch it, so the absolute expiry a request carries is
+        # a monotonic_time() value, never a time() one. With time() the expiry would
+        # sit ~1.7e9 s away from the monotonic reading.
+        client = TestService_TestRPC_Client(_TEST_HOST, _TEST_PORT; deadline = 30)
+        before = gRPCClient.monotonic_time()
+        req = grpc_async_request(client, TestRequest(1, zeros(UInt64, 1)))
+        after = gRPCClient.monotonic_time()
+        @test before + 30 <= req.expiry <= after + 30
+        grpc_async_await(client, req)
+
+        t0 = gRPCClient.monotonic_time()
+        sleep(0.05)
+        @test 0.04 < gRPCClient.monotonic_time() - t0 < 5
     end
 
     @testset "Response Streaming - Small Messages" begin

@@ -351,6 +351,10 @@ function header_callback(
     end
 end
 
+# Seconds on the monotonic clock, for every deadline computation. Unlike `time()`, the wall
+# clock, `time_ns()` never jumps when NTP, an administrator or a VM resume changes the time.
+monotonic_time()::Float64 = time_ns() / 1.0e9
+
 # Render a timeout (seconds) as a gRPC `grpc-timeout` header value. Per the gRPC HTTP/2 spec the
 # value is a positive integer of AT MOST 8 digits followed by a unit char (H/M/S/m/u/n). Prefer the
 # coarsest unit from seconds down to nanoseconds that represents the timeout exactly within 8 digits,
@@ -654,7 +658,7 @@ mutable struct gRPCRequest
     # every libcurl from 8.6.0 on). See CURL_SEND_PAUSE_BLOCKS_RECV_BELOW.
     unpause::Union{Nothing, Timer}
 
-    # Absolute `time()` at which this request's deadline expires, Inf when there is no
+    # Absolute `monotonic_time()` at which this request's deadline expires, Inf when there is no
     # deadline. grpc_async_await uses it to attribute a transport error that landed after
     # the deadline to DEADLINE_EXCEEDED rather than INTERNAL: when libcurl tears a
     # transfer down at CURLOPT_TIMEOUT_MS it usually reports CURLE_OPERATION_TIMEDOUT,
@@ -726,7 +730,7 @@ mutable struct gRPCRequest
         # The deadline covers the entire call starting now: time spent queued waiting for
         # one of the max_streams slots counts against it, and the transfer only gets
         # whatever budget remains after the wait.
-        expiry = time() + deadline
+        expiry = monotonic_time() + deadline
 
         # One watchdog covers both phases of the call, and is armed before the queue wait
         # so a request can never block past its deadline. While the request is queued
@@ -799,7 +803,7 @@ mutable struct gRPCRequest
 
         # The transfer gets the budget the queue wait did not use. max_reqs_dec only
         # checks expiry while the queue is non-empty, so re-check here.
-        remaining = expiry - time()
+        remaining = expiry - monotonic_time()
         if remaining <= 0
             isnothing(watchdog) || close(watchdog)
             max_reqs_inc(grpc, curl_done_reading)
@@ -1591,7 +1595,7 @@ end
 
 
 # Take a slot (an Event from the freelist) or block until one frees up, giving up with
-# DEADLINE_EXCEEDED once `expiry` (an absolute time() value) passes. Waiters are woken by
+# DEADLINE_EXCEEDED once `expiry` (an absolute monotonic_time() value) passes. Waiters are woken by
 # max_reqs_inc when a slot frees, by any request's deadline watchdog firing, and by
 # close(grpc), and re-check their own condition on every wake.
 function max_reqs_dec(grpc::gRPCCURL, expiry::Float64)
@@ -1603,7 +1607,7 @@ function max_reqs_dec(grpc::gRPCCURL, expiry::Float64)
                     "The grpc handle was shutdown while the request was queued",
                 ),
             )
-            time() >= expiry && throw(
+            monotonic_time() >= expiry && throw(
                 gRPCServiceCallException(
                     GRPC_DEADLINE_EXCEEDED,
                     "Deadline exceeded while queued waiting for an available stream.",
