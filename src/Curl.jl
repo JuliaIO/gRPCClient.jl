@@ -264,15 +264,32 @@ function read_callback(
         # swallowed the un-pause the request pump issues and left the transfer paused for
         # good. The pump stages the buffer under `req.lock`, which is the lock libcurl
         # invokes this callback under, so a partially written buffer is never visible here.
-        buf_p = pointer(req.request.data) + req.request_ptr
+        buf = req.request.data
         n_left = req.request.size - req.request_ptr
 
         n = size * count
         n_min = min(n, n_left)
 
-        ccall(:memcpy, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t), data, buf_p, n_min)
+        GC.@preserve buf ccall(
+            :memcpy, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t),
+            data, pointer(buf) + req.request_ptr, n_min,
+        )
 
         req.request_ptr += n_min
+
+        # A `borrow_request` call holds only the frame prefix in `request`. Once that is sent
+        # (`n_min < n`), fill the rest of curl's buffer from the caller's vector, bounded by its
+        # current length so a vector shrunk between callbacks ends the upload short.
+        body = req.request_body
+        if n_min < n && req.request_body_ptr < length(body)
+            m = min(n - n_min, length(body) - req.request_body_ptr)
+            GC.@preserve body ccall(
+                :memcpy, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t),
+                data + n_min, pointer(body) + req.request_body_ptr, m,
+            )
+            req.request_body_ptr += m
+            n_min += m
+        end
 
         if isstreaming_request(req) && n_min == 0
             # Keep sending until the caller's request stream has ended
@@ -479,6 +496,14 @@ end
     return quote
         $(Expr(:meta, :inline)) # Equivalent of @inline for generated functions
         isempty(overrides) && return options
+        # `borrow_request` is not a connection option: only the unary call with a raw request
+        # takes it (see grpc_async_request), and every other entry point reaches here with it
+        :borrow_request in keys(overrides) && throw(
+            ArgumentError(
+                "borrow_request is only supported by a unary call with a raw Vector{UInt8} request, " *
+                    "not by a streaming call or a unary call that delivers its response to a Channel",
+            ),
+        )
         for k in keys(overrides)
             if !(k in fieldnames(gRPCConnectionOptions))
                 throw(ArgumentError("Invalid field of gRPCConnectionOptions: $k"))
@@ -523,6 +548,9 @@ const GRPC_DEADLINE_GRACE = 0.25
 # with an empty request buffer draws one read_callback that pauses straight back, so a
 # healthy call pays only for the call itself.
 const GRPC_UNPAUSE_INTERVAL = 0.05
+
+# Shared `request_body` of every request that does not borrow; read_callback never writes it.
+const _NO_REQUEST_BODY = UInt8[]
 
 mutable struct gRPCRequest
     # CURL multi lock for exclusive access to the easy handle after its added to the multi
@@ -640,6 +668,12 @@ mutable struct gRPCRequest
     # channel itself.
     response_user_c::Any
 
+    # The caller's vector for a `borrow_request` call, uploaded after the frame prefix in
+    # `request`, and how much of it is sent. Held here so it stays alive until cleanup_request.
+    # `_NO_REQUEST_BODY` for every other request.
+    const request_body::Vector{UInt8}
+    request_body_ptr::Int64
+
     function gRPCRequest(
             grpc,
             url::String,
@@ -648,6 +682,7 @@ mutable struct gRPCRequest
             request_c::Union{Channel{IOBuffer}, NoChannel},
             response_c::Union{Channel{IOBuffer}, NoChannel},
             options::gRPCConnectionOptions;
+            request_body::Vector{UInt8} = _NO_REQUEST_BODY,
             kws...
         )
 
@@ -873,6 +908,8 @@ mutable struct gRPCRequest
             nothing,
             expiry,
             NOCHANNEL,
+            request_body,
+            0,
         )
         preserve_handle(req)
         req_ref[] = req
@@ -1011,6 +1048,9 @@ mutable struct gRPCRequest
             nothing,
             expiry,
             NOCHANNEL,
+            # Never uploaded: this request never reaches libcurl
+            _NO_REQUEST_BODY,
+            0,
         )
 
         # Unblock stream pumps and anything already waiting on the request. The pumps

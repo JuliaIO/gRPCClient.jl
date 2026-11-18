@@ -163,7 +163,7 @@ raw_resp = MyService.MyRPC(chan, MyRequest(42, UInt64[]), Vector{UInt8})   # raw
 resp     = take!(server_stream_rpc, Vector{UInt8})          # raw streaming response
 ```
 
-See `references/raw-buffers.md`.
+For a large raw unary request, `borrow_request = true` sends it from the vector without a copy; the vector must then not be written, resized or emptied until the call completes. See `references/raw-buffers.md`.
 
 ## Errors
 
@@ -242,6 +242,7 @@ Close your request channel to signal end of stream; the library closes the respo
 | `UndefVarError` on a `GRPC_*` constant | The constants are not exported; qualify with `gRPCClient.` |
 | `MethodError` on a keyword named `max_receive_message_length` | The keyword is `max_recieve_message_length` |
 | `ArgumentError: Invalid field of gRPCConnectionOptions: x` | Unknown channel or per-call option keyword, most often a misspelling |
+| `ArgumentError` mentioning `borrow_request` | It was passed to a typed request, a streaming call, or the `Channel` unary form; it applies only to a raw unary request |
 | A drain loop drops responses or blocks forever | Guarded on `isopen`/`isready`; use iteration, a known count, or `wait` + `isready` |
 | `take!`/`fetch` throws "no more responses are available" | Read past the end of a finished stream; stop when iteration ends or a known count is reached |
 | Streaming `fetch` keeps returning the same message | `fetch` does not remove; use `take!` to consume |
