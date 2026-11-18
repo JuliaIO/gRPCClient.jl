@@ -876,8 +876,9 @@ include("gen/test/test_pb.jl")
             @test decode(ProtoDecoder(IOBuffer(fetch(rpc, Vector{UInt8}))), TestResponse).data == [1]
             resp2 = take!(rpc)
             @test resp1.data == resp2.data == [1]
-            # The server should have shut down after sending us 1 response
-            @test !isopen(rpc)
+            # The server should have shut down after sending us 1 response. The response is
+            # delivered before the end of the stream is processed, so wait for the call to close.
+            @test :ok == timedwait(() -> !isopen(rpc), 5.0; pollint = 0.001)
             @test_throws "Call has already been completed" take!(rpc)
             @test_throws "Call has already been completed" take!(rpc, Vector{UInt8})
             @test_throws "Call has already been completed" fetch(rpc)
