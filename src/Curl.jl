@@ -264,24 +264,22 @@ function read_callback(
         # swallowed the un-pause the request pump issues and left the transfer paused for
         # good. The pump stages the buffer under `req.lock`, which is the lock libcurl
         # invokes this callback under, so a partially written buffer is never visible here.
-        buf_p = pointer(req.request.data) + req.request_ptr
+        buf = req.request.data
         n_left = req.request.size - req.request_ptr
 
         n = size * count
         n_min = min(n, n_left)
 
-        ccall(:memcpy, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t), data, buf_p, n_min)
+        GC.@preserve buf ccall(
+            :memcpy, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t),
+            data, pointer(buf) + req.request_ptr, n_min,
+        )
 
         req.request_ptr += n_min
 
-        # A borrowed request body (`request_body`, see `borrow_request` on grpc_async_request)
-        # is uploaded from the caller's own vector rather than from a copy in `request`, which
-        # then holds only the 5-byte frame prefix. `n_min < n` means the prefix is all sent, so
-        # the rest of curl's buffer is filled from the body. The body is only ever read here,
-        # never written, and every bound is taken from its current length: a caller that breaks
-        # the contract by shrinking it mid-call ends the upload short (a truncated message the
-        # server rejects) instead of reading past its end. Empty for every other request, so
-        # nothing changes for them; never set for a streaming request.
+        # A `borrow_request` call holds only the frame prefix in `request`. Once that is sent
+        # (`n_min < n`), fill the rest of curl's buffer from the caller's vector, bounded by its
+        # current length so a vector shrunk between callbacks ends the upload short.
         body = req.request_body
         if n_min < n && req.request_body_ptr < length(body)
             m = min(n - n_min, length(body) - req.request_body_ptr)
@@ -551,8 +549,7 @@ const GRPC_DEADLINE_GRACE = 0.25
 # healthy call pays only for the call itself.
 const GRPC_UNPAUSE_INTERVAL = 0.05
 
-# `request_body` of every request that does not borrow its caller's bytes. Shared, and never
-# written: read_callback only reads a request body.
+# Shared `request_body` of every request that does not borrow; read_callback never writes it.
 const _NO_REQUEST_BODY = UInt8[]
 
 mutable struct gRPCRequest
@@ -671,12 +668,10 @@ mutable struct gRPCRequest
     # channel itself.
     response_user_c::Any
 
-    # A unary raw request sent with `borrow_request = true`: the caller's own message bytes,
-    # uploaded by read_callback straight after the 5-byte frame prefix in `request`, and how
-    # many of them have been uploaded. Holding the vector here keeps it alive for as long as
-    # libcurl can read it (the request is preserved until cleanup_request). Empty
-    # (`_NO_REQUEST_BODY`) for every other request.
-    request_body::Vector{UInt8}
+    # The caller's vector for a `borrow_request` call, uploaded after the frame prefix in
+    # `request`, and how much of it is sent. Held here so it stays alive until cleanup_request.
+    # `_NO_REQUEST_BODY` for every other request.
+    const request_body::Vector{UInt8}
     request_body_ptr::Int64
 
     function gRPCRequest(
